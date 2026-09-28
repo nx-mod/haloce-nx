@@ -26,6 +26,7 @@ Conventions carried over from the Xbox:
 #include "halo_ui_pointer.h"
 #include "port_config.h"
 
+#include <SDL3/SDL_timer.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -376,6 +377,31 @@ static struct
 	unsigned long mirrored_bytes, streamed_bytes;
 } stats;
 
+/* debug.gpu_stats also splits the frame's time three ways: the whole frame,
+the part of it spent inside Present (which is where the game waits for the
+GPU), and the part spent submitting draws. The ratio says whether a slow
+device is losing to the GPU or to the CPU, which is what decides between
+moving GL to another thread and fixing the buffer uploads
+(docs/android_graphics_threading_investigation.md, Phase 0). */
+static struct
+{
+	unsigned long long frame_ns, present_ns, draw_ns, upload_ns;
+	unsigned long long worst_frame_ns, worst_present_ns;
+} timings;
+
+static unsigned long long frame_start_ns;
+
+/* the Android port pushes every stream and index range through
+host_gl_buffer_write, one glMapBufferRange/glUnmapBuffer pair per call, so
+the frame makes as many of those as it makes draws. Measuring them apart
+says whether the frame is slow because of the driver calls or because of
+what surrounds them */
+static void timing_upload(unsigned long long start)
+{
+	if (start)
+		timings.upload_ns += SDL_GetTicksNS() - start;
+}
+
 static D3DDevice *device_pointer(void)
 {
 	return (D3DDevice *)&device;
@@ -407,6 +433,13 @@ static struct
 	const char *dump_shaders;
 	BOOL statistics;
 } debug_settings;
+
+/* only maintained while debug.gpu_stats is on: two clock reads per draw is
+not free, and it is exactly the time being measured */
+static unsigned long long timing_now(void)
+{
+	return debug_settings.statistics ? SDL_GetTicksNS() : 0;
+}
 
 /* ---------- GL state cache
 
@@ -3027,6 +3060,7 @@ static void stream_reserve(unsigned long size)
 
 static unsigned long stream_upload(const void *data, unsigned long size)
 {
+	unsigned long long start = timing_now();
 	unsigned long offset;
 
 	size = (size + 15) & ~15UL;
@@ -3039,6 +3073,7 @@ static unsigned long stream_upload(const void *data, unsigned long size)
 	glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
 #endif
 	device.stream_offset += size;
+	timing_upload(start);
 	return offset;
 }
 
@@ -3052,6 +3087,7 @@ static unsigned long stream_upload_swizzled(const struct vertex_shader_object *d
 	static unsigned long scratch_size;
 	unsigned long offsets[XGPU_VERTEX_ATTRIBUTE_COUNT];
 	unsigned long count = 0, index, vertex;
+	unsigned long long start;
 
 	for (index = 0; index < declaration->element_count; index++)
 	{
@@ -3062,6 +3098,7 @@ static unsigned long stream_upload_swizzled(const struct vertex_shader_object *d
 	}
 	if (!count || !stride)
 		return stream_upload(data, size);
+	start = timing_now();
 	if (scratch_size < size)
 	{
 		free(scratch);
@@ -3080,12 +3117,15 @@ static unsigned long stream_upload_swizzled(const struct vertex_shader_object *d
 			color[2] = blue;
 		}
 	}
+	timing_upload(start);
 	return stream_upload(scratch, size);
 }
 #endif
 
+
 static unsigned long index_upload(const void *data, unsigned long size)
 {
+	unsigned long long start = timing_now();
 	unsigned long offset;
 
 	size = (size + 15) & ~15UL;
@@ -3102,6 +3142,7 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
 #endif
 	device.index_offset += size;
+	timing_upload(start);
 	return offset;
 }
 
@@ -3288,6 +3329,8 @@ void WINAPI D3DDevice_SetIndices(D3DIndexBuffer *index_data, UINT base_vertex_in
 
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_vertex, UINT vertex_count)
 {
+	unsigned long long start = timing_now();
+
 	if (!vertex_count || !prepare_draw(FALSE))
 		return;
 	trace_draw("draw", primitive_type, vertex_count, NULL);
@@ -3306,6 +3349,8 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 		glDrawArrays(primitive_mode(primitive_type), 0, (GLsizei)vertex_count);
 	}
 	gl_check_errors("draw");
+	if (start)
+		timings.draw_ns += SDL_GetTicksNS() - start;
 }
 
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
@@ -3315,6 +3360,7 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	const WORD *source = index_data;
 	GLuint index_buffer = 0;
 	BOOL mirrored;
+	unsigned long long start = timing_now();
 
 	if (!vertex_count || !index_data || !prepare_draw(FALSE))
 		return;
@@ -3333,6 +3379,8 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		state_element_array_buffer(index_buffer);
 		glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT,
 			(const void *)index_offset, -(GLint)minimum);
+		if (start)
+			timings.draw_ns += SDL_GetTicksNS() - start;
 		return;
 	}
 	stats.streamed_bytes += vertex_count * sizeof(WORD);
@@ -3354,6 +3402,8 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 			(const void *)index_upload(rebased, count * sizeof(WORD)));
 		free(rebased);
 		free(indices);
+		if (start)
+			timings.draw_ns += SDL_GetTicksNS() - start;
 		return;
 	}
 #endif
@@ -3361,6 +3411,8 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)count, GL_UNSIGNED_SHORT,
 		(const void *)index_upload(source, count * sizeof(WORD)), -(GLint)minimum);
 	free(indices);
+	if (start)
+		timings.draw_ns += SDL_GetTicksNS() - start;
 }
 
 /* ---------- immediate mode */
@@ -3391,6 +3443,7 @@ void WINAPI D3DDevice_End(void)
 	unsigned long stride = XGPU_VERTEX_ATTRIBUTE_COUNT * 4 * sizeof(float);
 	unsigned long offset, index, count = device.immediate_count;
 	D3DPRIMITIVETYPE type = device.immediate_type;
+	unsigned long long start = timing_now();
 
 	device.immediate_active = FALSE;
 	if (!count || !prepare_draw(TRUE))
@@ -3416,6 +3469,8 @@ void WINAPI D3DDevice_End(void)
 		glDrawArrays(primitive_mode(type), 0, (GLsizei)count);
 	}
 	gl_check_errors("immediate draw");
+	if (start)
+		timings.draw_ns += SDL_GetTicksNS() - start;
 }
 
 static void set_attribute(INT reg, float a, float b, float c, float d)
@@ -3600,6 +3655,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	void *unused, void *unused2)
 {
 	static long screenshot_every = -1;
+	unsigned long long present_start = timing_now();
 
 	(void)source_rectangle;
 	(void)destination_rectangle;
@@ -3607,6 +3663,18 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	(void)unused2;
 	if (screenshot_every < 0)
 		screenshot_every = config_integer("debug.screenshot_every");
+
+	/* the frame is the gap between one Present and the next, so whatever
+	Present did not account for is the game's own work */
+	if (present_start && frame_start_ns)
+	{
+		unsigned long long frame = present_start - frame_start_ns;
+
+		timings.frame_ns += frame;
+		if (frame > timings.worst_frame_ns)
+			timings.worst_frame_ns = frame;
+	}
+	frame_start_ns = present_start;
 
 	if (device.gl_ready)
 	{
@@ -3657,14 +3725,38 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	device.frame++;
 	stats.presents++;
+	if (present_start)
+	{
+		unsigned long long present = SDL_GetTicksNS() - present_start;
+
+		timings.present_ns += present;
+		if (present > timings.worst_present_ns)
+			timings.worst_present_ns = present;
+	}
 	if (debug_settings.statistics && device.frame % 60 == 0)
 	{
+		unsigned long long frames = stats.presents;
+
 		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link; "
 			"%lu KB mirrored, %lu KB streamed",
 			device.frame, stats.draws / stats.presents, stats.immediate_draws / stats.presents, stats.clears / stats.presents,
 			stats.target_changes / stats.presents, stats.skipped_no_program, stats.skipped_no_target, stats.skipped_link,
 			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024);
+		/* the time split: what the frame cost, what of it was spent
+		waiting on the GPU inside Present, what was pushing vertex and
+		index data into buffers, and what was the rest of the draws.
+		Present dominating means the GPU is the wall; uploads or the
+		rest dominating means the CPU is */
+		platform_log("timing: %.2f ms per frame (worst %.2f), %.2f in Present (worst %.2f), %.2f uploading, %.2f other draws, %.2f elsewhere",
+			(double)timings.frame_ns / (double)frames / 1000000.0,
+			(double)timings.worst_frame_ns / 1000000.0,
+			(double)timings.present_ns / (double)frames / 1000000.0,
+			(double)timings.worst_present_ns / 1000000.0,
+			(double)timings.upload_ns / (double)frames / 1000000.0,
+			((double)timings.draw_ns - (double)timings.upload_ns) / (double)frames / 1000000.0,
+			((double)timings.frame_ns - (double)timings.present_ns) / (double)frames / 1000000.0);
 		memset(&stats, 0, sizeof(stats));
+		memset(&timings, 0, sizeof(timings));
 	}
 	platform_pump_events();
 
