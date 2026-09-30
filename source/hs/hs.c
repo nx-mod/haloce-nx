@@ -12086,7 +12086,7 @@ boolean hs_scenario_merge(
 				csstrcpy(file->name, source_file->name);
 				if (tag_data_resize(&file->source, source_file->source.size))
 				{
-					csmemcpy(file->source.address, source_file->source.address, source_file->source.size);
+					csmemcpy(TAG_DATA_ADDRESS(file->source), TAG_DATA_ADDRESS(source_file->source), source_file->source.size);
 				}
 				else
 				{
@@ -12115,7 +12115,7 @@ static boolean hs_scenario_syntax_data_valid(
 	long const syntax_data_size =
 		sizeof(struct data_array)+MAXIMUM_HS_SYNTAX_NODES_PER_SCENARIO*sizeof(struct hs_syntax_node);
 	byte const *tag_cache = (byte const *)physical_memory_get_tag_cache_base_address();
-	byte const *address = (byte const *)scenario->hs_syntax_data.address;
+	byte const *address = (byte const *)TAG_DATA_ADDRESS(scenario->hs_syntax_data);
 	struct data_array const *data = (struct data_array const *)address;
 
 	if (scenario->hs_syntax_data.size != syntax_data_size ||
@@ -12148,7 +12148,7 @@ static boolean hs_scenario_string_constants_valid(
 	struct scenario const *scenario)
 {
 	byte const *tag_cache = (byte const *)physical_memory_get_tag_cache_base_address();
-	byte const *address = (byte const *)scenario->hs_string_constants.address;
+	byte const *address = (byte const *)TAG_DATA_ADDRESS(scenario->hs_string_constants);
 	long size = scenario->hs_string_constants.size;
 
 	return tag_cache &&
@@ -14103,7 +14103,7 @@ boolean hs_scenario_postprocess(
 			}
 		}
 	}
-	hs_syntax_data = (struct data_array *)scenario->hs_syntax_data.address;
+	hs_syntax_data = (struct data_array *)TAG_DATA_ADDRESS(scenario->hs_syntax_data);
 	hs_syntax_data->data = (char *)hs_syntax_data+sizeof(struct data_array);
 	if (!recompile && hs_compile_postprocess(&error_message, &error_source))
 	{
