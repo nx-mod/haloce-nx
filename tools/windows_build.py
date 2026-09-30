@@ -336,9 +336,13 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             f"-include {tags_header}",
             f"-I{crt_include}",
             f"-I{PORT_DIR / 'include'}",
-            # the port's headers the game's units include (halo_keyboard.h,
-            # halo_menus.h), but not the Linux build's C runtime wrappers
-            # next to them, which no game unit includes in quotes
+            # the shared port headers (halo_port_window.h and the capacity
+            # limits they build on) are reached by a quoted include, as below
+            # for the platform sources: -I would shadow the Windows SDK's own
+            # headers of the same names. The game's own units include the
+            # port's headers (halo_keyboard.h, halo_menus.h), but not the
+            # Linux build's C runtime wrappers next to them, which is why the
+            # whole directory is offered rather than the individual headers
             f"-iquote {LINUX_DIR / 'include'}",
             game_defines_and_includes(linux_config),
             # the Xbox SDK declarations (port/include/xdk) come before the
