@@ -103,6 +103,10 @@ def main() -> int:
     # the menus' XML parser (port/third_party/expat), in every build, whose
     # MIT license asks copies to carry its notice
     shutil.copy2(ROOT / "port/third_party/expat/COPYING", dist / "expat-COPYING.txt")
+    if args.platform == "switch":
+        # and the Switch's menus' title font (port/switch/host/host_ui.c),
+        # under the same license
+        shutil.copy2(ROOT / "port/assets/fonts/OpenCE-OFL.txt", dist / "OpenCE-OFL.txt")
     return 0
 
 
