@@ -998,6 +998,10 @@ static struct
 	int failed;
 } art[MAXIMUM_ART];
 static long art_count;
+#ifdef HALO_SWITCH
+/* changed whenever the art registered changes (menu_art_serial) */
+static unsigned long art_serial = 1;
+#endif
 
 void halo_menus_art_register(void const *texture, char const *png)
 {
@@ -1031,6 +1035,9 @@ void halo_menus_art_register(void const *texture, char const *png)
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
 	art[index].png = strdup(png);
+#ifdef HALO_SWITCH
+	art_serial++;
+#endif
 }
 
 void halo_menus_art_forget(void)
@@ -1044,6 +1051,9 @@ void halo_menus_art_forget(void)
 			glDeleteTextures(1, &art[index].texture);
 	}
 	art_count = 0;
+#ifdef HALO_SWITCH
+	art_serial++;
+#endif
 }
 
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
@@ -1076,6 +1086,11 @@ unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 }
 
 #ifdef HALO_SWITCH
+unsigned long menu_art_serial(void)
+{
+	return art_serial;
+}
+
 const char *menu_art_name(unsigned long data)
 {
 	long index;
