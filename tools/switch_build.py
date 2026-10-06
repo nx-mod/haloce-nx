@@ -767,12 +767,18 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         # answers "Failed to open input!" and builds nothing, which is a
         # confusing way to say that an option has to follow the files it
         # applies to.
-        command=(f"{devkitpro / 'tools' / 'bin' / 'elf2nro'} "
+        #
+        # The game image rides in the NRO's RomFS (nx-mod/haloce-nx): one file
+        # to install and update; host_main.c reads it from there.
+        command=(f"mkdir -p {(Path.cwd() / str(BUILD / 'romfs')).resolve()} && "
+                 f"cp {(Path.cwd() / str(image)).resolve()} {(Path.cwd() / str(BUILD / 'romfs')).resolve()}/halo_guest.elf && "
+                 f"{devkitpro / 'tools' / 'bin' / 'elf2nro'} "
                  f"{(Path.cwd() / str(elf)).resolve()} {(Path.cwd() / str(nro)).resolve()}"
-                 f" --icon={nro_icon} --nacp={(Path.cwd() / str(nacp)).resolve()}"),
+                 f" --icon={nro_icon} --nacp={(Path.cwd() / str(nacp)).resolve()}"
+                 f" --romfsdir={(Path.cwd() / str(BUILD / 'romfs')).resolve()}"),
         description="SWITCH NRO $out",
     )
-    n.build(outputs=nro, rule="switch_nro", inputs=[elf, nacp, nro_icon])
+    n.build(outputs=nro, rule="switch_nro", inputs=[elf, nacp, nro_icon, image])
 
-    n.build(outputs="switch", rule="phony", inputs=[nro, image])
+    n.build(outputs="switch", rule="phony", inputs=[nro])
     n.newline()

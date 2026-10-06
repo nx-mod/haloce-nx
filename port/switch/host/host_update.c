@@ -69,7 +69,8 @@ enum
 	/* the files taken from the archive: the program and the game image,
 	which it must hold, then the brokers, which it may */
 	WANTED_FILES = 3,
-	REQUIRED_FILES = 2,
+	/* (nx-mod/haloce-nx: the program only, the game image is inside it) */
+	REQUIRED_FILES = 1,
 	PROGRESS_EVERY = 512 * 1024,
 };
 
@@ -441,6 +442,10 @@ static int install(char *error, size_t error_size)
 	char target[512], temporary[520];
 
 	snprintf(target, sizeof(target), "%s/%s", host_executable_root(), UPDATE_OLD_DK_IMAGE);
+	remove(target);
+	/* (nx-mod/haloce-nx) the game image is inside the program: one left
+	beside it (a test build's) would be loaded in its place */
+	snprintf(target, sizeof(target), "%s/%s", host_executable_root(), UPDATE_IMAGE);
 	remove(target);
 	wanted_path(0, target, sizeof(target));
 	snprintf(temporary, sizeof(temporary), "%s.new", target);
