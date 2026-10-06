@@ -71,10 +71,14 @@ time; update.auto off asks nothing.
 #define HALO_BUILD_FLAVOR "release"
 #endif
 
-#define UPDATE_REPOSITORY "thelinkin3000/halo-ce-universal"
-/* the shared shader keys, and their SHA-1 (sha1sum's line, or just the hash) */
-#define KEYS_URL "https://raw.githubusercontent.com/" UPDATE_REPOSITORY "/main/keys.dkk"
-#define KEYS_SHA1_URL "https://raw.githubusercontent.com/" UPDATE_REPOSITORY "/main/keys.sha1"
+/* nx-mod's fork: its builds take its releases (the disc's movies and the
+rest it adds), not thelinkin3000/halo-ce-universal's */
+#define UPDATE_REPOSITORY "nx-mod/haloce-nx"
+/* the shared shader keys, and their SHA-1 (sha1sum's line, or just the hash):
+thelinkin3000's, which every build of the port reads */
+#define KEYS_REPOSITORY "thelinkin3000/halo-ce-universal"
+#define KEYS_URL "https://raw.githubusercontent.com/" KEYS_REPOSITORY "/main/keys.dkk"
+#define KEYS_SHA1_URL "https://raw.githubusercontent.com/" KEYS_REPOSITORY "/main/keys.sha1"
 #define UPDATE_ASSET "halo-switch-" HALO_BUILD_FLAVOR ".zip"
 #define UPDATE_PROGRAM "halo.nro"
 #define UPDATE_IMAGE "halo_guest.elf"
