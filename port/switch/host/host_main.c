@@ -397,9 +397,22 @@ relative path and names the device directly:
 so the card is mounted by the time main() runs and only the prefix was ever
 missing. The root is therefore an absolute one, and the player can move the
 game anywhere by setting HALO_DATA_ROOT. */
-static void find_executable_root(void)
+/* (nx-mod/haloce-nx) The NRO's own folder, from the loader's first
+argument, which homebrew loaders set to the NRO's full path: sdmc:/haloce-nx
+by default. */
+static void find_executable_root(int argc, char *argv[])
 {
-	strcpy(executable_root, "sdmc:/switch/halo");
+	char *slash;
+
+	strcpy(executable_root, "sdmc:/haloce-nx");
+	if (argc < 1 || !argv[0] || strncmp(argv[0], "sdmc:/", 6))
+		return;
+	snprintf(executable_root, sizeof(executable_root), "%s", argv[0]);
+	slash = strrchr(executable_root, '/');
+	if (slash && slash > executable_root + 5)
+		*slash = 0;
+	else
+		strcpy(executable_root, "sdmc:/haloce-nx");
 }
 
 /* the folder the guest image is loaded from (the updater replaces it there) */
@@ -418,6 +431,8 @@ const char *host_data_root(void)
 /* the data and save roots, from HALO_DATA_ROOT and HALO_SAVE_ROOT or beside
 the program; once, by the first to want them (the updater, before the game
 thread) */
+static void move_save_folders(const char *root);
+
 static void roots_resolve(void)
 {
 	const char *setting;
@@ -430,8 +445,11 @@ static void roots_resolve(void)
 	if (setting && *setting)
 		snprintf(save_root, sizeof(save_root), "%s", setting);
 	else
-		snprintf(save_root, sizeof(save_root), "%s/save", data_root);
+		/* (nx-mod/haloce-nx) the folder itself holds the saves, in profiles/
+		(u:) and saves/ (z:); older layouts are moved in (move_save_folders) */
+		snprintf(save_root, sizeof(save_root), "%s", data_root);
 	mkdir(save_root, 0755);
+	move_save_folders(save_root);
 }
 
 const char *host_save_root(void)
@@ -778,6 +796,61 @@ static void ensure_movies(const char *root)
 		fclose(marker);
 	if (extraction_on_screen)
 		host_ui_close();
+}
+
+/* (nx-mod/haloce-nx) The save drives' folders are named for what they hold
+(port/linux/src/xbox_files.c): profiles/ (u:), saves/ (z:) and cache/ (z:'s
+map caches). Folders an earlier layout left are moved: save/u and save/z
+(thelinkin3000's), and u and z (nx-mod's earlier port); in z, the map caches
+go to cache/ and the rest to saves/. */
+static void move_folder(const char *from, const char *to)
+{
+	struct stat information;
+
+	if (stat(from, &information) != 0 || stat(to, &information) == 0)
+		return;
+	if (rename(from, to) == 0)
+		host_logf(HOST_LOG_INFO, "moved %s to %s", from, to);
+}
+
+static void move_save_folders(const char *root)
+{
+	static const char *const older[] = { "save/", "" };
+	char from[PATH_MAX + 32], to[PATH_MAX + 32];
+	unsigned index;
+
+	for (index = 0; index < sizeof(older) / sizeof(*older); index++)
+	{
+		DIR *directory;
+		struct dirent *entry;
+
+		snprintf(from, sizeof(from), "%s/%su", root, older[index]);
+		snprintf(to, sizeof(to), "%s/profiles", root);
+		move_folder(from, to);
+		snprintf(from, sizeof(from), "%s/%sz", root, older[index]);
+		directory = opendir(from);
+		if (!directory)
+			continue;
+		snprintf(to, sizeof(to), "%s/cache", root);
+		mkdir(to, 0755);
+		while ((entry = readdir(directory)) != NULL)
+		{
+			size_t length = strlen(entry->d_name);
+			char file[PATH_MAX + 300], target[PATH_MAX + 300];
+
+			if (strncasecmp(entry->d_name, "cache", 5) || length < 5 ||
+				strcasecmp(entry->d_name + length - 4, ".map"))
+				continue;
+			snprintf(file, sizeof(file), "%s/%s", from, entry->d_name);
+			snprintf(target, sizeof(target), "%s/cache/%s", root, entry->d_name);
+			rename(file, target);
+		}
+		closedir(directory);
+		snprintf(to, sizeof(to), "%s/saves", root);
+		move_folder(from, to);
+	}
+	snprintf(from, sizeof(from), "%s/save", root);
+	rmdir(from);
 }
 
 /* The game's own icon beside the NRO, for a forwarder (host_icon.c): the
@@ -1178,13 +1251,21 @@ static void *game_main(void *unused)
 		}
 	}
 
+	/* (nx-mod/haloce-nx) the game image rides in the NRO's RomFS; one beside
+	the NRO, or HALO_GUEST_IMAGE's, is used instead, for testing a build */
 	setting = getenv("HALO_GUEST_IMAGE");
 	if (setting && *setting)
 		snprintf(path, sizeof(path), "%s", setting);
 	else
 		snprintf(path, sizeof(path), "%s/halo_guest.elf", executable_root);
-	host_logf(HOST_LOG_INFO, "renderer: deko3d (%s)", path);
 	image = read_file(path, &image_size);
+	if (!image && !(setting && *setting) && R_SUCCEEDED(romfsInit()))
+	{
+		snprintf(path, sizeof(path), "romfs:/halo_guest.elf");
+		image = read_file(path, &image_size);
+		romfsExit();
+	}
+	host_logf(HOST_LOG_INFO, "renderer: deko3d (%s)", path);
 	probe_window_capacity();
 	log_marker("marker: reading the guest image");
 	if (!image)
@@ -1354,8 +1435,6 @@ static void wait_at_the_top_of_main(void)
 
 int main(int argc, char *argv[])
 {
-	(void)argc;
-	(void)argv;
 	/* before any thread exists: libnx places their stacks at random, and one
 	in the guest image's range keeps the image from loading (host_memory.c) */
 	host_memory_hold_image_range();
@@ -1424,7 +1503,7 @@ int main(int argc, char *argv[])
 		host_logf(HOST_LOG_INFO, "no nxlink host; output is going to the console and the card only");
 
 	setvbuf(stderr, NULL, _IOLBF, 0);
-	find_executable_root();
+	find_executable_root(argc, argv);
 	{
 		char log_path[PATH_MAX + 32];
 
@@ -1443,7 +1522,11 @@ int main(int argc, char *argv[])
 				toml_free(result);
 			}
 		}
-		snprintf(log_path, sizeof(log_path), "%s/halo.log", executable_root);
+		/* (nx-mod/haloce-nx) in logs/, beside the game's own debug.txt
+		and gamestate.txt (source/cseries/errors.c, game_state.c) */
+		snprintf(log_path, sizeof(log_path), "%s/logs", executable_root);
+		mkdir(log_path, 0755);
+		snprintf(log_path, sizeof(log_path), "%s/logs/halo.log", executable_root);
 		/* O_SYNC, and not for tidiness.
 
 		The log is written with write(), which is unbuffered as far as the
