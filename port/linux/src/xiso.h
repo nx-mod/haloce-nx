@@ -23,5 +23,9 @@ int xiso_extract_maps(const char *image_path, const char *destination, xiso_prog
 the Switch host, HALO_EXTRACTOR_STANDALONE) */
 int xiso_extract_folder(const char *image_path, const char *folder, const char *destination,
 	xiso_progress_proc progress, void *context, char *error, int error_size);
+/* copies the file <name> from the image's root to <destination_path> (as
+xiso_extract_folder, the Switch host only) */
+int xiso_extract_file(const char *image_path, const char *name, const char *destination_path, char *error,
+	int error_size);
 
 #endif

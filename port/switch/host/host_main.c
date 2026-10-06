@@ -619,6 +619,36 @@ static void ensure_movies(const char *root)
 		host_ui_close();
 }
 
+/* The game's own icon beside the NRO, for a forwarder (host_icon.c): the
+title image in default.xbe, which is copied off the disc image first if it is
+not in the data root. Once; a player's own icon.jpg there is left alone. */
+int host_icon_write(const char *xbe_path, const char *icon_path);
+
+static void ensure_icon(const char *root)
+{
+	char icon[PATH_MAX + 32], xbe[PATH_MAX + 32], image[PATH_MAX + 32], error[512];
+	struct stat information;
+	const char *name;
+
+	snprintf(icon, sizeof(icon), "%s/icon.jpg", executable_root);
+	if (stat(icon, &information) == 0)
+		return;
+	snprintf(xbe, sizeof(xbe), "%s/default.xbe", root);
+	if (stat(xbe, &information) != 0)
+	{
+		name = find_disc_image(root);
+		if (!name)
+			return;
+		snprintf(image, sizeof(image), "%s/%s", root, name);
+		if (!xiso_extract_file(image, "default.xbe", xbe, error, sizeof(error)))
+		{
+			host_logf(HOST_LOG_WARN, "icon: %s", error);
+			return;
+		}
+	}
+	host_icon_write(xbe, icon);
+}
+
 /* The columns of the 480-line picture for the display's shape. SDL2's
 console's own answer, which is 1280x720 in the handheld and 1920x1080
 docked, and which is not always SDL's: the Switch video driver reports
@@ -937,6 +967,7 @@ static void *game_main(void *unused)
 	log_marker("marker: data paths resolved");
 	ensure_game_data(data_root);
 	ensure_movies(data_root);
+	ensure_icon(data_root);
 
 	environment_copy_halo(&environment);
 	environment_set(&environment, "HOME", save_root);

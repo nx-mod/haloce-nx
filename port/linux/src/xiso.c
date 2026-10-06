@@ -496,6 +496,72 @@ done:
 	free(buffer);
 	return result;
 }
+/* copies the file <name> from the image's root to <destination_path>
+(written as <destination_path>.partial and renamed when whole). Returns
+nonzero on success, 0 with the reason in error */
+int xiso_extract_file(const char *image_path, const char *name, const char *destination_path, char *error,
+	int error_size)
+{
+	struct xiso_image image;
+	struct xiso_file *entries = NULL;
+	unsigned char *table = NULL;
+	unsigned char *buffer = NULL;
+	unsigned long root_sector, root_size;
+	unsigned long long done = 0;
+	char partial[1100];
+	int result = 0;
+	int index;
+
+	image.error = error;
+	image.error_size = error_size;
+	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+	if (image.descriptor < 0)
+		return fail(&image, "Could not open %s.", image_path);
+	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
+	buffer = malloc(COPY_BUFFER_SIZE);
+	if (!entries || !buffer)
+	{
+		fail(&image, "Out of memory.%s", NULL);
+		goto done;
+	}
+	if (!find_volume(&image, &root_sector, &root_size))
+		goto done;
+	table = read_directory(&image, root_sector, root_size);
+	if (!table)
+	{
+		fail(&image, "The disc image's file system is damaged.%s", NULL);
+		goto done;
+	}
+	{
+		struct directory_walk walk = { table, root_size, entries, 0, MAXIMUM_FILES, 0, 0 };
+
+		walk_directory(&walk, 0, 0);
+		for (index = 0; index < walk.entry_count && !names_match(entries[index].name, name); index++)
+			;
+		if (index == walk.entry_count)
+		{
+			fail(&image, "The disc image has no %s.", name);
+			goto done;
+		}
+		snprintf(partial, sizeof(partial), "%s.partial", destination_path);
+		if (!copy_file(&image, &entries[index], partial, buffer, &done, entries[index].size, NULL, NULL))
+			goto done;
+		remove(destination_path);
+		if (rename(partial, destination_path) != 0)
+		{
+			fail(&image, "Could not create %s.", destination_path);
+			goto done;
+		}
+	}
+	result = 1;
+
+done:
+	close(image.descriptor);
+	free(table);
+	free(entries);
+	free(buffer);
+	return result;
+}
 #endif
 
 #endif
