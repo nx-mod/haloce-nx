@@ -53,28 +53,18 @@ sudo dkp-pacman -S --needed devkitA64 libnx switch-sdl2 switch-mesa switch-libdr
 ## Build and install
 
 1. Go to the root folder of the repository.
-2. Enter `python configure.py`.
+2. Enter `python configure.py` (`--release` for a release build).
 3. Enter `ninja switch`.
 
-That writes two files to `build/switch`:
-
-- `halo.nro`, the program.
-- `halo_guest.elf`, the game.
-
-To install, put both on the SD card:
-
-```
-sdmc:/switch/halo/halo.nro
-sdmc:/switch/halo/halo_guest.elf
-```
-
-and start `halo.nro` from the Homebrew Menu. The Homebrew Menu shows the log
-while it runs.
+That writes `build/switch/halo.nro`, with the game image (`halo_guest.elf`)
+inside its RomFS. Copy it to `sdmc:/haloce-nx/` with an Xbox disc image
+beside it; the root [README](../../README.md#install) has the rest. A
+`halo_guest.elf` beside the NRO is loaded in place of the one inside, for
+testing a build.
 
 The game's own view of the console is that of a 1280x720 handheld or a
-1920x1080 docked display; `SDL_GetDesktopDisplayMode` reports which, and the
-game is told the width to render at. It resizes on its own if the console is
-docked or undocked while the game runs.
+1920x1080 docked display, and it resizes on its own if the console is docked
+or undocked while the game runs.
 
 ## Releasing (nx-mod/haloce-nx)
 
@@ -91,36 +81,15 @@ Only release tags build in this repository, and only the Switch.
 
 ## Game data
 
-The game needs the `maps/` folder out of an Xbox disc image (`.xiso` or
-`.iso`) of any version of the game. The disc image itself is not included, and
-neither is `maps/`.
+The game needs the `maps/` folder of an Xbox disc image (`.xiso` or `.iso`)
+of any version of the game; neither is included. Put the image in the
+program's folder (`sdmc:/haloce-nx/` by default: the folder `halo.nro` is
+started from). The first start copies `maps/` and the movies (`bink/`) out
+of it, about 1.7 GB; a `maps/` folder already there is used as it is.
 
-Put the disc image on the card:
-
-```
-sdmc:/switch/halo/halo.iso
-```
-
-`halo.xiso`, `maps.iso` and `halo-xbox.iso` are also recognised, as is any
-other `.iso` or `.bin` in the same folder. There is no file browser on the
-console, so the name and the folder are fixed.
-
-The game unpacks `maps/` itself on the first run. That is about 1.7 GB written
-to the card and takes a few minutes, so leave the card in and make sure there
-is that much free; the log says which file it is copying and how far it has
-got. It reads the image the same way `extract-xiso` does, so all three disc
-formats work.
-
-Unpacking it yourself works too. If `maps/` is already there the game uses it
-and never looks for an image:
-
-```
-sdmc:/switch/halo/maps/
-```
-
-The game checks for `sdmc:/switch/halo/maps/ui.map` and, with no image
-either, refuses to start and says so. Saves go in `sdmc:/switch/halo/save/`,
-and the settings file `config.toml` goes in `sdmc:/switch/halo/`.
+The saves go in the same folder, named for what they hold: `profiles/`
+(the Xbox's u:), `saves/` (z:) and `cache/` (z:'s map caches). The logs go
+in `logs/`.
 
 ## The memory model
 

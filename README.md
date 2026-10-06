@@ -1,237 +1,64 @@
 # Halo: Combat Evolved for Nintendo Switch
 
-> **nx-mod/haloce-nx** is a fork of
-> [thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal),
-> whose Switch port (a native deko3d renderer, online play) this builds on.
-> Only the Switch is built here; for Linux,
-> Windows and Android see
-> [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and thelinkin3000's
-> repository. The earlier ports are archived:
-> [haloce-nx-zink](https://github.com/nx-mod/haloce-nx-zink) (OpenGL over
-> Zink on OpenCE) and [haloce-nx-vita](https://github.com/nx-mod/haloce-nx-vita).
+A native Switch port of Halo: Combat Evolved, built from the decompilation
+of the Xbox game, drawn with deko3d. It plays online with
+[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)'s other platforms.
 
-**Tested on** a Switch running firmware (HOS) 22.5.0 with Atmosphère 1.11.2.
+Tested on firmware 22.5.0 with Atmosphère 1.11.2. **No game data is
+included:** you need your own Xbox copy of the game.
 
-## nx-mod's changes
+## Install
 
-On top of thelinkin3000's port, from nx-mod's earlier Switch ports:
-
-- **The disc's movies.** The intro, the menu's and the credits, and the
-  cutscenes' sound: the game's Bink calls are answered by a player whose
-  pictures and sound the program decodes with FFmpeg (`port/switch/guest/bink_mjx.c`,
-  `mjx.c`; `port/switch/host/host_bik.c`, `host_mjx.c`). The `bink` folder is
-  copied off the disc image at the first start, beside `maps/`.
-- **The game's own icon,** the disc's title image (`default.xbe`), written as
-  `icon.jpg` beside the program for a forwarder (`host_icon.c`).
-- **One file to install:** the game image is inside `halo.nro` (its RomFS),
-  and the updater replaces only that.
-- **The folder's layout:** the program's own folder (`sdmc:/haloce-nx/` by
-  default), the saves in folders named for what they hold (`profiles/`,
-  `saves/`, and the map caches apart in `cache/`), and the logs in `logs/`.
-  Older layouts are moved at start.
-- **Updates from this repository's releases,** made only from release tags
-  and only for the Switch (`.github/workflows/switch.yml`).
-- **Cutscenes:** an object its animation carries (a10's lifeboat) no longer
-  jumps back and forth (`port/linux/game/render_interpolation.c`).
-- **Menus:** frames OpenCE has no picture for yet show the Xbox's own picture
-  instead of a placeholder (`port/assets/menus/ce/bitmaps.xml`).
-
-[![Join OpenCE's Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
-
-This project is a port of the Halo: Combat Evolved decompilation. The
-decompilation is of the Xbox build 2342 (`cachebeta.exe`, SHA-256
-`4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`). It starts
-from [bnunu/halo-1](https://github.com/bnunu/halo-1), a fork of
-[punpckhdq/halo](https://github.com/punpckhdq/halo), by way of
-[OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and
-[thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal).
-
-**No game data is included.** You need your own Xbox copy of Halo: Combat
-Evolved.
-
-## Download
-
-| | Release | Debug |
-| --- | --- | --- |
-| Nintendo Switch | [halo-switch-release.zip](https://github.com/nx-mod/haloce-nx/releases/latest/download/halo-switch-release.zip) | [halo-switch-debug.zip](https://github.com/nx-mod/haloce-nx/releases/latest/download/halo-switch-debug.zip) |
-
-Use the release build to play. The debug build stops at the first failed
-assertion and writes it to the log; use it to find and report problems.
-
-1. Copy `halo.nro` (the game is inside it) into `sdmc:/haloce-nx/`.
-2. Put an Xbox disc image (`.iso` or `.xiso`) of Halo: Combat Evolved in the
-   same folder.
-3. Start `halo.nro` with the console's full memory: a
+1. Copy `halo.nro` from the
+   [latest release](https://github.com/nx-mod/haloce-nx/releases/latest) into
+   `sdmc:/haloce-nx/`.
+2. Put your Xbox disc image (`.iso` or `.xiso`) in the same folder.
+3. Start `halo.nro` with full memory: a
    [Sphaira](https://github.com/ITotalJustice/sphaira) forwarder, or a game's
    title takeover (hold R while it starts).
 
-The first start copies the maps and movies out of the disc image. The folder
-then holds:
+The first start copies the maps and movies out of the disc image, then
+starts the game. After that the folder holds:
 
 | | |
 |---|---|
-| `icon.jpg` | the game's own icon, for the forwarder |
+| `icon.jpg` | the game's icon, for the forwarder |
 | `config.toml` | the settings |
-| `profiles/` | the player profiles (the Xbox's u:) |
-| `saves/` | the checkpoint and saved games (z:) |
-| `cache/` | the map caches, which can be deleted and are made again |
+| `profiles/` | player profiles |
+| `saves/` | checkpoint and saved games |
+| `cache/` | map caches (safe to delete) |
 | `logs/` | `halo.log`, `debug.txt`, `gamestate.txt` |
-| `maps/`, `bink/` | the game data and movies, from the disc image |
+| `maps/`, `bink/` | game data and movies |
 
-The game updates itself from this repository's releases: at start-up it
-looks for a newer one and asks if you want to install it.
+The game updates itself from this repository's releases, asking first.
 
-## Game data
+## Features
 
-The port does not include the game data. Download an Xbox disc image
-(`.xiso` or `.iso`) of Halo: Combat Evolved. All versions of the game
-operate. The maps of the European (PAL) version were made for a slower
-console. The port changes them to play as the North American (NTSC) maps do,
-so players of the two versions can play together.
+- deko3d renderer
+- online play: server browser, public games, invite links, hosting
+- the disc's movies (intro, menus, credits, cutscene sound)
+- controllers for players 1–4 and handheld
 
-1. Start the game.
-2. At the first start, the game asks for the disc image. Select it.
-3. The game extracts the `maps/` folder. Then the game starts.
+## Build
 
-On Linux and Windows, the game puts `maps/` next to the executable. On
-Android, copy the disc image to the phone first. The app puts `maps/` in its
-data folder. Refer to [port/android/README.md](port/android/README.md).
-
-On the Nintendo Switch there is no file browser to pick the image with, so put
-the disc image on the card yourself:
-
-```
-sdmc:/switch/halo/halo.iso
+```sh
+python3 configure.py    # --release for a release build
+ninja switch            # build/switch/halo.nro
 ```
 
-The game finds it there on the first run and unpacks `maps/` itself, which
-takes a few minutes and writes about 1.7 GB, so leave the card in and keep that
-much space free. The log says which file it is copying and how far it has got.
-If you would rather unpack it yourself, `maps/` still works: put it at
-`sdmc:/switch/halo/maps/` and the game uses it as it is. Refer to
-[port/switch/README.md](port/switch/README.md).
+Requirements and design: [port/switch/README.md](port/switch/README.md).
 
-## Platforms
+## Credits
 
-Each platform has its own instructions:
+- **Bungie**: Halo: Combat Evolved. Halo is a trademark of Microsoft.
+- **[punpckhdq/halo](https://github.com/punpckhdq/halo)**,
+  **[bnunu/halo-1](https://github.com/bnunu/halo-1)**: the decompilation.
+- **[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)**: the native
+  port, netcode and menus.
+- **[thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal)**:
+  the Switch port and its deko3d renderer, which this is a fork of.
+- **nx-mod**: movies, icon, the one-file install and folder layout, releases.
+- **[devkitPro](https://devkitpro.org)**, **[FFmpeg](https://ffmpeg.org)**,
+  **[musl](https://musl.libc.org)**.
 
-| Platform | Instructions |
-| --- | --- |
-| Linux (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/linux/README.md](port/linux/README.md) |
-| Windows (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/windows/README.md](port/windows/README.md) |
-| Android (arm64 app, Vulkan or OpenGL ES 3, SDL3) | [port/android/README.md](port/android/README.md) |
-| Nintendo Switch (homebrew program, deko3d, SDL2) | [port/switch/README.md](port/switch/README.md) |
-
-The Linux README also gives the controls, the settings and the multiplayer
-functions. These are almost the same on all platforms.
-
-## Graphics backends
-
-On Android, the game can draw with Vulkan (the default) or with OpenGL ES.
-To change it, open **SETTINGS** from the main menu, choose a profile, and
-open **VIDEO SETUP**:
-
-- **GRAPHICS BACKEND:** `VULKAN` or `OPENGL`.
-- **VULKAN DRIVER** (only when the backend is `VULKAN`): `STOCK`, the
-  phone's own driver, or `TURNIP`, the open-source Mesa driver for
-  Qualcomm Adreno GPUs, which the app downloads.
-
-Select **OK**, then close the game and start it again: the backend and the
-driver change only when the game starts. The line below the version number
-in the main menu shows the backend and driver that run. For more, such as
-a driver archive of your own, refer to "Graphics: OpenGL ES and Vulkan" in
-[port/android/README.md](port/android/README.md).
-
-The Switch draws with deko3d, the console's own graphics interface, and
-has no backend setting. Linux and Windows draw with OpenGL.
-
-## Multiplayer
-
-The game can play system link games on a local network and on the internet:
-
-- A system link game can have up to 128 players on up to 128 machines.
-- Linux, Windows and Android machines can play in the same game.
-- An invite link lets a machine join a game on the internet. No server of
-  this project is necessary.
-- The netcode is new. Each machine moves its own player at once,
-  and the host makes the decisions for the game. Refer to
-  [port/linux/NETCODE.md](port/linux/NETCODE.md).
-
-## Build the game
-
-You do not need the Xbox SDK. The port supplies the SDK declarations that
-the game uses. Refer to [port/include/xdk](port/include/xdk/README.md).
-
-To build the game:
-
-1. Install Python and [ninja](https://ninja-build.org/).
-2. Install the tools for your platform. Refer to the README for the
-   platform.
-3. In the root folder of the repository, enter `python configure.py`.
-4. Enter `ninja` with the target for the platform:
-
-| Target | Result |
-| --- | --- |
-| `ninja linux` | `build/linux/halo` |
-| `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` |
-| `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` |
-| `ninja switch` | `build/switch/halo.nro` and `build/switch/halo_guest.elf` |
-
-The Switch needs two toolchains and neither can be replaced by the other.
-devkitPro builds the host (`devkitA64`, `libnx`, `switch-sdl2`,
-`switch-mesa`, `switch-libdrm_nouveau`), and the Android NDK builds the game
-image, which is ILP32 AArch64 - 32-bit pointers, because the Xbox data
-formats embed them and have to keep their layout. devkitA64 cannot build it,
-being LP64 only. So the Switch build wants the same NDK as the Android build,
-found as it is there, plus devkitPro:
-
-```
-sudo dkp-pacman -S --needed devkitA64 libnx switch-sdl2 switch-mesa switch-libdrm_nouveau
-```
-
-`configure.py` finds devkitPro through `DEVKITPRO`, or `/opt/devkitpro`, or
-`~/devkitpro`. Both files are needed to run: the NRO is the program, and the
-ELF is the game image it loads from the card.
-
-If you enter `ninja` without a target, ninja builds the game for the
-computer that you use.
-
-`tools/ci_build.py` makes the same builds as GitHub Actions. For example,
-enter `python tools/ci_build.py linux release`.
-
-### Build options
-
-Give these options to `configure.py`:
-
-| Option | Result |
-| --- | --- |
-| (none) | A debug build. A failed assertion stops the game. |
-| `--release` | A release build. The game does not examine assertions, as in the retail game. |
-| `--portable` | The Linux and Windows builds operate on all x86-64 processors. Use this option for builds that you give to other persons. |
-| `--lto=thin`, `--lto=off` | Less link-time optimization. The link is faster. |
-| `--pgo=off` | No profile-guided optimization. |
-| `--pgo=train` | Records a new optimization profile. Refer to "Optimization profiles". |
-
-Without `--portable`, the Linux and Windows builds use all the instructions
-of the processor that builds them (`-march=native`). Such a build does not
-always start on a different computer.
-
-### Optimization profiles
-
-The builds use profiles of the game to optimize the code:
-
-- `pgo/halo_linux.profdata` for Linux and Android.
-- `pgo/halo_windows.profdata` for Windows.
-
-The profiles need clang 22 or later. With an older clang, the builds do not
-use the profiles.
-
-To record a new profile:
-
-1. Delete the profile.
-2. Enter `python configure.py --pgo=train`.
-3. Enter `ninja linux` or `ninja windows`.
-
-The build then plays the main menu and the first minute of each campaign
-level. This procedure continues for approximately 15 minutes. The game
-data must be in `assets/`.
+Not affiliated with Microsoft or Bungie.
