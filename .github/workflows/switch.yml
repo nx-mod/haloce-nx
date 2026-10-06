@@ -1,0 +1,163 @@
+name: Switch
+
+# The Nintendo Switch build, for this repository's releases only: pushing a
+# tag v<version> builds the debug and release builds and publishes them as
+# the release build-<run number>, titled with the version - the form the
+# game's updater reads (port/switch/host/host_update.c). Run by hand (workflow_dispatch) it builds them as
+# artifacts. Nothing else is built here: build.yml (every platform, from
+# thelinkin3000/halo-ce-universal) is disabled in this repository. The job is
+# build.yml's Switch job.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: switch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  switch:
+    # Two toolchains and neither can be replaced by the other: devkitA64 builds
+    # the host, and the Android NDK builds the guest, which is ILP32 AArch64
+    # (32-bit pointers, because the Xbox data formats embed them) and so
+    # cannot be built by devkitA64 at all.
+    #
+    # It runs in devkitPro's own image. Their package hosts
+    # (apt.devkitpro.org, pkg.devkitpro.org) answer 403 to a GitHub runner and
+    # to a plain curl - everything, the repository's root included - so
+    # installing devkitPro, or its SDL2 and Mesa, from them does not work here.
+    # The image carries the toolchain; the Android NDK comes from Google, which
+    # does answer.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    container: devkitpro/devkita64:latest
+    timeout-minutes: 60
+    env:
+      DEVKITPRO: /opt/devkitpro
+      DEVKITA64: /opt/devkitpro/devkitA64
+    steps:
+      # Prove the image has what the host links against, and say which is
+      # missing if it does not. Better a clear message now than a link error
+      # two steps later that reads like a build problem.
+      - name: Check the toolchain
+        run: |
+          echo "--- /opt/devkitpro ---"
+          ls /opt/devkitpro
+          echo "--- portlibs/switch/lib ---"
+          ls /opt/devkitpro/portlibs/switch/lib 2>&1 | head -20 || true
+          for library in libSDL2 libGLESv2 libEGL; do
+            if [ -f "/opt/devkitpro/portlibs/switch/lib/$library.a" ]; then
+              echo "found $library"
+            else
+              echo "::error::$library is not in the image; the host will not link without it"
+            fi
+          done
+          if [ -f /opt/devkitpro/libnx/lib/libdeko3d.a ]; then
+            echo "found libdeko3d"
+          else
+            echo "::error::libdeko3d is not in the image; the host will not link without it"
+          fi
+
+      # The guest needs the NDK, which the image does not carry and the
+      # runner's own SDK is not visible from inside a container. Android
+      # publishes the whole NDK as one archive, so it is fetched and pointed
+      # at with ANDROID_NDK_HOME, which is what configure.py reads.
+      - name: Install the Android NDK
+        run: |
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q ndk.zip -d /opt
+          rm ndk.zip
+          # ANDROID_NDK_HOME only. Its bin directory is deliberately *not* on
+          # PATH: musl is compiled by clang, and the NDK's clang 17 does not
+          # know -fno-define-target-os-macros, which musl's Apple-target
+          # configuration passes. The runner's own clang (18) does. The build
+          # calls the NDK's llvm-ar and ld.lld by path, so nothing needs it
+          # on PATH.
+          echo "ANDROID_NDK_HOME=/opt/android-ndk-r26d" >> "$GITHUB_ENV"
+
+      - name: Install the build tools
+        run: |
+          # The guest is compiled for arm64_32, which only recent clang knows
+          # well; Debian's clang 14 emits indirect branches the ELF assembler
+          # will not take, so LLVM's own builds are used instead.
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+            gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-22 main" \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update
+          # (meson, bison, flex, mako and git: UAM, deko3d's shader compiler,
+          # fetched and built into the program for the deko3d renderer -
+          # without them the build leaves it out, and that renderer can
+          # compile no shader on the console)
+          apt-get install -y --no-install-recommends python3 ninja-build ccache clang-22 unzip curl zip gnupg \
+            meson bison flex python3-mako git gh
+          clang-22 --version | head -1
+          ln -sf /usr/bin/clang-22 /usr/local/bin/clang
+
+      - uses: actions/checkout@v4
+
+      # a release tag must match the program's version (nacp_version in
+      # tools/switch_build.py): bump it first (port/switch/README.md)
+      - name: Version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(python3 -c "import re; print(re.search(r'nacp_version = \"(.+)\"', open('tools/switch_build.py').read()).group(1))")
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "::error::tag ${{ github.ref_name }} but nacp_version is $version: bump it in tools/switch_build.py first"
+            exit 1
+          fi
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-switch-${{ github.sha }}
+          restore-keys: ccache-switch-
+
+      # musl for the guest, which configure.py fetches
+      - uses: actions/cache@v4
+        with:
+          path: build/android/third_party
+          key: android-third-party-${{ hashFiles('tools/android_build.py') }}
+
+      - name: Debug
+        run: python3 tools/ci_build.py switch debug
+
+      - name: Release
+        run: python3 tools/ci_build.py switch release
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-switch-debug
+          path: dist/halo-switch-debug
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-switch-release
+          path: dist/halo-switch-release
+          retention-days: 3
+
+      # The release, in the form the updater reads (port/switch/host/host_update.c):
+      # tagged build-<run number>, titled with the version, with the Switch's
+      # archives stored (not deflated) and named as every build expects them.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir release
+          for kind in release debug; do
+            (cd "dist/halo-switch-$kind" && zip -0 -qr "$GITHUB_WORKSPACE/release/halo-switch-$kind.zip" .)
+          done
+          ls -l release
+          gh release create "build-$GITHUB_RUN_NUMBER" release/*.zip --target "$GITHUB_SHA" --latest \
+            --title "${TAG#v} (build $GITHUB_RUN_NUMBER)" \
+            --notes "Nintendo Switch ${TAG#v}. The release build is for playing; the debug build stops at the first failed assertion and logs it."

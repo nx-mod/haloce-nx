@@ -49,7 +49,9 @@ Sphaira the new build stopped as soon as it had started.
 #define HALO_BUILD_FLAVOR "release"
 #endif
 
-#define UPDATE_REPOSITORY "thelinkin3000/halo-ce-universal"
+/* nx-mod's fork: its builds take its releases (the disc's movies and the
+rest it adds), not thelinkin3000/halo-ce-universal's */
+#define UPDATE_REPOSITORY "nx-mod/haloce-nx"
 #define UPDATE_ASSET "halo-switch-" HALO_BUILD_FLAVOR ".zip"
 #define UPDATE_PROGRAM "halo.nro"
 #define UPDATE_IMAGE "halo_guest.elf"
