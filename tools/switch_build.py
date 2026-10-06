@@ -58,7 +58,9 @@ SDL_DIR = THIRD_PARTY / "SDL3"
 # (nv50_ir and its exceptions), so the host is linked with the C++ driver
 # to bring in the standard library, which is what LittleGPTracker's Switch
 # Makefile does for the same reason.
-HOST_LIBRARIES = ["SDL2", "EGL", "GLESv2", "glapi", "drm_nouveau", "deko3d", "nx", "pthread", "m"]
+# (FFmpeg and libjpeg: the movies, host_bik.c and host_mjx.c)
+HOST_LIBRARIES = ["SDL2", "EGL", "GLESv2", "glapi", "drm_nouveau", "deko3d", "jpeg", "avformat", "avcodec",
+                  "swresample", "avutil", "dav1d", "bz2", "z", "nx", "pthread", "m"]
 
 # UAM, deko3d's shader compiler, built as a library for the console so that
 # the deko3d renderer can compile shaders at run time (port/switch/DEKO3D.md).
@@ -482,7 +484,9 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         f"-I{ANDROID_PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}", f"-I{ZLIB_DIR}", "-Isource -Isource/cseries",
         f"-I{SDL_DIR}/include", f"-I{gl_include}", *libc_includes, f"-idirafter {XDK_INCLUDE}",
     ])
-    guest_host_only = {"memory_watch.c"}  # replaced by guest_memory_watch.c
+    # memory_watch.c is replaced by guest_memory_watch.c, bink_null.c by the
+    # movie player below (port/switch/guest/bink_mjx.c)
+    guest_host_only = {"memory_watch.c", "bink_null.c"}
     # the OpenGL renderer's device, texture cache and anti-aliasing passes:
     # the deko3d renderer's take their place, below
     opengl_only = {"d3d8_gl.c", "xbox_textures.c", "xgpu_post.c"}
@@ -565,6 +569,10 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # the shader cache's guest half (DEKO3D.md, phase 5, step 4): the keys,
     # the key files, the import of the OpenGL records, the startup pass
     dk_objects.append(guest_object(PORT_DIR / "guest" / "dk_shaders.c", platform_cflags))
+    # the movies: the game's Bink calls answered by a player whose pictures
+    # and sound the host decodes (port/switch/host/host_bik.c, host_mjx.c)
+    dk_objects.append(guest_object(PORT_DIR / "guest" / "bink_mjx.c", platform_cflags))
+    dk_objects.append(guest_object(PORT_DIR / "guest" / "mjx.c", platform_cflags))
     n.build(outputs=image, rule="switch_guest_link", inputs=dk_objects, implicit=[libguestc, linker_script])
 
     # ---------- the host, built with devkitA64

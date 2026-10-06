@@ -11,3 +11,9 @@ host_dk_visibility
 host_dk_shader_find
 host_dk_shader_compile
 host_dk_shader_known
+# the movies (port/switch/guest/bink_mjx.c, mjx.c; port/switch/host/host_bik.c, host_mjx.c)
+host_mjx_decode
+host_bik_open
+host_bik_decode
+host_bik_read_audio
+host_bik_close

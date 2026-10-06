@@ -398,4 +398,104 @@ done:
 	return result;
 }
 
+#ifdef HALO_EXTRACTOR_STANDALONE
+/* copies the files of the image's root folder <folder> into
+<destination>/<folder>, which may already exist (each file is written as
+<name>.partial and renamed when whole; one already there at its size is
+kept). Returns nonzero on success, 0 with the reason in error; an image
+without the folder is a success with nothing copied */
+int xiso_extract_folder(const char *image_path, const char *folder, const char *destination,
+	xiso_progress_proc progress, void *context, char *error, int error_size)
+{
+	struct xiso_image image;
+	struct xiso_file *entries = NULL;
+	unsigned char *table = NULL;
+	unsigned char *buffer = NULL;
+	unsigned long root_sector, root_size, folder_size;
+	unsigned long long total = 0, done = 0;
+	char directory[1024], partial[1320], path[1300];
+	int result = 0;
+	int index;
+
+	image.error = error;
+	image.error_size = error_size;
+	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+	if (image.descriptor < 0)
+		return fail(&image, "Could not open %s.", image_path);
+	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
+	buffer = malloc(COPY_BUFFER_SIZE);
+	if (!entries || !buffer)
+	{
+		fail(&image, "Out of memory.%s", NULL);
+		goto done;
+	}
+	if (!find_volume(&image, &root_sector, &root_size))
+		goto done;
+	table = read_directory(&image, root_sector, root_size);
+	if (!table)
+	{
+		fail(&image, "The disc image's file system is damaged.%s", NULL);
+		goto done;
+	}
+	{
+		struct directory_walk walk = { table, root_size, entries, 0, MAXIMUM_FILES, 0, 1 };
+
+		walk_directory(&walk, 0, 0);
+		for (index = 0; index < walk.entry_count && !names_match(entries[index].name, folder); index++)
+			;
+		if (index == walk.entry_count)
+		{
+			result = 1;
+			goto done;
+		}
+		free(table);
+		folder_size = entries[index].size;
+		table = read_directory(&image, entries[index].sector, folder_size);
+		if (!table)
+		{
+			fail(&image, "The disc image's %s folder is damaged.", folder);
+			goto done;
+		}
+	}
+	{
+		struct directory_walk walk = { table, folder_size, entries, 0, MAXIMUM_FILES, 0, 0 };
+
+		walk_directory(&walk, 0, 0);
+		for (index = 0; index < walk.entry_count; index++)
+			total += entries[index].size;
+		snprintf(directory, sizeof(directory), "%s/%s", destination, folder);
+		posix_make_directory(directory);
+		for (index = 0; index < walk.entry_count; index++)
+		{
+			struct stat info;
+
+			snprintf(path, sizeof(path), "%s/%s", directory, entries[index].name);
+			if (stat(path, &info) == 0 && (unsigned long)info.st_size == entries[index].size)
+			{
+				done += entries[index].size;
+				continue;
+			}
+			snprintf(partial, sizeof(partial), "%s.partial", path);
+			platform_log("extracting %s/%s (%lu bytes)", folder, entries[index].name, entries[index].size);
+			if (!copy_file(&image, &entries[index], partial, buffer, &done, total, progress, context))
+				goto done;
+			remove(path);
+			if (rename(partial, path) != 0)
+			{
+				fail(&image, "Could not create %s.", path);
+				goto done;
+			}
+		}
+	}
+	result = 1;
+
+done:
+	close(image.descriptor);
+	free(table);
+	free(entries);
+	free(buffer);
+	return result;
+}
+#endif
+
 #endif

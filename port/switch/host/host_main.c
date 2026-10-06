@@ -588,6 +588,37 @@ static void ensure_game_data(const char *root)
 		host_fatal("%s was unpacked but %s/maps/ui.map is still not there", name, root);
 }
 
+/* The movies (port/switch/guest/bink_mjx.c): the disc's bink folder, copied
+beside maps/ the first time there is a disc image to copy it from, also on
+a console whose maps were unpacked by an earlier version. bink/.extracted
+marks it done, so a disc without movies is not looked through again. */
+static void ensure_movies(const char *root)
+{
+	char path[PATH_MAX + 32], image[PATH_MAX + 32], error[512];
+	struct stat information;
+	const char *name;
+	FILE *marker;
+
+	snprintf(path, sizeof(path), "%s/bink/.extracted", root);
+	if (stat(path, &information) == 0)
+		return;
+	name = find_disc_image(root);
+	if (!name)
+		return;
+	snprintf(image, sizeof(image), "%s/%s", root, name);
+	host_logf(HOST_LOG_INFO, "copying the movies out of %s", name);
+	extraction_image = name;
+	extraction_on_screen = host_ui_open();
+	draw_extraction(NULL, 0, 0);
+	clock_gettime(CLOCK_MONOTONIC, &extraction_started);
+	if (!xiso_extract_folder(image, "bink", root, extraction_progress, NULL, error, sizeof(error)))
+		host_logf(HOST_LOG_WARN, "the movies could not be copied: %s", error);
+	else if ((marker = fopen(path, "w")) != NULL)
+		fclose(marker);
+	if (extraction_on_screen)
+		host_ui_close();
+}
+
 /* The columns of the 480-line picture for the display's shape. SDL2's
 console's own answer, which is 1280x720 in the handheld and 1920x1080
 docked, and which is not always SDL's: the Switch video driver reports
@@ -905,6 +936,7 @@ static void *game_main(void *unused)
 	mkdir(save_root, 0755);
 	log_marker("marker: data paths resolved");
 	ensure_game_data(data_root);
+	ensure_movies(data_root);
 
 	environment_copy_halo(&environment);
 	environment_set(&environment, "HOME", save_root);
