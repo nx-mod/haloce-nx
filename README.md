@@ -3,9 +3,7 @@
 > **nx-mod/haloce-nx** is a fork of
 > [thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal),
 > whose Switch port (a native deko3d renderer, online play) this builds on.
-> It adds what nx-mod's earlier Switch ports had: the disc's movies (Bink,
-> decoded with FFmpeg), copied off the disc image at the first start, and the
-> game's own icon for a forwarder. Only the Switch is built here; for Linux,
+> Only the Switch is built here; for Linux,
 > Windows and Android see
 > [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and thelinkin3000's
 > repository. The earlier ports are archived:
@@ -13,6 +11,30 @@
 > Zink on OpenCE) and [haloce-nx-vita](https://github.com/nx-mod/haloce-nx-vita).
 
 **Tested on** a Switch running firmware (HOS) 22.5.0 with Atmosphère 1.11.2.
+
+## nx-mod's changes
+
+On top of thelinkin3000's port, from nx-mod's earlier Switch ports:
+
+- **The disc's movies.** The intro, the menu's and the credits, and the
+  cutscenes' sound: the game's Bink calls are answered by a player whose
+  pictures and sound the program decodes with FFmpeg (`port/switch/guest/bink_mjx.c`,
+  `mjx.c`; `port/switch/host/host_bik.c`, `host_mjx.c`). The `bink` folder is
+  copied off the disc image at the first start, beside `maps/`.
+- **The game's own icon,** the disc's title image (`default.xbe`), written as
+  `icon.jpg` beside the program for a forwarder (`host_icon.c`).
+- **One file to install:** the game image is inside `halo.nro` (its RomFS),
+  and the updater replaces only that.
+- **The folder's layout:** the program's own folder (`sdmc:/haloce-nx/` by
+  default), the saves in folders named for what they hold (`profiles/`,
+  `saves/`, and the map caches apart in `cache/`), and the logs in `logs/`.
+  Older layouts are moved at start.
+- **Updates from this repository's releases,** made only from release tags
+  and only for the Switch (`.github/workflows/switch.yml`).
+- **Cutscenes:** an object its animation carries (a10's lifeboat) no longer
+  jumps back and forth (`port/linux/game/render_interpolation.c`).
+- **Menus:** frames OpenCE has no picture for yet show the Xbox's own picture
+  instead of a placeholder (`port/assets/menus/ce/bitmaps.xml`).
 
 [![Join OpenCE's Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
 
