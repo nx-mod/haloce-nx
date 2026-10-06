@@ -491,7 +491,12 @@ static void game_state_allocation_record(
 
 	if (!file)
 	{
+#if defined(HALO_SWITCH)
+		/* (port) the Switch's game folder keeps its logs in logs\ */
+		file = fopen("d:\\logs\\gamestate.txt", "w");
+#else
 		file = fopen("d:\\gamestate.txt", "w");
+#endif
 		bss_004d27b0 = file;
 	}
 

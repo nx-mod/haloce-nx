@@ -23,6 +23,7 @@ matched case-insensitively, like the Xbox's FATX volumes.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 /* ---------- paths */
@@ -191,6 +192,24 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 		{
 			struct posix_file_information information;
 
+#if defined(HALO_SWITCH)
+			/* the Switch's game folder names the drives for what they hold
+			(port/switch/host/host_main.c moves older folders): u: the
+			profiles, z: the saves, and z:'s map caches (cacheNNN.map, which
+			can be deleted and are made again) a folder of their own */
+			const char *rest = cursor + 2;
+
+			while (*rest == '\\' || *rest == '/')
+				rest++;
+			if (drive == 'u')
+				snprintf(resolved, sizeof(resolved), "%s/profiles", platform_save_root());
+			else if (drive == 'z')
+				snprintf(resolved, sizeof(resolved), "%s/%s", platform_save_root(),
+					(rest[0] | 0x20) == 'c' && !strncasecmp(rest, "cache", 5) && !strchr(rest, '\\') &&
+					!strchr(rest, '/') && strlen(rest) > 4 && !strcasecmp(rest + strlen(rest) - 4, ".map") ?
+					"cache" : "saves");
+			else
+#endif
 			snprintf(resolved, sizeof(resolved), "%s/%c", platform_save_root(), drive);
 			/* every Xbox drive always exists; create its directory on first use */
 			if (posix_stat(resolved, &information) != 0)

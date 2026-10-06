@@ -132,7 +132,12 @@ static void write_to_debug_file(
 
 	if (!file)
 	{
+#if defined(HALO_SWITCH)
+		/* (port) the Switch's game folder keeps its logs in logs\ */
+		FILE *opened = fopen("d:\\logs\\debug.txt", "a+b");
+#else
 		FILE *opened = fopen("d:\\debug.txt", "a+b");
+#endif
 
 		if (!opened)
 		{
