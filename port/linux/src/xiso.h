@@ -22,4 +22,10 @@ none: maps extracted before the extraction wrote it, whose loading screen's ligh
 it was written. Nothing else of the image is read */
 int xiso_write_missing_loading_picture(const char *image_path, const char *destination);
 
+/* copies the image's root folder <folder> (e.g. "bink", the movies) into
+<destination>/<folder>, alongside what is already there (defined only for
+the Switch host, HALO_EXTRACTOR_STANDALONE) */
+int xiso_extract_folder(const char *image_path, const char *folder, const char *destination,
+	xiso_progress_proc progress, void *context, char *error, int error_size);
+
 #endif

@@ -30,3 +30,9 @@ host_dk_gpu_frame_us
 # the high-res HUD's sheets, decoded by the host (port/switch/host/host_dk_hud.c):
 # png and tag are guest addresses
 host_dk_hud_ready
+# the movies (port/switch/guest/bink_mjx.c, mjx.c; port/switch/host/host_bik.c, host_mjx.c)
+host_mjx_decode
+host_bik_open
+host_bik_decode
+host_bik_read_audio
+host_bik_close
