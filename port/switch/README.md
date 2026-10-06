@@ -76,6 +76,19 @@ The game's own view of the console is that of a 1280x720 handheld or a
 game is told the width to render at. It resizes on its own if the console is
 docked or undocked while the game runs.
 
+## Releasing (nx-mod/haloce-nx)
+
+1. Bump `nacp_version` in `tools/switch_build.py` and commit it.
+2. Tag the commit `v<nacp_version>` and push the tag:
+   `git tag v1.1.0 && git push origin v1.1.0`.
+3. The CI (`.github/workflows/switch.yml`) builds the release and debug
+   builds and publishes them as the release `build-<run number>`, titled
+   with the version: the form the game's updater reads
+   (`host_update.c`). It stops with an error if the tag and
+   `nacp_version` differ.
+
+Only release tags build in this repository, and only the Switch.
+
 ## Game data
 
 The game needs the `maps/` folder out of an Xbox disc image (`.xiso` or

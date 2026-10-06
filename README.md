@@ -1,41 +1,46 @@
-# Halo: Combat Evolved for Linux, Windows, Android and the Nintendo Switch
+# Halo: Combat Evolved for Nintendo Switch
 
-[![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
+> **nx-mod/haloce-nx** is a fork of
+> [thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal),
+> whose Switch port (a native deko3d renderer, online play) this builds on.
+> It adds what nx-mod's earlier Switch ports had: the disc's movies (Bink,
+> decoded with FFmpeg), copied off the disc image at the first start, and the
+> game's own icon for a forwarder. Only the Switch is built here; for Linux,
+> Windows and Android see
+> [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and thelinkin3000's
+> repository. The earlier ports are archived:
+> [haloce-nx-zink](https://github.com/nx-mod/haloce-nx-zink) (OpenGL over
+> Zink on OpenCE) and [haloce-nx-vita](https://github.com/nx-mod/haloce-nx-vita).
 
-This project is a port of the Halo: Combat Evolved decompilation to Linux,
-Windows, Android and the Nintendo Switch. The decompilation is of the Xbox build 2342
-(`cachebeta.exe`, SHA-256
-`4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
+**Tested on** a Switch running firmware (HOS) 22.5.0 with Atmosphère 1.11.2.
 
-<img width="1289" height="995" alt="The game on Linux" src="https://github.com/user-attachments/assets/0d3ad50f-f8b8-46cf-aef8-e3661da2a7d7" />
+[![Join OpenCE's Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
 
-The port starts from the decompilation of [bnunu/halo-1](https://github.com/bnunu/halo-1).
-That project is a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo).
+This project is a port of the Halo: Combat Evolved decompilation. The
+decompilation is of the Xbox build 2342 (`cachebeta.exe`, SHA-256
+`4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`). It starts
+from [bnunu/halo-1](https://github.com/bnunu/halo-1), a fork of
+[punpckhdq/halo](https://github.com/punpckhdq/halo), by way of
+[OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and
+[thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal).
+
+**No game data is included.** You need your own Xbox copy of Halo: Combat
+Evolved.
 
 ## Download
 
-GitHub Actions builds the game for Android and the Switch for each commit
-(for Linux and Windows, see the upstream project,
-[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)). These links
-download the builds of the latest release:
-
-| Platform | Release | Debug |
+| | Release | Debug |
 | --- | --- | --- |
-| Android | [halo-android-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-debug.zip) |
-| Nintendo Switch | [halo-switch-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-release.zip) | [halo-switch-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-debug.zip) |
+| Nintendo Switch | [halo-switch-release.zip](https://github.com/nx-mod/haloce-nx/releases/latest/download/halo-switch-release.zip) | [halo-switch-debug.zip](https://github.com/nx-mod/haloce-nx/releases/latest/download/halo-switch-debug.zip) |
 
 Use the release build to play. The debug build stops at the first failed
-assertion and writes it to the log. Use the debug build to find and report
-problems.
+assertion and writes it to the log; use it to find and report problems.
+Unzip into `sdmc:/switch/halo/` and put an Xbox disc image (`.iso` or
+`.xiso`) of Halo: Combat Evolved beside it; the first start copies the maps
+and movies out of it and writes `icon.jpg` for a forwarder.
 
-The game updates itself. At start-up it looks for a newer release, and asks
-if you want to install it. Refer to "Updates" in
-[port/linux/README.md](port/linux/README.md#updates).
-
-Each build of the `main` branch that passes on all four platforms is a new
-release. The [Releases](https://github.com/thelinkin3000/halo-ce-universal/releases)
-page keeps the last five releases. If the latest build has a problem, get
-an older build from that page.
+The game updates itself from this repository's releases: at start-up it
+looks for a newer one and asks if you want to install it.
 
 ## Game data
 
