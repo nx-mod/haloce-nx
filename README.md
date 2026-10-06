@@ -35,9 +35,26 @@ Evolved.
 
 Use the release build to play. The debug build stops at the first failed
 assertion and writes it to the log; use it to find and report problems.
-Unzip into `sdmc:/switch/halo/` and put an Xbox disc image (`.iso` or
-`.xiso`) of Halo: Combat Evolved beside it; the first start copies the maps
-and movies out of it and writes `icon.jpg` for a forwarder.
+
+1. Copy `halo.nro` (the game is inside it) into `sdmc:/haloce-nx/`.
+2. Put an Xbox disc image (`.iso` or `.xiso`) of Halo: Combat Evolved in the
+   same folder.
+3. Start `halo.nro` with the console's full memory: a
+   [Sphaira](https://github.com/ITotalJustice/sphaira) forwarder, or a game's
+   title takeover (hold R while it starts).
+
+The first start copies the maps and movies out of the disc image. The folder
+then holds:
+
+| | |
+|---|---|
+| `icon.jpg` | the game's own icon, for the forwarder |
+| `config.toml` | the settings |
+| `profiles/` | the player profiles (the Xbox's u:) |
+| `saves/` | the checkpoint and saved games (z:) |
+| `cache/` | the map caches, which can be deleted and are made again |
+| `logs/` | `halo.log`, `debug.txt`, `gamestate.txt` |
+| `maps/`, `bink/` | the game data and movies, from the disc image |
 
 The game updates itself from this repository's releases: at start-up it
 looks for a newer one and asks if you want to install it.
