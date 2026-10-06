@@ -57,7 +57,8 @@ OUTPUTS = {
     # program the console runs, and the ELF is the ILP32 game image it loads
     # from the card. A release with only the NRO is a release that cannot
     # start.
-    "switch": ["build/switch/halo.nro", "build/switch/halo_guest.elf"],
+    # (the game image is inside halo.nro, in its RomFS)
+    "switch": ["build/switch/halo.nro"],
     "web": [],  # the site, below
     "ps5": [],  # the title's folder and what goes beside it, below
 }
