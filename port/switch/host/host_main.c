@@ -359,8 +359,20 @@ void host_wait_for_exit(void)
 	using one aborts the process. Nothing takes a lock after this - a
 	paused thread may hold it. */
 	host_threads_pause();
-	/* libnx's exit, which with __nx_applet_exit_mode (below) closes the
-	program through the system rather than returning to the loader */
+	/* The system closes the program: ISelfController's Exit (command 0),
+	asked here directly. libnx asks it only from its own applet cleanup at
+	exit (with __nx_applet_exit_mode, below), which did not happen - the
+	exit still went back to the loader and its break - so it is not left to
+	that. The system ends the process; the sleep is until it does. */
+	{
+		Service *self = appletGetServiceSession_SelfController();
+
+		if (self && serviceIsActive(self) && R_SUCCEEDED(serviceDispatch(self, 0)))
+		{
+			for (;;)
+				svcSleepThread(INT64_MAX);
+		}
+	}
 	_exit(__atomic_load_n(&exit_code, __ATOMIC_ACQUIRE));
 }
 
@@ -378,7 +390,7 @@ void host_exit(int code)
 	host_logf(HOST_LOG_INFO, "the game exited (%d)", code);
 	host_restore_clocks();
 	host_dk_shutdown();
-	host_logf(HOST_LOG_INFO, "exit: the GPU is finished and the display let go; the main thread exits");
+	host_logf(HOST_LOG_INFO, "exit: the GPU is finished and the display let go; the main thread asks the system to close");
 	pthread_mutex_lock(&log_lock);
 	log_drain_locked();
 	if (log_descriptor >= 0)
