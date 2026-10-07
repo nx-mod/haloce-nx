@@ -2900,12 +2900,28 @@ void network_game_server_begin_game_start_countdown(
 	return;
 }
 
+long config_integer(char const *name);
+
+/* (nx-mod/haloce-nx) the players a game this machine hosts needs to start:
+network.host_minimum_players, 1 by default, which lets the host start alone
+(START NOW did nothing in a lobby of one) with no other machine and no
+second team, the rest joining the game under way; the game's own (the Xbox's
+2) when it is set to 2. Read here, not written into the game, because the
+game's settings are made again (a map, a game type) after the server is. */
+static long server_minimum_players(
+	struct network_game_server *server)
+{
+	long minimum = PIN(config_integer("network.host_minimum_players"), 1, 2);
+
+	return minimum < (long)server->game.minimum_players ? minimum : (long)server->game.minimum_players;
+}
+
 boolean server_needs_more_teams(
 	struct network_game_server *server)
 {
 	boolean needs_more_teams = FALSE;
 
-	if (server->game.variant.universal_variant.teams)
+	if (server->game.variant.universal_variant.teams && server_minimum_players(server) > 1)
 	{
 		short player_count_by_team[NUMBER_OF_MULTIPLAYER_TEAMS] = { 0, 0 };
 		long player_index;
@@ -2985,7 +3001,7 @@ boolean server_has_enough_machines(
 	/* (port: a host that may start alone, network.host_minimum_players,
 	needs no other machine either) */
 	long minimum_machine_count =
-		network_game_is_splitscreen_local() || server->game.minimum_players <= 1 ? 1 : 2;
+		network_game_is_splitscreen_local() || server_minimum_players(server) <= 1 ? 1 : 2;
 	long machine_count = 0;
 	long client_machine_index;
 
@@ -3013,7 +3029,7 @@ boolean server_ok_to_countdown(
 	if (server_has_enough_machines(server) &&
 		server_has_a_player_on_each_machine(server) &&
 		!server_needs_more_teams(server) &&
-		server->game.player_count >= server->game.minimum_players)
+		server->game.player_count >= server_minimum_players(server))
 	{
 		return TRUE;
 	}
@@ -3174,7 +3190,7 @@ boolean network_game_server_game_can_start(
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x782, server);
 
 	return server->state == 0 &&
-		server->game.player_count >= server->game.minimum_players;
+		server->game.player_count >= server_minimum_players(server);
 }
 
 void network_game_server_pause_countdown(
@@ -3894,15 +3910,9 @@ static struct
 	long maximum_players;
 } network_game_server_port_settings;
 
-long config_integer(char const *name);
-
 static void network_game_server_port_settings_apply(
 	struct network_game_server *server)
 {
-	/* (nx-mod/haloce-nx) network.host_minimum_players: 1 lets a host start
-	alone (START NOW did nothing in an empty lobby), the others joining the
-	game under way; the Xbox's 2 otherwise */
-	server->game.minimum_players = (byte)PIN(config_integer("network.host_minimum_players"), 1, 2);
 	if (network_game_server_port_settings.name[0])
 	{
 		ustrncpy(server->game.name, network_game_server_port_settings.name, NETWORK_GAME_NAME_LENGTH - 1);
