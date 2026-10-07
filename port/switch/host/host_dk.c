@@ -2852,3 +2852,23 @@ struct tag_DkDevice *host_dk_device(void)
 		return NULL;
 	return dk.device;
 }
+
+/* (nx-mod/haloce-nx) before the process exits (host_exit, on the game
+thread, the only one that touches deko3d): the GPU let finish and the
+swapchain let go of the console's window, so that libnx's exit does not close
+the display under a queue still presenting to it - Quit crashed */
+void host_dk_shutdown(void)
+{
+	pthread_mutex_lock(&dk_lock);
+	if (!dk.ready)
+	{
+		pthread_mutex_unlock(&dk_lock);
+		return;
+	}
+	/* (other threads read the fences while ready: host_dk_retired) */
+	dk.ready = 0;
+	pthread_mutex_unlock(&dk_lock);
+	dkQueueWaitIdle(dk.queue);
+	dkSwapchainDestroy(dk.swapchain);
+	dkQueueDestroy(dk.queue);
+}

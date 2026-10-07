@@ -10,7 +10,9 @@ file came to believe there were none and answered every call with failure.
 host_main.c initialises them (socketInitializeDefault) at startup.
 
 The socket calls are posix_net.c's, which turns POSIX results into the
-Winsock ones the game expects, with three differences: no SOCK_CLOEXEC
+Winsock ones the game expects, with four differences: no MSG_NOSIGNAL (it
+is Linux's, and Horizon's socket service refuses a send that has it - the
+server browser listed nothing; nx-mod/haloce-nx), no SOCK_CLOEXEC
 (nothing is ever exec'd here), accept rather than accept4, and the local
 address found only by the route a UDP socket would take (there is no
 getifaddrs). posix_net.c itself is not compiled: the rest of it is the
@@ -140,7 +142,7 @@ static int fail(void)
 	case ENETUNREACH: last_error = WSAENETUNREACH; break;
 	case ENETRESET: last_error = WSAENETRESET; break;
 	case ECONNABORTED: last_error = WSAECONNABORTED; break;
-	/* a send on a connection the other end reset (with MSG_NOSIGNAL):
+	/* a send on a connection the other end reset:
 	Winsock's WSAECONNRESET, which the game takes as the connection lost */
 	case ECONNRESET: case EPIPE: last_error = WSAECONNRESET; break;
 #ifdef ESHUTDOWN
@@ -290,7 +292,7 @@ int posix_socket_accept(int socket, void *address, int *address_length)
 
 int posix_socket_send(int socket, const void *buffer, int length, int flags)
 {
-	return succeed((int)send(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL));
+	return succeed((int)send(socket, buffer, (size_t)length, flags & ~MSG_NOSIGNAL));
 }
 
 int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
@@ -310,7 +312,7 @@ int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
 		if (directed)
 			((struct sockaddr_in *)&converted)->sin_addr.s_addr = directed;
 	}
-	result = (int)sendto(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL,
+	result = (int)sendto(socket, buffer, (size_t)length, flags & ~MSG_NOSIGNAL,
 		address ? (struct sockaddr *)&converted : NULL, converted_length);
 	return succeed(result);
 }

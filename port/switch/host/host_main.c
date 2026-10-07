@@ -338,6 +338,8 @@ void host_exit(int code)
 {
 	host_logf(HOST_LOG_INFO, "the game exited (%d)", code);
 	host_restore_clocks();
+	host_dk_shutdown();
+	host_logf(HOST_LOG_INFO, "exit: the GPU is finished and the display let go");
 	/* (nx-mod/haloce-nx) the log written out while its thread still runs;
 	then every other thread is paused where it is, because libnx's exit
 	shuts the controllers', sound's and sockets' services down and a thread
@@ -686,45 +688,61 @@ static void restart_count_clear(void)
 	remove(path);
 }
 
-/* (nx-mod/haloce-nx) The shader keys a release ships (port/switch/
-shader_keys.dkk, in the NRO's RomFS as keys.dkk), written where the game reads
-its shared key file, z:\shader_keys\keys.dkk (port/switch/guest/
-dk_shaders.c, cache/shader_keys/ here): the game compiles every key in it in
-the background at start, so what has been played before is not compiled
-while playing. Written when missing or different. */
 static void *read_file(const char *path, size_t *size);
 
-static void install_shipped_keys(const char *root)
+/* (nx-mod/haloce-nx) A file the release ships inside the NRO's RomFS,
+written to the card where the game reads it, when it is missing there or
+different: the one-file install has nothing beside halo.nro to carry it.
+
+- keys.dkk, the shader keys a release ships (port/switch/shader_keys.dkk, if
+  there is one), to the game's shared key file z:\shader_keys\keys.dkk
+  (port/switch/guest/dk_shaders.c, cache/shader_keys/ here): the game
+  compiles every key in it in the background at start, so what has been
+  played before is not compiled while playing.
+- brokers.txt, internet play's signalling brokers (network.brokers_file,
+  port/assets/network/brokers.txt): without it the server browser lists
+  nothing and invites cannot work. */
+static void install_shipped(const char *name, const char *folder, const char *path)
 {
-	char path[PATH_MAX + 64];
+	char romfs_path[64];
 	void *shipped, *installed;
 	size_t shipped_size = 0, installed_size = 0;
 	FILE *file;
 
 	if (R_FAILED(romfsInit()))
 		return;
-	shipped = read_file("romfs:/keys.dkk", &shipped_size);
+	snprintf(romfs_path, sizeof(romfs_path), "romfs:/%s", name);
+	shipped = read_file(romfs_path, &shipped_size);
 	romfsExit();
 	if (!shipped)
 		return;
-	snprintf(path, sizeof(path), "%s/cache/shader_keys/keys.dkk", root);
 	installed = read_file(path, &installed_size);
 	if (!installed || installed_size != shipped_size || memcmp(installed, shipped, shipped_size))
 	{
-		snprintf(path, sizeof(path), "%s/cache", root);
-		mkdir(path, 0755);
-		snprintf(path, sizeof(path), "%s/cache/shader_keys", root);
-		mkdir(path, 0755);
-		snprintf(path, sizeof(path), "%s/cache/shader_keys/keys.dkk", root);
+		if (folder)
+			mkdir(folder, 0755);
 		if ((file = fopen(path, "wb")) != NULL)
 		{
 			fwrite(shipped, 1, shipped_size, file);
 			fclose(file);
-			host_logf(HOST_LOG_INFO, "shader keys: the release's %zu bytes written to %s", shipped_size, path);
+			host_logf(HOST_LOG_INFO, "the release's %s (%zu bytes) written to %s", name, shipped_size, path);
 		}
 	}
 	free(installed);
 	free(shipped);
+}
+
+static void install_shipped_files(const char *root, const char *data)
+{
+	char path[PATH_MAX + 64], cache[PATH_MAX + 16], keys[PATH_MAX + 32];
+
+	snprintf(cache, sizeof(cache), "%s/cache", root);
+	mkdir(cache, 0755);
+	snprintf(keys, sizeof(keys), "%s/cache/shader_keys", root);
+	snprintf(path, sizeof(path), "%s/keys.dkk", keys);
+	install_shipped("keys.dkk", keys, path);
+	snprintf(path, sizeof(path), "%s/brokers.txt", data);
+	install_shipped("brokers.txt", NULL, path);
 }
 
 /* (nx-mod/haloce-nx) The save drives' folders are named for what they hold
@@ -1140,7 +1158,7 @@ static void *game_main(void *unused)
 		snprintf(save_root, sizeof(save_root), "%s", data_root);
 	mkdir(save_root, 0755);
 	move_save_folders(save_root);
-	install_shipped_keys(save_root);
+	install_shipped_files(save_root, data_root);
 	log_marker("marker: data paths resolved");
 	ensure_game_data(data_root);
 	ensure_movies(data_root);

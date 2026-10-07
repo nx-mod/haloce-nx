@@ -179,6 +179,8 @@ extern int host_dk_presenting;
 deko3d guest half's IsBusy and its locks wait against it (DEKO3D.md,
 phase 3) */
 uint32_t host_dk_retired(void);
+/* the GPU finished and the swapchain let go, before an exit */
+void host_dk_shutdown(void);
 /* called as each 16 MB chunk of the window is committed (host_memory.c);
 under the deko3d renderer the chunk gets a deko3d memory block (phase 3) */
 void host_dk_window_chunk_committed(uint64_t address, uint64_t size);
