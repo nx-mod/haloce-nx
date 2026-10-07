@@ -852,11 +852,14 @@ int getpagesize(void)
 
 /* The main thread parks here once the game thread is started, because the
 game ends the process itself (host_exit). An idle loop is enough: there is
-nothing to wait for and nothing to wake it. */
+nothing to wait for and nothing to wake it. The sleep is INT64_MAX: the
+kernel's argument is signed, and UINT64_MAX is -1, one of its yields (0, -1
+and -2 yield and return at once), which kept this thread spinning on the
+game's core for as long as the game ran. */
 int pause(void)
 {
 	for (;;)
-		svcSleepThread(UINT64_MAX);
+		svcSleepThread(INT64_MAX);
 }
 
 /* ---------- the guest's environment */
