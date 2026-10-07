@@ -459,7 +459,7 @@ static const struct config_setting config_settings[] =
 	{ "overlay.enabled", _config_boolean, "true", "HALO_OVERLAY", _environment_value, _platform_android,
 		"Show the frame rate overlay." },
 	{ "overlay.position", _config_string, "\"top\"", "HALO_OVERLAY_POSITION", _environment_value, _platform_android,
-		"Where the overlay sits: \"top\" or \"bottom\" left of the screen." },
+		"Where the overlay sits: \"top\" or \"bottom\" of the screen, centered." },
 	{ "overlay.frame_time", _config_boolean, "true", "HALO_OVERLAY_FRAME_TIME", _environment_value, _platform_android,
 		"Show the slowest frame of the last second in milliseconds (MS): the\n"
 		"number a stutter shows up in, where the frame rate averages it away." },

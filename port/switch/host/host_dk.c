@@ -1098,7 +1098,10 @@ static void overlay_draw(uint32_t flags, uint32_t screen_width, uint32_t screen_
 	cell = (int32_t)screen_height / 180;
 	if (cell < 2)
 		cell = 2;
-	x = cell * 3;
+	/* centered across, as the archived port's was */
+	x = ((int32_t)screen_width - (length * 4 - 1) * cell) / 2;
+	if (x < cell)
+		x = cell;
 	y = (flags & DK_OVERLAY_BOTTOM) ? (int32_t)screen_height - cell * 9 : cell * 3;
 	/* the blit to the screen is the 2D engine's; the clears come after it */
 	dkCmdBufBarrier(dk.commands, DkBarrier_Full, 0);
@@ -1129,7 +1132,6 @@ static void overlay_draw(uint32_t flags, uint32_t screen_width, uint32_t screen_
 			}
 		}
 	}
-	(void)screen_width;
 	dk.state_dirty = 1;
 }
 
