@@ -616,6 +616,9 @@ static void extraction_progress(void *context, const char *file, unsigned long l
  * and an .iso beside the port is unpacked into one. The second is here because
  * the first asks for a gigabyte and a half of somebody else's files, and most
  * people who want to run this have the disc image instead. */
+/* whether this start unpacked anything (ensure_game_data, ensure_movies) */
+static int unpacked_this_start;
+
 static void ensure_game_data(const char *root)
 {
 	char image[PATH_MAX + 32];
@@ -663,6 +666,7 @@ static void ensure_game_data(const char *root)
 		host_ui_close();
 	host_logf(HOST_LOG_INFO, "unpacked %llu MB from %s in %u s", extraction_total / (1024 * 1024), name,
 		extraction_seconds);
+	unpacked_this_start = 1;
 	if (!directory_has_maps(root))
 		host_fatal("%s was unpacked but %s/maps/ui.map is still not there", name, root);
 }
@@ -690,6 +694,7 @@ static void ensure_movies(const char *root)
 	extraction_on_screen = host_ui_open();
 	draw_extraction(NULL, 0, 0);
 	clock_gettime(CLOCK_MONOTONIC, &extraction_started);
+	unpacked_this_start = 1;
 	if (!xiso_extract_folder(image, "bink", root, extraction_progress, NULL, error, sizeof(error)))
 		host_logf(HOST_LOG_WARN, "the movies could not be copied: %s", error);
 	else if ((marker = fopen(path, "w")) != NULL)
@@ -1216,6 +1221,12 @@ static void *game_main(void *unused)
 	log_marker("marker: data paths resolved");
 	ensure_game_data(data_root);
 	ensure_movies(data_root);
+	/* (nx-mod/haloce-nx) after unpacking, the game starts in a new process:
+	in this one the unpacking's memory was in the way of the game's, and the
+	start crashed (the next one did not) - the archived port's fix
+	(haloce-nx-zink 8c6da207) */
+	if (unpacked_this_start)
+		restart_program("the game data was unpacked");
 	ensure_icon(data_root);
 
 	environment_copy_halo(&environment);
