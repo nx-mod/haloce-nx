@@ -298,59 +298,19 @@ int host_sdl_gl_swap_interval(void)
 	return swap_interval;
 }
 
-/* The clocks: raised for the game, and said once.
+/* The clocks: said once, and left alone (nx-mod/haloce-nx).
 
-The game is bound by one CPU core - the game itself, the Direct3D to GL
-translation and Mesa's driver all run on its thread, and only 2-4% of a
-frame was spent waiting on the GPU - and a homebrew title starts at the
-handheld defaults, 1020 MHz. 1785 MHz is the CPU's highest rate Nintendo's
-own titles are allowed, and 1600 MHz the memory's docked rate, which titles
-may also use in handheld. The rates found are put back when the game exits.
+The upstream port raised them at start - the CPU to 1785 MHz, the memory to
+1600 MHz, the GPU to 768 MHz docked or 460.8 MHz in handheld - when the
+game, the Direct3D translation and Mesa's driver all ran on one thread. Under
+deko3d the game thread ran some 4-7 ms of a 16.7 ms frame and the GPU some
+4-5 ms at those rates, room enough at the console's defaults, so nothing is
+raised: the clocks are the player's, set outside the game with sys-clk.
+Setting them here fought sys-clk, and lowering them under the game hung it. */
 
-The GPU was left where a homebrew title starts, 307 MHz, on the strength of
-that 2-4%. It was measured in light scenes: in an internet game of 24
-players the game fell to 27-35 fps with the swap still taking 0.2 ms, which
-a driver blocking inside its own calls on a busy GPU would also look like.
-So it is given what titles run at: 768 MHz docked, 460.8 MHz in handheld,
-chosen by the mode the console is in when the game starts. */
-#define GAME_CPU_HZ 1785000000u
-#define GAME_MEMORY_HZ 1600000000u
-#define GAME_GPU_DOCKED_HZ 768000000u
-#define GAME_GPU_HANDHELD_HZ 460800000u
-
-static u32 original_cpu_hz, original_memory_hz, original_gpu_hz;
-
-static void set_clock(PcvModuleId module, u32 hz)
-{
-	ClkrstSession session;
-
-	if (!hz || R_FAILED(clkrstOpenSession(&session, module, 3)))
-		return;
-	clkrstSetClockRate(&session, hz);
-	clkrstCloseSession(&session);
-}
-
-static u32 get_clock(PcvModuleId module)
-{
-	ClkrstSession session;
-	u32 hz = 0;
-
-	if (R_SUCCEEDED(clkrstOpenSession(&session, module, 3)))
-	{
-		clkrstGetClockRate(&session, &hz);
-		clkrstCloseSession(&session);
-	}
-	return hz;
-}
-
+/* (nothing was raised, so there is nothing to put back) */
 void host_restore_clocks(void)
 {
-	if (R_FAILED(clkrstInitialize()))
-		return;
-	set_clock(PcvModuleId_CpuBus, original_cpu_hz);
-	set_clock(PcvModuleId_EMC, original_memory_hz);
-	set_clock(PcvModuleId_GPU, original_gpu_hz);
-	clkrstExit();
 }
 
 static void log_clocks(void)
@@ -370,22 +330,6 @@ static void log_clocks(void)
 	{
 		host_logf(HOST_LOG_INFO, "clocks: clkrst is not available");
 		return;
-	}
-	original_cpu_hz = get_clock(PcvModuleId_CpuBus);
-	original_memory_hz = get_clock(PcvModuleId_EMC);
-	original_gpu_hz = get_clock(PcvModuleId_GPU);
-	host_logf(HOST_LOG_INFO, "clocks: found cpu %u MHz, memory %u MHz, gpu %u MHz",
-		original_cpu_hz / 1000000, original_memory_hz / 1000000, original_gpu_hz / 1000000);
-	if (original_cpu_hz && original_cpu_hz < GAME_CPU_HZ)
-		set_clock(PcvModuleId_CpuBus, GAME_CPU_HZ);
-	if (original_memory_hz && original_memory_hz < GAME_MEMORY_HZ)
-		set_clock(PcvModuleId_EMC, GAME_MEMORY_HZ);
-	{
-		u32 gpu_hz = appletGetOperationMode() == AppletOperationMode_Console ? GAME_GPU_DOCKED_HZ :
-			GAME_GPU_HANDHELD_HZ;
-
-		if (original_gpu_hz && original_gpu_hz < gpu_hz)
-			set_clock(PcvModuleId_GPU, gpu_hz);
 	}
 	for (index = 0; index < sizeof(clocks) / sizeof(clocks[0]); index++)
 	{
