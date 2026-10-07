@@ -289,6 +289,11 @@ static const struct config_setting config_settings[] =
 		"The server browser: public games are listed through the signalling\n"
 		"brokers, and Join Game > Server Browser shows them. False lists no\n"
 		"game of this machine's and shows none." },
+	{ "network.host_minimum_players", _config_integer, "1", "HALO_NET_HOST_MINIMUM_PLAYERS", _environment_value,
+		_platform_all,
+		"The players a game this machine hosts needs before it can start (START\n"
+		"NOW, the countdown): 1 lets the host start alone, and the rest join the\n"
+		"game under way; 2 is the Xbox's." },
 	{ "network.host_public", _config_boolean, "true", "HALO_NET_HOST_PUBLIC", _environment_value, _platform_all,
 		"Whether a new game of Create Game > Internet starts as PUBLIC (listed\n"
 		"in everyone's server browser: anyone can see and join it) or, false,\n"
