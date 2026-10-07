@@ -201,6 +201,9 @@ static struct
 	/* the targets bound now (NULL: none) */
 	struct target *color, *depth;
 	unsigned long frames_presented;
+	/* the swapchain image presented last, -1 before the first: a held frame
+	shows it again (present) */
+	int shown_slot;
 	uint32_t target_clock;
 
 	/* ---------- draws: what the guest has told the host (dk_commands.h), which
@@ -829,6 +832,7 @@ static int initialize(void)
 	}
 	dkSwapchainMakerDefaults(&swapchain_maker, dk.device, nwindowGetDefault(), screen_images, SCREEN_IMAGES);
 	dk.swapchain = dkSwapchainCreate(&swapchain_maker);
+	dk.shown_slot = -1;
 	host_logf(HOST_LOG_INFO, "deko3d: device ready, presenting from %dx%d images", SCREEN_IMAGE_WIDTH,
 		SCREEN_IMAGE_HEIGHT);
 
@@ -1002,14 +1006,6 @@ static void present(const struct dk_command_present *command)
 		dk.recorded = 0;
 		return;
 	}
-	if (command->hold)
-	{
-		/* drawn, and the screen keeps the last frame shown */
-		commands_submit();
-		dk.frame = (dk.frame + 1) % FRAMES;
-		frame_begin();
-		return;
-	}
 	{
 		/* the screen's size now: docking changes it while the game runs */
 		static uint32_t cropped_width, cropped_height;
@@ -1035,8 +1031,23 @@ static void present(const struct dk_command_present *command)
 	dkCmdBufBindRenderTargets(dk.commands, screen_views, 1, NULL);
 	dkCmdBufSetViewports(dk.commands, 0, &viewport, 1);
 	dkCmdBufSetScissors(dk.commands, 0, &scissor, 1);
-	dkCmdBufClearColorFloat(dk.commands, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 1.0f);
-	if (back_buffer)
+	if (command->hold && dk.shown_slot >= 0 && dk.shown_slot != slot)
+	{
+		/* (nx-mod/haloce-nx) a held frame (d3d8_dk.c) is drawn, and what is
+		presented is the last frame shown, copied into this image. It is
+		still acquired and presented like any other: a held frame that
+		skipped the swapchain went unpaced, and the GPU stopped at the switch
+		from the intro to the menu */
+		DkImageView shown;
+		DkImageRect whole = { 0, 0, 0, screen_width, screen_height, 1 };
+
+		dkImageViewDefaults(&shown, &dk.screen_images[dk.shown_slot]);
+		dkCmdBufBarrier(dk.commands, DkBarrier_Fragments, 0);
+		dkCmdBufBlitImage(dk.commands, &shown, &whole, &screen_view, &whole, 0, 0);
+	}
+	else
+		dkCmdBufClearColorFloat(dk.commands, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 1.0f);
+	if (back_buffer && !(command->hold && dk.shown_slot >= 0 && dk.shown_slot != slot))
 	{
 		/* letterboxed to the back buffer's shape */
 		uint32_t width = screen_width, height = screen_width * back_buffer->surface.height / back_buffer->surface.width;
@@ -1090,6 +1101,7 @@ static void present(const struct dk_command_present *command)
 		}
 	}
 	dkQueuePresentImage(dk.queue, dk.swapchain, slot);
+	dk.shown_slot = slot;
 	host_dk_presenting = 1;
 	if (++dk.frames_presented == 1)
 		host_logf(HOST_LOG_INFO, "deko3d: first frame presented");
