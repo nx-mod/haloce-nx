@@ -848,6 +848,13 @@ boolean saved_game_file_retrieve_last_used_multiplayer_variant_directory(
 	return success;
 }
 
+/* (port) The last multiplayer map, kept in memory once read: the menus ask
+for it every frame, and with no file yet (nothing hosted) every ask was a
+failed open on the card - a hundred a second in a lobby. -1 not read yet, 0
+no file, 1 the name below. */
+static int last_multiplayer_map_known = -1;
+static char last_multiplayer_map[MAXIMUM_FILENAME_LENGTH+1];
+
 void saved_game_file_remember_last_used_multiplayer_map(
 	char const *map_name)
 {
@@ -871,6 +878,12 @@ void saved_game_file_remember_last_used_multiplayer_map(
 		{
 			error(_error_silent, "failed to write to '%s'", "z:\\lastmpmp.txt");
 		}
+		else
+		{
+			memcpy(last_multiplayer_map, map_name, MAXIMUM_FILENAME_LENGTH+1);
+			last_multiplayer_map[MAXIMUM_FILENAME_LENGTH] = 0;
+			last_multiplayer_map_known = 1;
+		}
 
 		file_close(&file);
 	}
@@ -893,6 +906,12 @@ boolean saved_game_file_retrieve_last_used_multiplayer_map(
 		1233,
 		map_name);
 
+	if (last_multiplayer_map_known >= 0)
+	{
+		memcpy(map_name, last_multiplayer_map, MAXIMUM_FILENAME_LENGTH+1);
+		return last_multiplayer_map_known;
+	}
+
 	if (file_reference_create_from_path(&file, "z:\\lastmpmp.txt", FALSE) &&
 		file_open(&file, FLAG(_permission_read_bit)))
 	{
@@ -911,6 +930,8 @@ boolean saved_game_file_retrieve_last_used_multiplayer_map(
 	}
 
 	map_name[MAXIMUM_FILENAME_LENGTH] = 0;
+	memcpy(last_multiplayer_map, map_name, MAXIMUM_FILENAME_LENGTH+1);
+	last_multiplayer_map_known = success ? 1 : 0;
 
 	return success;
 }
