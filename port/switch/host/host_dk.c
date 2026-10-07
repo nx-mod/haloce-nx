@@ -1010,6 +1010,129 @@ static int readback_make(uint32_t width, uint32_t height)
 	return 1;
 }
 
+/* ---------- the frame rate overlay (nx-mod/haloce-nx; config.toml's overlay.*)
+
+"60 FPS  16 MS  287 SHADERS  BUILDING 3", as emulators show it: the frame
+rate over the last second, the slowest frame in it, the shaders loaded for
+drawing and those still being built. Drawn over the finished frame with
+clears alone - a 3x5 bitmap font, each row's run of lit cells one scissored
+clear - so it needs no shader of its own and cannot be missing one. */
+
+/* the rows of each character, top first, the left column the 4 bit */
+static const unsigned char *overlay_glyph(char c)
+{
+	static const struct { char c; unsigned char rows[5]; } font[] = {
+		{ '0', { 7, 5, 5, 5, 7 } }, { '1', { 2, 6, 2, 2, 7 } }, { '2', { 7, 1, 7, 4, 7 } },
+		{ '3', { 7, 1, 7, 1, 7 } }, { '4', { 5, 5, 7, 1, 1 } }, { '5', { 7, 4, 7, 1, 7 } },
+		{ '6', { 7, 4, 7, 5, 7 } }, { '7', { 7, 1, 1, 1, 1 } }, { '8', { 7, 5, 7, 5, 7 } },
+		{ '9', { 7, 5, 7, 1, 7 } }, { 'A', { 2, 5, 7, 5, 5 } }, { 'B', { 6, 5, 6, 5, 6 } },
+		{ 'D', { 6, 5, 5, 5, 6 } }, { 'E', { 7, 4, 6, 4, 7 } }, { 'F', { 7, 4, 6, 4, 4 } },
+		{ 'G', { 7, 4, 5, 5, 7 } }, { 'H', { 5, 5, 7, 5, 5 } }, { 'I', { 7, 2, 2, 2, 7 } },
+		{ 'L', { 4, 4, 4, 4, 7 } }, { 'M', { 5, 7, 7, 5, 5 } }, { 'N', { 6, 5, 5, 5, 5 } },
+		{ 'P', { 6, 5, 6, 4, 4 } }, { 'R', { 6, 5, 6, 5, 5 } }, { 'S', { 7, 4, 7, 1, 7 } },
+		{ 'U', { 5, 5, 5, 5, 7 } },
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(font) / sizeof(*font); index++)
+	{
+		if (font[index].c == c)
+			return font[index].rows;
+	}
+	return NULL;
+}
+
+static void overlay_rectangle(int32_t x, int32_t y, int32_t width, int32_t height, float shade)
+{
+	DkScissor scissor = { (uint32_t)x, (uint32_t)y, (uint32_t)width, (uint32_t)height };
+
+	dkCmdBufSetScissors(dk.commands, 0, &scissor, 1);
+	dkCmdBufClearColorFloat(dk.commands, 0, DkColorMask_RGBA, shade, shade, shade, 1.0f);
+}
+
+static void overlay_draw(uint32_t flags, uint32_t screen_width, uint32_t screen_height)
+{
+	static uint64_t second_start, previous, slowest, slowest_shown;
+	static unsigned frames, fps;
+	uint64_t now = armGetSystemTick();
+	char text[96];
+	int32_t cell, x, y, length, index, row;
+
+	/* the numbers, every frame; shown as of the last whole second */
+	if (previous && now - previous > slowest)
+		slowest = now - previous;
+	previous = now;
+	frames++;
+	if (!second_start)
+		second_start = now;
+	else if (armTicksToNs(now - second_start) >= 1000000000ull)
+	{
+		fps = (unsigned)((uint64_t)frames * 1000000000ull / armTicksToNs(now - second_start));
+		slowest_shown = slowest;
+		frames = 0;
+		slowest = 0;
+		second_start = now;
+	}
+	if (!(flags & DK_OVERLAY_ENABLED))
+		return;
+	length = snprintf(text, sizeof(text), "%u FPS", fps);
+	if (flags & DK_OVERLAY_FRAME_TIME)
+		length += snprintf(text + length, sizeof(text) - (size_t)length, "  %u MS",
+			(unsigned)((armTicksToNs(slowest_shown) + 500000ull) / 1000000ull));
+	if (flags & DK_OVERLAY_SHADERS)
+	{
+		unsigned long loaded;
+		unsigned int building;
+
+		host_dk_shader_counts(&loaded, &building);
+		length += snprintf(text + length, sizeof(text) - (size_t)length, "  %lu SHADERS", loaded);
+		if (building)
+			length += snprintf(text + length, sizeof(text) - (size_t)length, "  BUILDING %u", building);
+	}
+	if (length <= 0)
+		return;
+	if (length >= (int32_t)sizeof(text))
+		length = (int32_t)sizeof(text) - 1;
+	/* 4 pixels a cell at 720 lines, 6 at 1080; a character is 3 cells and
+	a space of 1; a dark box a cell wider all round */
+	cell = (int32_t)screen_height / 180;
+	if (cell < 2)
+		cell = 2;
+	x = cell * 3;
+	y = (flags & DK_OVERLAY_BOTTOM) ? (int32_t)screen_height - cell * 9 : cell * 3;
+	/* the blit to the screen is the 2D engine's; the clears come after it */
+	dkCmdBufBarrier(dk.commands, DkBarrier_Full, 0);
+	overlay_rectangle(x - cell, y - cell, (length * 4 + 1) * cell, cell * 7, 0.0f);
+	for (index = 0; index < length; index++)
+	{
+		const unsigned char *rows = overlay_glyph(text[index]);
+
+		if (!rows)
+			continue;
+		for (row = 0; row < 5; row++)
+		{
+			int32_t column = 0;
+
+			while (column < 3)
+			{
+				int32_t start;
+
+				if (!(rows[row] & (4 >> column)))
+				{
+					column++;
+					continue;
+				}
+				start = column;
+				while (column < 3 && (rows[row] & (4 >> column)))
+					column++;
+				overlay_rectangle(x + (index * 4 + start) * cell, y + row * cell, (column - start) * cell, cell, 0.9f);
+			}
+		}
+	}
+	(void)screen_width;
+	dk.state_dirty = 1;
+}
+
 static void present(const struct dk_command_present *command)
 {
 	uint32_t screen_width, screen_height;
@@ -1114,6 +1237,7 @@ static void present(const struct dk_command_present *command)
 		}
 		dkCmdBufBlitImage(dk.commands, &source, &from, &screen_view, &to, DkBlitFlag_FilterLinear, 0);
 	}
+	overlay_draw(command->overlay, screen_width, screen_height);
 	commands_submit();
 	if (screenshot)
 	{

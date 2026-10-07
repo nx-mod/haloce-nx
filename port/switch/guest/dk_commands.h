@@ -116,7 +116,15 @@ struct dk_command_present
 	/* (nx-mod/haloce-nx) the frame is drawn but not shown: the screen keeps
 	the last one (d3d8_dk.c, frames_with_unready_shaders) */
 	uint32_t hold;
+	/* (nx-mod/haloce-nx) the frame rate overlay, DK_OVERLAY_* (config.toml's
+	overlay.*), drawn over the frame by the host */
+	uint32_t overlay;
 };
+
+#define DK_OVERLAY_ENABLED 1
+#define DK_OVERLAY_BOTTOM 2
+#define DK_OVERLAY_FRAME_TIME 4
+#define DK_OVERLAY_SHADERS 8
 
 /* ---------- draws (DEKO3D.md, phase 6)
 

@@ -2615,6 +2615,21 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		surface_describe(&device.back_buffer, FALSE, &command->back_buffer);
 		command->screenshot = 0;
 		command->hold = frame_skipped_shader && frames_held < FRAMES_HELD_FOR_SHADERS;
+		{
+			/* config.toml's overlay.*, read again when it changes */
+			static unsigned long overlay_read_at = (unsigned long)-1;
+			static uint32_t overlay;
+
+			if (overlay_read_at != config_changes())
+			{
+				overlay_read_at = config_changes();
+				overlay = (config_boolean("overlay.enabled") ? DK_OVERLAY_ENABLED : 0) |
+					(!strcmp(config_string("overlay.position"), "bottom") ? DK_OVERLAY_BOTTOM : 0) |
+					(config_boolean("overlay.frame_time") ? DK_OVERLAY_FRAME_TIME : 0) |
+					(config_boolean("overlay.shaders") ? DK_OVERLAY_SHADERS : 0);
+			}
+			command->overlay = overlay;
+		}
 		frames_held = command->hold ? frames_held + 1 : 0;
 		frame_skipped_shader = 0;
 		if (!command->hold && screenshot_every > 0 && device.frame % (unsigned long)screenshot_every == 0 && command->back_buffer.width &&

@@ -181,6 +181,8 @@ phase 3) */
 uint32_t host_dk_retired(void);
 /* the GPU finished and the swapchain let go, before an exit */
 void host_dk_shutdown(void);
+/* the shaders loaded for drawing, and those being built (host_dk_shaders.c) */
+void host_dk_shader_counts(unsigned long *loaded, unsigned int *building);
 /* called as each 16 MB chunk of the window is committed (host_memory.c);
 under the deko3d renderer the chunk gets a deko3d memory block (phase 3) */
 void host_dk_window_chunk_committed(uint64_t address, uint64_t size);

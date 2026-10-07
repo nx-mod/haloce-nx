@@ -456,6 +456,17 @@ static const struct config_setting config_settings[] =
 		"The lines the game is drawn at: \"auto\" for the screen's (720 in handheld,\n"
 		"1080 docked), or \"480\", \"720\" or \"1080\". More lines are sharper and\n"
 		"take the GPU longer." },
+	{ "overlay.enabled", _config_boolean, "true", "HALO_OVERLAY", _environment_value, _platform_android,
+		"Show the frame rate overlay." },
+	{ "overlay.position", _config_string, "\"top\"", "HALO_OVERLAY_POSITION", _environment_value, _platform_android,
+		"Where the overlay sits: \"top\" or \"bottom\" left of the screen." },
+	{ "overlay.frame_time", _config_boolean, "true", "HALO_OVERLAY_FRAME_TIME", _environment_value, _platform_android,
+		"Show the slowest frame of the last second in milliseconds (MS): the\n"
+		"number a stutter shows up in, where the frame rate averages it away." },
+	{ "overlay.shaders", _config_boolean, "true", "HALO_OVERLAY_SHADERS", _environment_value, _platform_android,
+		"Show the shaders loaded (SHADERS) and, while there are any, those still\n"
+		"being built (BUILDING), as emulators show them: a draw waits for its\n"
+		"shaders, so BUILDING is where a hitch or a missing draw comes from." },
 	{ "display.anisotropy", _config_integer, "4", "HALO_ANISOTROPY", _environment_value, _platform_android,
 		"The least anisotropic filtering a filtered, mipmapped texture gets (1 to\n"
 		"16; 1 for only what the game asks): sharper ground, walls and models seen\n"

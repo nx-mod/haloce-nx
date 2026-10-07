@@ -874,3 +874,13 @@ void host_dk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl, uint32
 	pthread_cond_signal(&dksh.queue_condition);
 	pthread_mutex_unlock(&dksh.lock);
 }
+
+/* (nx-mod/haloce-nx) for the frame rate overlay (host_dk.c), as emulators
+count them: the shaders loaded for drawing (the card's cache and this run's
+compiles), and those still being built (queued or under way). Read without
+the lock: a number a frame late is as good. */
+void host_dk_shader_counts(unsigned long *loaded, unsigned int *building)
+{
+	*loaded = dksh.loaded_count;
+	*building = dksh.queue_count + (dksh.compiling ? 1u : 0u);
+}
