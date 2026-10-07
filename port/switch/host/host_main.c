@@ -338,7 +338,17 @@ void host_exit(int code)
 {
 	host_logf(HOST_LOG_INFO, "the game exited (%d)", code);
 	host_restore_clocks();
-	fflush(stderr);
+	/* (nx-mod/haloce-nx) the log written out while its thread still runs;
+	then every other thread is paused where it is, because libnx's exit
+	shuts the controllers', sound's and sockets' services down and a thread
+	still using one aborts the process: Quit crashed. Nothing takes a lock
+	after the pause - a paused thread may hold it. */
+	pthread_mutex_lock(&log_lock);
+	log_drain_locked();
+	if (log_descriptor >= 0)
+		(void)fsync(log_descriptor);
+	pthread_mutex_unlock(&log_lock);
+	host_threads_pause();
 	_exit(code);
 }
 

@@ -744,6 +744,10 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         command=(f"$switch_host_gxx -specs=$switch_specs -g {host_arch} -o $out $in "
                  + " ".join(f"-L{path}" for path in (portlibs / "lib", devkitpro / "libnx" / "lib")) + " "
                  + " ".join(f"-l{lib}" for lib in HOST_LIBRARIES)
+                 # every thread is registered as it starts, the libraries'
+                 # included (host_thread.c, __wrap_pthread_create), so that an
+                 # exit can pause them before libnx's services go
+                 + " -Wl,--wrap=pthread_create"
                  + " -Wl,-Map,$out.map"),
         description="SWITCH HOST LINK $out",
     )

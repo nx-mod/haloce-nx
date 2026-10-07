@@ -386,3 +386,85 @@ int host_thread_create(uint32_t guest_thread, uint32_t stack_size)
 {
 	return host_native_thread_create(guest_thread_main, (void *)(uintptr_t)guest_thread, stack_size);
 }
+
+/* ---------- every thread, so an exit can stop them first (nx-mod/haloce-nx)
+
+libnx's exit shuts its services (controllers, sound, sockets) down, and a
+thread still using one aborts the process. Every pthread_create in the
+program - the port's, SDL's, the shader cache's - comes through
+__wrap_pthread_create (the link's --wrap, tools/switch_build.py), whose
+thread registers its handle while it runs, and host_exit pauses them all
+first (host_threads_pause). */
+
+#define THREAD_REGISTRY_SIZE 128
+
+static Handle thread_registry[THREAD_REGISTRY_SIZE];
+static Mutex thread_registry_lock;
+
+static void thread_register(int add)
+{
+	Handle self = threadGetCurHandle();
+	int index;
+
+	mutexLock(&thread_registry_lock);
+	for (index = 0; index < THREAD_REGISTRY_SIZE; index++)
+	{
+		if (add ? !thread_registry[index] : thread_registry[index] == self)
+		{
+			thread_registry[index] = add ? self : 0;
+			break;
+		}
+	}
+	mutexUnlock(&thread_registry_lock);
+}
+
+void host_threads_pause(void)
+{
+	Handle self = threadGetCurHandle();
+	int index;
+
+	mutexLock(&thread_registry_lock);
+	for (index = 0; index < THREAD_REGISTRY_SIZE; index++)
+	{
+		if (thread_registry[index] && thread_registry[index] != self)
+			svcSetThreadActivity(thread_registry[index], ThreadActivity_Paused);
+	}
+	mutexUnlock(&thread_registry_lock);
+}
+
+struct registered_start
+{
+	void *(*routine)(void *);
+	void *argument;
+};
+
+static void *registered_thread(void *pointer)
+{
+	struct registered_start start = *(struct registered_start *)pointer;
+	void *result;
+
+	free(pointer);
+	thread_register(1);
+	result = start.routine(start.argument);
+	thread_register(0);
+	return result;
+}
+
+int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*routine)(void *),
+	void *argument);
+
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*routine)(void *),
+	void *argument)
+{
+	struct registered_start *start = malloc(sizeof(*start));
+	int error;
+
+	if (!start)
+		return EAGAIN;
+	start->routine = routine;
+	start->argument = argument;
+	error = __real_pthread_create(thread, attributes, registered_thread, start);
+	if (error)
+		free(start);
+	return error;
+}

@@ -195,6 +195,9 @@ DKSH file at dksh_path (written complete: .tmp then renamed, by the caller).
 Returns 0 on failure. Called on the compile thread only, and locked inside,
 so nothing else can ever be compiling at the same time. */
 int host_dk_compile_glsl(int fragment, const char *glsl, const char *dksh_path);
+/* pauses every thread the process started but the caller's (host_thread.c),
+for an exit */
+void host_threads_pause(void);
 
 /* host_dk_shaders.c (DEKO3D.md, phase 5, step 3): the shader cache, called
 by the guest through imports. stage: 0 vertex, 1 pixel. A shader is known by
