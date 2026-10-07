@@ -109,6 +109,9 @@ struct dk_command_present
 	struct dk_command_header header;
 	struct dk_surface back_buffer;
 	uint32_t screenshot;
+	/* (nx-mod/haloce-nx) the frame is drawn but not shown: the screen keeps
+	the last one (d3d8_dk.c, frames_with_unready_shaders) */
+	uint32_t hold;
 };
 
 /* ---------- draws (DEKO3D.md, phase 6)

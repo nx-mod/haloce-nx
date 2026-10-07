@@ -996,6 +996,14 @@ static void present(const struct dk_command_present *command)
 		dk.recorded = 0;
 		return;
 	}
+	if (command->hold)
+	{
+		/* drawn, and the screen keeps the last frame shown */
+		commands_submit();
+		dk.frame = (dk.frame + 1) % FRAMES;
+		frame_begin();
+		return;
+	}
 	slot = dkQueueAcquireImage(dk.queue, dk.swapchain);
 	DkImageView screen_view;
 	DkImageView const *screen_views[1] = { &screen_view };

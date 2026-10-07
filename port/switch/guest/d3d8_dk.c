@@ -2083,6 +2083,11 @@ static void draw_textures_send(const struct dk_command_textures *textures)
 /* d3d8_gl.c's prepare_draw: everything a draw needs but its vertices, written
 to the stream. FALSE if there is nothing to draw into, or a shader the draw
 needs is not ready (skipped, as decided: DEKO3D.md, "Decisions"). */
+/* (nx-mod/haloce-nx) frames held while shaders compile: D3DDevice_Present */
+#define FRAMES_HELD_FOR_SHADERS 20
+static unsigned long frame_skipped_shader;
+static int frames_held;
+
 static BOOL draw_prepare(BOOL immediate)
 {
 	struct vertex_shader_object *program = current_program();
@@ -2113,6 +2118,7 @@ static BOOL draw_prepare(BOOL immediate)
 	if (!vertex_shader || !pixel_shader)
 	{
 		stats.skipped_shader++;
+		frame_skipped_shader++;
 		return FALSE;
 	}
 	if (immediate)
@@ -2515,6 +2521,12 @@ static void draw_statistics_log(void)
 	memset(&stats, 0, sizeof(stats));
 }
 
+/* (nx-mod/haloce-nx) A draw whose shaders are still compiling is skipped
+(draw_prepare), and a frame missing one showed it: a black polygon where a
+surface was, a scene a little dark where a lighting pass was. Such a frame is
+drawn but not shown, and the screen keeps the last whole one - for at most
+FRAMES_HELD_FOR_SHADERS in a row, so that a long compile shows its holes
+rather than stopping the picture. (FRAMES_HELD_FOR_SHADERS, above draw_prepare) */
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -2545,7 +2557,10 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 
 		surface_describe(&device.back_buffer, FALSE, &command->back_buffer);
 		command->screenshot = 0;
-		if (screenshot_every > 0 && device.frame % (unsigned long)screenshot_every == 0 && command->back_buffer.width &&
+		command->hold = frame_skipped_shader && frames_held < FRAMES_HELD_FOR_SHADERS;
+		frames_held = command->hold ? frames_held + 1 : 0;
+		frame_skipped_shader = 0;
+		if (!command->hold && screenshot_every > 0 && device.frame % (unsigned long)screenshot_every == 0 && command->back_buffer.width &&
 			*config_string("debug.screenshot_directory"))
 		{
 			screenshot_width = command->back_buffer.width;
