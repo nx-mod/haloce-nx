@@ -983,6 +983,10 @@ static const struct config_setting config_settings[] =
 		"The CPU's clock: \"1785\" (1.7 GHz, the most Nintendo's own games use),\n"
 		"\"1020\" (1 GHz, the console's handheld rate: cooler, and the battery\n"
 		"lasts longer) or \"stock\" (left as the console has it). Changes at once." },
+	{ "display.anisotropy", _config_integer, "4", "HALO_ANISOTROPY", _environment_value, _platform_android,
+		"The least anisotropic filtering a filtered, mipmapped texture gets (1 to\n"
+		"16; 1 for only what the game asks): sharper ground, walls and models seen\n"
+		"at an angle." },
 	{ "debug.profiler", _config_boolean, "false", "HALO_PROFILER", _environment_set_is_true, _platform_android,
 		"Profile the game: sample where its threads are (debug.profile_hz times a\n"
 		"second) and write the counts to the profile folder every 20 s, for\n"
