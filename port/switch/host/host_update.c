@@ -260,8 +260,9 @@ static int unpack_entry(struct unpack *unpack)
 	int which;
 
 	unpack->name[unpack->name_length < sizeof(unpack->name) ? unpack->name_length : sizeof(unpack->name) - 1] = 0;
-	which = !strcmp(unpack->name, UPDATE_PROGRAM) ? 0 : !strcmp(unpack->name, UPDATE_IMAGE) ? 1 :
-		!strcmp(unpack->name, UPDATE_BROKERS) ? 2 : -1;
+	/* (nx-mod/haloce-nx: never the game image, which is inside the
+	program; one installed beside it would be loaded in its place) */
+	which = !strcmp(unpack->name, UPDATE_PROGRAM) ? 0 : !strcmp(unpack->name, UPDATE_BROKERS) ? 2 : -1;
 	unpack->remaining = compressed;
 	unpack->expected_crc = little(header + 14, 4);
 	unpack->crc = 0;

@@ -195,19 +195,25 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 #if defined(HALO_SWITCH)
 			/* the Switch's game folder names the drives for what they hold
 			(port/switch/host/host_main.c moves older folders): u: the
-			profiles, z: the saves, and z:'s map caches (cacheNNN.map, which
-			can be deleted and are made again) a folder of their own */
+			profiles, z: the saves, and what z: caches - the map caches
+			(cacheNNN.map), the shader keys and the OpenGL program records,
+			which can all be deleted and are made again - a folder of its
+			own */
 			const char *rest = cursor + 2;
+			size_t length;
+			int cached;
 
 			while (*rest == '\\' || *rest == '/')
 				rest++;
+			length = strlen(rest);
+			cached = (!strncasecmp(rest, "cache", 5) && !strchr(rest, '\\') && !strchr(rest, '/') && length > 4 &&
+				!strcasecmp(rest + length - 4, ".map")) ||
+				(!strncasecmp(rest, "shader_keys", 11) && (rest[11] == 0 || rest[11] == '\\' || rest[11] == '/')) ||
+				!strcasecmp(rest, "shader_programs.bin");
 			if (drive == 'u')
 				snprintf(resolved, sizeof(resolved), "%s/profiles", platform_save_root());
 			else if (drive == 'z')
-				snprintf(resolved, sizeof(resolved), "%s/%s", platform_save_root(),
-					(rest[0] | 0x20) == 'c' && !strncasecmp(rest, "cache", 5) && !strchr(rest, '\\') &&
-					!strchr(rest, '/') && strlen(rest) > 4 && !strcasecmp(rest + strlen(rest) - 4, ".map") ?
-					"cache" : "saves");
+				snprintf(resolved, sizeof(resolved), "%s/%s", platform_save_root(), cached ? "cache" : "saves");
 			else
 #endif
 			snprintf(resolved, sizeof(resolved), "%s/%c", platform_save_root(), drive);

@@ -727,6 +727,15 @@ static void move_save_folders(const char *root)
 		snprintf(to, sizeof(to), "%s/saves", root);
 		move_folder(from, to);
 	}
+	/* the shader keys, which the first layout of saves/ held (cache now) */
+	snprintf(from, sizeof(from), "%s/saves/shader_keys", root);
+	snprintf(to, sizeof(to), "%s/cache", root);
+	mkdir(to, 0755);
+	snprintf(to, sizeof(to), "%s/cache/shader_keys", root);
+	move_folder(from, to);
+	snprintf(from, sizeof(from), "%s/saves/shader_programs.bin", root);
+	snprintf(to, sizeof(to), "%s/cache/shader_programs.bin", root);
+	move_folder(from, to);
 	snprintf(from, sizeof(from), "%s/save", root);
 	rmdir(from);
 }
