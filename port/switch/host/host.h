@@ -202,6 +202,8 @@ int host_dk_compile_glsl(int fragment, const char *glsl, const char *dksh_path);
 /* pauses every thread the process started but the caller's (host_thread.c),
 for an exit */
 void host_threads_pause(void);
+/* the new program in place: start again as it (host_main.c) */
+void host_update_restart(void);
 
 /* host_dk_shaders.c (DEKO3D.md, phase 5, step 3): the shader cache, called
 by the guest through imports. stage: 0 vertex, 1 pixel. A shader is known by

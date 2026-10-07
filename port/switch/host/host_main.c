@@ -738,6 +738,14 @@ static void restart_program(const char *why)
 	remove(path);
 }
 
+/* (nx-mod/haloce-nx) after an update put the new program in place
+(host_update.c): it starts, as a new process, rather than this one going on */
+void host_update_restart(void)
+{
+	restart_program("the update is in place");
+	host_fatal("The update is in place; start the game again to run it.");
+}
+
 /* a launch that loaded the game: the attempts start over */
 static void restart_count_clear(void)
 {

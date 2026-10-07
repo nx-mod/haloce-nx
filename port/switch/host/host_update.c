@@ -450,8 +450,15 @@ static int install(char *error, size_t error_size)
 	remove(target);
 	wanted_path(0, target, sizeof(target));
 	snprintf(temporary, sizeof(temporary), "%s.new", target);
+	/* (nx-mod/haloce-nx) the program's own RomFS - the game image is in it -
+	keeps the program's file open while it is mounted, and an open file
+	cannot be replaced: unmounted first. The program then starts again as
+	the new one (host_update_restart): this one must not go on to read its
+	game image out of the new program's file */
+	romfsExit();
 	if (!replace(temporary, target))
 		return fail(error, error_size, "Cannot put %s in place; it is on the card as %s.", target, temporary);
+	host_update_restart();
 	return 1;
 }
 
