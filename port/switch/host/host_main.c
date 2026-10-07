@@ -359,18 +359,19 @@ void host_wait_for_exit(void)
 	using one aborts the process. Nothing takes a lock after this - a
 	paused thread may hold it. */
 	host_threads_pause();
-	/* The system closes the program, as it closes a game from HOME. A
-	return to the homebrew loader (libnx's exit) had it carry on in this
-	process and stop on a break (hbl + 0x4044, result 0x615) even from the
-	main thread: what the game leaves mapped is in its way. _exit is what
-	is left if the system will not. */
-	if (R_SUCCEEDED(appletRequestExitToSelf()))
-	{
-		for (;;)
-			svcSleepThread(INT64_MAX);
-	}
+	/* libnx's exit, which with __nx_applet_exit_mode (below) closes the
+	program through the system rather than returning to the loader */
 	_exit(__atomic_load_n(&exit_code, __ATOMIC_ACQUIRE));
 }
+
+/* (nx-mod/haloce-nx) The program ends as an application does: libnx's exit
+asks the system to close it (ISelfController's Exit), as a game closes from
+HOME, instead of returning to the homebrew loader. The loader carried on in
+this process after the game and stopped on a break (Atmosphere's report:
+hbl + 0x4044, result 0x615) - from the game thread and the main thread alike:
+what the game leaves mapped is in its way. appletRequestExitToSelf is the
+library applets' (libnx refuses it for an application). */
+u32 __nx_applet_exit_mode = 1;
 
 void host_exit(int code)
 {
