@@ -118,6 +118,18 @@ static int fail(void)
 				strerror(errno));
 		}
 	}
+	else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS && errno != EALREADY)
+	{
+		/* (nx-mod/haloce-nx) the first of any other failure: a join that
+		stalled after connecting left nothing to say why */
+		static volatile int others;
+
+		if (others < BUFFER_FAILURES_LOGGED)
+		{
+			others++;
+			host_logf(HOST_LOG_WARN, "socket: a call failed: %s (errno %d)", strerror(errno), errno);
+		}
+	}
 	switch (errno)
 	{
 	case EINTR: last_error = WSAEINTR; break;

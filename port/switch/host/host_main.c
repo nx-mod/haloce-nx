@@ -1446,11 +1446,10 @@ int main(int argc, char *argv[])
 			.tcp_rx_buf_size = 0x10000,
 			.tcp_tx_buf_max_size = 0x100000,
 			.tcp_rx_buf_max_size = 0x100000,
-			/* UDP: internet play's traffic. libnx's 9 KB and 42 KB let the
-			host's updates be dropped when the game read a little late:
-			lag, then a kick */
-			.udp_tx_buf_size = 0x10000,
-			.udp_rx_buf_size = 0x40000,
+			/* UDP at libnx's own sizes: 64 KB and 256 KB here, tried for a
+			lagging game, left a join hanging at "connecting" */
+			.udp_tx_buf_size = 0x2400,
+			.udp_rx_buf_size = 0xA500,
 			.sb_efficiency = 8,
 			.num_bsd_sessions = 3,
 			.bsd_service_type = BsdServiceType_User,
