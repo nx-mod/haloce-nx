@@ -61,8 +61,12 @@ so that the host knows how much of it a frame has used (command_memory_added) */
 #define IMAGE_BLOCK_SIZE (32 * 1024 * 1024)
 #define IMAGE_BLOCK_LIMIT 16
 #define TARGET_LIMIT 256
-#define SCREEN_WIDTH 1280
-#define SCREEN_HEIGHT 720
+/* (nx-mod/haloce-nx) the swapchain's images are the docked screen's size,
+and each frame shows the part of them the console's screen is: all of it
+docked, 1280x720 in handheld (dkSwapchainSetCrop), so a docked game is
+presented at 1080p rather than shrunk to 720p and scaled back up by the TV */
+#define SCREEN_IMAGE_WIDTH 1920
+#define SCREEN_IMAGE_HEIGHT 1080
 
 /* the window is made real a chunk at a time (host_memory.c);
 HALO_GUEST_WINDOW_SIZE (128 MB) is 8 of them */
@@ -814,7 +818,7 @@ static int initialize(void)
 
 	layout_make(&layout, DkImageFormat_RGBA8_Unorm,
 		DkImageFlags_UsageRender | DkImageFlags_UsagePresent | DkImageFlags_Usage2DEngine | DkImageFlags_HwCompression,
-		SCREEN_WIDTH, SCREEN_HEIGHT);
+		SCREEN_IMAGE_WIDTH, SCREEN_IMAGE_HEIGHT);
 	image_size = (uint32_t)((dkImageLayoutGetSize(&layout) + dkImageLayoutGetAlignment(&layout) - 1) &
 		~(uint64_t)(dkImageLayoutGetAlignment(&layout) - 1));
 	dk.screen_memory = memory_block(SCREEN_IMAGES * image_size, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image, NULL);
@@ -825,7 +829,8 @@ static int initialize(void)
 	}
 	dkSwapchainMakerDefaults(&swapchain_maker, dk.device, nwindowGetDefault(), screen_images, SCREEN_IMAGES);
 	dk.swapchain = dkSwapchainCreate(&swapchain_maker);
-	host_logf(HOST_LOG_INFO, "deko3d: device ready, presenting at %dx%d", SCREEN_WIDTH, SCREEN_HEIGHT);
+	host_logf(HOST_LOG_INFO, "deko3d: device ready, presenting from %dx%d images", SCREEN_IMAGE_WIDTH,
+		SCREEN_IMAGE_HEIGHT);
 
 	/* the window's committed chunks, GPU-mapped (host_memory.c reports the
 	chunks; the GPU checks go as the probe's did) */
@@ -970,6 +975,7 @@ static int readback_make(uint32_t width, uint32_t height)
 
 static void present(const struct dk_command_present *command)
 {
+	uint32_t screen_width, screen_height;
 	struct target *back_buffer = target_get(&command->back_buffer);
 	struct target *screenshot = NULL;
 	int slot;
@@ -1004,11 +1010,26 @@ static void present(const struct dk_command_present *command)
 		frame_begin();
 		return;
 	}
+	{
+		/* the screen's size now: docking changes it while the game runs */
+		static uint32_t cropped_width, cropped_height;
+		int docked = appletGetOperationMode() == AppletOperationMode_Console;
+
+		screen_width = docked ? 1920 : 1280;
+		screen_height = docked ? 1080 : 720;
+		if (screen_width != cropped_width || screen_height != cropped_height)
+		{
+			cropped_width = screen_width;
+			cropped_height = screen_height;
+			dkSwapchainSetCrop(dk.swapchain, 0, 0, (int32_t)screen_width, (int32_t)screen_height);
+			host_logf(HOST_LOG_INFO, "deko3d: presenting at %ux%u", (unsigned)screen_width, (unsigned)screen_height);
+		}
+	}
 	slot = dkQueueAcquireImage(dk.queue, dk.swapchain);
 	DkImageView screen_view;
 	DkImageView const *screen_views[1] = { &screen_view };
-	DkScissor scissor = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
-	DkViewport viewport = { 0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT, 0.0f, 1.0f };
+	DkScissor scissor = { 0, 0, screen_width, screen_height };
+	DkViewport viewport = { 0.0f, 0.0f, (float)screen_width, (float)screen_height, 0.0f, 1.0f };
 
 	dkImageViewDefaults(&screen_view, &dk.screen_images[slot]);
 	dkCmdBufBindRenderTargets(dk.commands, screen_views, 1, NULL);
@@ -1018,18 +1039,18 @@ static void present(const struct dk_command_present *command)
 	if (back_buffer)
 	{
 		/* letterboxed to the back buffer's shape */
-		uint32_t width = SCREEN_WIDTH, height = SCREEN_WIDTH * back_buffer->surface.height / back_buffer->surface.width;
+		uint32_t width = screen_width, height = screen_width * back_buffer->surface.height / back_buffer->surface.width;
 		DkImageView source;
 		DkImageRect from = { 0, 0, 0, back_buffer->surface.width, back_buffer->surface.height, 1 };
 		DkImageRect to;
 
-		if (height > SCREEN_HEIGHT)
+		if (height > screen_height)
 		{
-			height = SCREEN_HEIGHT;
-			width = SCREEN_HEIGHT * back_buffer->surface.width / back_buffer->surface.height;
+			height = screen_height;
+			width = screen_height * back_buffer->surface.width / back_buffer->surface.height;
 		}
-		to.x = (SCREEN_WIDTH - width) / 2;
-		to.y = (SCREEN_HEIGHT - height) / 2;
+		to.x = (screen_width - width) / 2;
+		to.y = (screen_height - height) / 2;
 		to.z = 0;
 		to.width = width;
 		to.height = height;
