@@ -676,6 +676,47 @@ static void restart_count_clear(void)
 	remove(path);
 }
 
+/* (nx-mod/haloce-nx) The shader keys a release ships (port/switch/
+shader_keys.dkk, in the NRO's RomFS as keys.dkk), written where the game reads
+its shared key file, z:\shader_keys\keys.dkk (port/switch/guest/
+dk_shaders.c, cache/shader_keys/ here): the game compiles every key in it in
+the background at start, so what has been played before is not compiled
+while playing. Written when missing or different. */
+static void *read_file(const char *path, size_t *size);
+
+static void install_shipped_keys(const char *root)
+{
+	char path[PATH_MAX + 64];
+	void *shipped, *installed;
+	size_t shipped_size = 0, installed_size = 0;
+	FILE *file;
+
+	if (R_FAILED(romfsInit()))
+		return;
+	shipped = read_file("romfs:/keys.dkk", &shipped_size);
+	romfsExit();
+	if (!shipped)
+		return;
+	snprintf(path, sizeof(path), "%s/cache/shader_keys/keys.dkk", root);
+	installed = read_file(path, &installed_size);
+	if (!installed || installed_size != shipped_size || memcmp(installed, shipped, shipped_size))
+	{
+		snprintf(path, sizeof(path), "%s/cache", root);
+		mkdir(path, 0755);
+		snprintf(path, sizeof(path), "%s/cache/shader_keys", root);
+		mkdir(path, 0755);
+		snprintf(path, sizeof(path), "%s/cache/shader_keys/keys.dkk", root);
+		if ((file = fopen(path, "wb")) != NULL)
+		{
+			fwrite(shipped, 1, shipped_size, file);
+			fclose(file);
+			host_logf(HOST_LOG_INFO, "shader keys: the release's %zu bytes written to %s", shipped_size, path);
+		}
+	}
+	free(installed);
+	free(shipped);
+}
+
 /* (nx-mod/haloce-nx) The save drives' folders are named for what they hold
 (port/linux/src/xbox_files.c): profiles/ (u:), saves/ (z:) and cache/ (z:'s
 map caches). Folders an earlier layout left are moved: save/u and save/z
@@ -1086,6 +1127,7 @@ static void *game_main(void *unused)
 		snprintf(save_root, sizeof(save_root), "%s", data_root);
 	mkdir(save_root, 0755);
 	move_save_folders(save_root);
+	install_shipped_keys(save_root);
 	log_marker("marker: data paths resolved");
 	ensure_game_data(data_root);
 	ensure_movies(data_root);

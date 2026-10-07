@@ -770,15 +770,22 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         #
         # The game image rides in the NRO's RomFS (nx-mod/haloce-nx): one file
         # to install and update; host_main.c reads it from there.
+        # The shader keys a release ships (port/switch/shader_keys.dkk, if
+        # there is one) ride in it too; the program writes them where the game
+        # reads them (host_main.c, install_shipped_keys).
         command=(f"mkdir -p {(Path.cwd() / str(BUILD / 'romfs')).resolve()} && "
                  f"cp {(Path.cwd() / str(image)).resolve()} {(Path.cwd() / str(BUILD / 'romfs')).resolve()}/halo_guest.elf && "
+                 f"if [ -f {(Path.cwd() / 'port/switch/shader_keys.dkk').resolve()} ]; then "
+                 f"cp {(Path.cwd() / 'port/switch/shader_keys.dkk').resolve()} {(Path.cwd() / str(BUILD / 'romfs')).resolve()}/keys.dkk; "
+                 f"else rm -f {(Path.cwd() / str(BUILD / 'romfs')).resolve()}/keys.dkk; fi && "
                  f"{devkitpro / 'tools' / 'bin' / 'elf2nro'} "
                  f"{(Path.cwd() / str(elf)).resolve()} {(Path.cwd() / str(nro)).resolve()}"
                  f" --icon={nro_icon} --nacp={(Path.cwd() / str(nacp)).resolve()}"
                  f" --romfsdir={(Path.cwd() / str(BUILD / 'romfs')).resolve()}"),
         description="SWITCH NRO $out",
     )
-    n.build(outputs=nro, rule="switch_nro", inputs=[elf, nacp, nro_icon, image])
+    shipped_keys = [Path("port/switch/shader_keys.dkk")] if Path("port/switch/shader_keys.dkk").is_file() else []
+    n.build(outputs=nro, rule="switch_nro", inputs=[elf, nacp, nro_icon, image, *shipped_keys])
 
     n.build(outputs="switch", rule="phony", inputs=[nro])
     n.newline()
