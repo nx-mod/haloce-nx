@@ -5,6 +5,7 @@ TAG_GROUPS.C
 /* ---------- headers */
 
 #include "cseries.h"
+#include "errors.h"
 #include "tag_files.h"
 #include "byte_swapping.h"
 #include "tag_groups.h"
@@ -13,7 +14,55 @@ TAG_GROUPS.C
 #include "platform.h"
 #endif
 
+/* ---------- constants */
+
+enum
+{
+	/* port: the most bytes of the empty data (tag_empty_data): more than
+	any tag's root or any block's element */
+	TAG_EMPTY_DATA_SIZE = 0x10000,
+};
+
+/* ---------- globals */
+
+/* port: (tag_empty_data) */
+static unsigned long tag_empty_data_bytes[TAG_EMPTY_DATA_SIZE / sizeof(unsigned long)];
+
+/* ---------- private code */
+
+/* port: an index past what it indexes, logged once */
+static void tag_index_error(
+	char const *what,
+	long index,
+	long count)
+{
+	static boolean logged = FALSE;
+
+	if (!logged)
+	{
+		logged = TRUE;
+		error(_error_silent, "#%ld is not a %s index in [#0,#%ld): an empty one is used", index, what, count);
+	}
+
+	return;
+}
+
 /* ---------- public code */
+
+/* port: what an index into a tag block, a tag's data or the tags that is
+not one gives (tag_block_get_element_with_size, tag_data_get_pointer,
+tag_get): TAG_EMPTY_DATA_SIZE bytes of zeros, zeroed again each time, in
+place of whatever lies past the block, the data or the tags. Whatever
+reads it reads an element or tag with nothing in it (no elements in its
+blocks, no tags referenced, every index 0); whatever writes it writes
+nowhere that matters */
+void *tag_empty_data(
+	void)
+{
+	csmemset(tag_empty_data_bytes, 0, sizeof(tag_empty_data_bytes));
+
+	return tag_empty_data_bytes;
+}
 
 long verify_tag_reference(
 	const struct tag_reference *reference)
@@ -66,6 +115,13 @@ void* tag_data_get_pointer(
 {
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3073, size>=0);
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3074, offset>=0 && offset+size<=data->size);
+	/* port: bytes past the data are the empty data's (tag_empty_data), as
+	far as they go */
+	if (size < 0 || offset < 0 || offset > data->size || size > data->size - offset || (size && !data->address))
+	{
+		tag_index_error("data", offset, data->size);
+		return size <= TAG_EMPTY_DATA_SIZE ? tag_empty_data() : NULL;
+	}
 
 	return (void *)((byte *)TAG_DATA_ADDRESS(*data) + offset);
 }
@@ -85,6 +141,14 @@ void *tag_block_get_element_with_size(
 			index,
 			block->definition ? block->definition->name : "<unknown>", block->count));
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3090, block->address);
+	/* port: an element past the block (an index a map's data gave, which
+	nothing checked) is the empty data (tag_empty_data), not whatever lies
+	past the block */
+	if (index < 0 || index >= block->count || !TAG_BLOCK_ADDRESS_AT(block))
+	{
+		tag_index_error("block element", index, block->count);
+		return element_size <= TAG_EMPTY_DATA_SIZE ? tag_empty_data() : NULL;
+	}
 
 	return (void *)((byte *)TAG_BLOCK_ADDRESS(*block) + (index * element_size));
 }
