@@ -1192,6 +1192,10 @@ void scenario_reload_structure_bsp_if_necessary(
 	return;
 }
 
+/* (port) counts the maps loaded, so the renderer can tell a frame is the
+first of a new one (port/switch/guest/d3d8_dk.c holds it back) */
+unsigned long halo_map_generation;
+
 boolean scenario_load(
 	const char *name)
 {
@@ -1250,6 +1254,7 @@ missing_tag_loop:
 			goto missing_tag_loop;
 	}
 
+	halo_map_generation++;
 	return result;
 }
 

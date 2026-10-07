@@ -2142,6 +2142,8 @@ to the stream. FALSE if there is nothing to draw into, or a shader the draw
 needs is not ready (skipped, as decided: DEKO3D.md, "Decisions"). */
 /* (nx-mod/haloce-nx) frames held while shaders compile: D3DDevice_Present */
 #define FRAMES_HELD_FOR_SHADERS 20
+/* frames of a newly loaded map held back (D3DDevice_Present) */
+#define HIDDEN_FRAMES_AFTER_LOAD 3
 static unsigned long frame_skipped_shader;
 static int frames_held;
 
@@ -2614,7 +2616,23 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 
 		surface_describe(&device.back_buffer, FALSE, &command->back_buffer);
 		command->screenshot = 0;
-		command->hold = frame_skipped_shader && frames_held < FRAMES_HELD_FOR_SHADERS;
+		{
+			/* (nx-mod/haloce-nx) the first frames of a newly loaded map are
+			held too: a join drew a frame or two from somewhere else on the
+			map (the archived port's 2a79d3ea, under OpenGL) */
+			extern unsigned long halo_map_generation;
+			static unsigned long shown_generation;
+			static int map_frames_to_hold;
+
+			if (shown_generation != halo_map_generation)
+			{
+				shown_generation = halo_map_generation;
+				map_frames_to_hold = HIDDEN_FRAMES_AFTER_LOAD;
+			}
+			command->hold = (frame_skipped_shader && frames_held < FRAMES_HELD_FOR_SHADERS) || map_frames_to_hold > 0;
+			if (map_frames_to_hold > 0)
+				map_frames_to_hold--;
+		}
 		{
 			/* config.toml's overlay.*, read again when it changes */
 			static unsigned long overlay_read_at = (unsigned long)-1;
