@@ -359,6 +359,16 @@ void host_wait_for_exit(void)
 	using one aborts the process. Nothing takes a lock after this - a
 	paused thread may hold it. */
 	host_threads_pause();
+	/* The system closes the program, as it closes a game from HOME. A
+	return to the homebrew loader (libnx's exit) had it carry on in this
+	process and stop on a break (hbl + 0x4044, result 0x615) even from the
+	main thread: what the game leaves mapped is in its way. _exit is what
+	is left if the system will not. */
+	if (R_SUCCEEDED(appletRequestExitToSelf()))
+	{
+		for (;;)
+			svcSleepThread(INT64_MAX);
+	}
 	_exit(__atomic_load_n(&exit_code, __ATOMIC_ACQUIRE));
 }
 
@@ -1423,8 +1433,11 @@ int main(int argc, char *argv[])
 			.tcp_rx_buf_size = 0x10000,
 			.tcp_tx_buf_max_size = 0x100000,
 			.tcp_rx_buf_max_size = 0x100000,
-			.udp_tx_buf_size = 0x2400,
-			.udp_rx_buf_size = 0xA500,
+			/* UDP: internet play's traffic. libnx's 9 KB and 42 KB let the
+			host's updates be dropped when the game read a little late:
+			lag, then a kick */
+			.udp_tx_buf_size = 0x10000,
+			.udp_rx_buf_size = 0x40000,
 			.sb_efficiency = 8,
 			.num_bsd_sessions = 3,
 			.bsd_service_type = BsdServiceType_User,
