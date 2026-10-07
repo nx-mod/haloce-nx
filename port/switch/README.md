@@ -150,26 +150,22 @@ objects are 64-bit pointers that the guest cannot hold, so the guest gets
 small integer handles into a table. Most of the values agree between the two
 versions; `host_sdl3_events.c` translates the ones that do not.
 
-Where the graphics come from is worth noting, because it decided the port
-early. devkitPro's SDL2 is built with `--disable-filesystem` and links
-`switch-mesa`: Mesa 20.1.0 over `libdrm_nouveau`, statically. SDL2's Switch
-video driver puts an EGL surface on the console's default `nwindow`, so
-`SDL_GL_CreateContext` and `SDL_GL_SwapWindow` — the two calls the renderer
-makes — work as they do anywhere else. There is no deko3d and no NVN here,
-and the tile-based renderer work that the Anbernic port carries for its
-Mali-G31 is not applicable to this GPU.
+The graphics are deko3d's (`port/switch/guest/d3d8_dk.c`, `host_dk.c`):
+the game's Direct3D is translated into deko3d command lists, its shaders into
+GLSL compiled on the console by UAM and cached on the card. The game draws its
+480-line picture at the render resolution (`display.render_resolution`: 720
+lines in handheld, 1080 docked).
 
 ## Internet play
 
-`host_net_stub.c` stands in for `posix_net.c`, which cannot be built here:
-there are no sockets. Every network entry point answers failure, which
-leaves the menus saying the feature is unavailable rather than crashing.
-`posix_random_bytes` is the exception and is really implemented, since the
-game uses it for nonces and it needs no network.
-
-Bringing internet play to the Switch means a socket layer - lwIP over libnx
-is what the homebrew scene uses - and then a `posix_net.c` that speaks to
-it. The stub is written so that replacing it is that change and no other.
+`host_net.c` answers the game's network calls with libnx's BSD sockets
+(the console's bsd service), as `posix_net.c` does on Linux. The
+differences are the console's: socket addresses carry a length byte and an
+8-bit family, Linux's `MSG_NOSIGNAL` is refused, and socket buffers come out
+of one budget per process, which `host_main.c` starts larger than libnx's
+default. Internet play's brokers (`brokers.txt`) ride in the NRO and are
+written beside it at start. A host may start alone
+(`network.host_minimum_players`); others join the game under way.
 
 ## What the port does not have
 

@@ -34,10 +34,32 @@ The game updates itself from this repository's releases, asking first.
 
 ## Features
 
-- deko3d renderer
-- online play: server browser, public games, invite links, hosting
+- deko3d renderer, drawn at 720p in handheld and 1080p docked
+- 60 fps, with shaders compiled in the background and cached on the card
+- online play with OpenCE (network version 21): server browser, public games,
+  invite links, hosting, joining a game in progress
+- host alone: START NOW starts the match, and others join it as it runs
+- co-op campaign over the network (OpenCE's co-op)
 - the disc's movies (intro, menus, credits, cutscene sound)
 - controllers for players 1–4 and handheld
+- frame rate overlay: FPS, the slowest frame, shaders loaded and building
+- sharper textures at a slant (4x anisotropic filtering)
+- clocks left to the console, or to sys-clk
+- Quit returns to the HOME Menu
+
+## Settings
+
+`config.toml`, beside `halo.nro`. The Switch's own:
+
+| Setting | Default | |
+|---|---|---|
+| `display.render_resolution` | `"auto"` | lines drawn: 720 handheld, 1080 docked; or `"480"`, `"720"`, `"1080"` |
+| `display.anisotropy` | `4` | texture filtering at a slant, 1–16 |
+| `overlay.enabled` | `true` | the frame rate overlay |
+| `overlay.position` | `"top"` | `"top"` or `"bottom"`, centered |
+| `overlay.frame_time` | `true` | the slowest frame of the last second (MS) |
+| `overlay.shaders` | `true` | shaders loaded, and those still building |
+| `network.host_minimum_players` | `1` | players a hosted game needs to start; 2 is the Xbox's |
 
 ## Build
 
@@ -57,7 +79,8 @@ Requirements and design: [port/switch/README.md](port/switch/README.md).
   port, netcode and menus.
 - **[thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal)**:
   the Switch port and its deko3d renderer, which this is a fork of.
-- **nx-mod**: movies, icon, the one-file install and folder layout, releases.
+- **nx-mod**: movies, icon, the one-file install and folder layout, 720p/1080p
+  rendering, the overlay, hosting alone, Quit, online fixes, releases.
 - **[devkitPro](https://devkitpro.org)**, **[FFmpeg](https://ffmpeg.org)**,
   **[musl](https://musl.libc.org)**.
 
