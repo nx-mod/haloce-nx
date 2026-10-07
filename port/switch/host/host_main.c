@@ -1410,7 +1410,34 @@ int main(int argc, char *argv[])
 	 * nxlink attached, and every line went somewhere the host side never
 	 * saw. That is the whole of why the previous attempts produced no output
 	 * despite deploying correctly. */
-	socketInitializeDefault();
+	{
+		/* (nx-mod/haloce-nx) more room than libnx's default: the game's
+		sockets ask for large buffers (transport_endpoint_winsock.c, p2p.c),
+		and with the default budget the service answered ENOBUFS - a server
+		could not be made, and a join hung at "connecting" while every send
+		failed. The archived port's configuration (haloce-nx-zink 4e324b56):
+		1 MB TCP buffers at most, and twice the default's room for them. */
+		static const SocketInitConfig socket_config =
+		{
+			.tcp_tx_buf_size = 0x10000,
+			.tcp_rx_buf_size = 0x10000,
+			.tcp_tx_buf_max_size = 0x100000,
+			.tcp_rx_buf_max_size = 0x100000,
+			.udp_tx_buf_size = 0x2400,
+			.udp_rx_buf_size = 0xA500,
+			.sb_efficiency = 8,
+			.num_bsd_sessions = 3,
+			.bsd_service_type = BsdServiceType_User,
+		};
+		Result result = socketInitialize(&socket_config);
+
+		if (R_FAILED(result))
+		{
+			host_logf(HOST_LOG_WARN, "sockets: the larger configuration was refused (0x%x); libnx's default instead",
+				(unsigned)result);
+			socketInitializeDefault();
+		}
+	}
 	if (nxlinkConnectToHost(false, true) >= 0)
 		host_logf(HOST_LOG_INFO, "output is going to a nxlink host as well as here");
 	else
