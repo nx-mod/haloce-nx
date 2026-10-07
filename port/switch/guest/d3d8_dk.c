@@ -1978,6 +1978,23 @@ static void sampler_make(int stage, BOOL mipmapped, BOOL hires, struct dk_sample
 	sampler->lod_minimum = hires ? 0.0f : (float)state[D3DTSS_MAXMIPLEVEL];
 	sampler->anisotropy = (min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ?
 		(float)state[D3DTSS_MAXANISOTROPY] : 1.0f;
+	/* (nx-mod/haloce-nx) display.anisotropy: at least that much for every
+	filtered, mipmapped texture, not only the few the game asks for */
+	if (sampler->min_linear && sampler->mip_filter != DK_MIP_NONE)
+	{
+		static unsigned long read_at = (unsigned long)-1;
+		static float minimum = 1.0f;
+
+		if (read_at != config_changes())
+		{
+			long value = config_integer("display.anisotropy");
+
+			read_at = config_changes();
+			minimum = value < 1 ? 1.0f : value > 16 ? 16.0f : (float)value;
+		}
+		if (sampler->anisotropy < minimum)
+			sampler->anisotropy = minimum;
+	}
 	color_to_vec4(state[D3DTSS_BORDERCOLOR], sampler->border);
 }
 

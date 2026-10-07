@@ -439,6 +439,10 @@ static const struct config_setting config_settings[] =
 		"Log where every game thread is this often, in seconds (read by the\n"
 		"app, port/android/host/host_debug.c); 0 never." },
 #ifdef HALO_SWITCH
+	{ "display.anisotropy", _config_integer, "4", "HALO_ANISOTROPY", _environment_value, _platform_android,
+		"The least anisotropic filtering a filtered, mipmapped texture gets (1 to\n"
+		"16; 1 for only what the game asks): sharper ground, walls and models seen\n"
+		"at an angle." },
 	{ "debug.profiler", _config_boolean, "false", "HALO_PROFILER", _environment_set_is_true, _platform_android,
 		"Profile the game: sample where its threads are (debug.profile_hz times a\n"
 		"second) and write the counts to the profile folder every 20 s, for\n"
