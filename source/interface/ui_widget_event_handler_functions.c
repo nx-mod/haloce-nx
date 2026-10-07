@@ -2909,7 +2909,26 @@ static boolean network_game_start_faster(
 				return TRUE;
 			}
 		}
+		/* port: no player of this machine has the controller that pressed
+		it - on the Switch the button's controller and the one the player
+		joined with can be numbered apart (handheld, a pair of Joy-Con) -
+		so it is this machine's first player's: the button did nothing */
+		for (player_index = 0; player_index < (long)NUMBEROF(game->players); player_index++)
+		{
+			if (network_player_is_valid(&game->players[player_index]) &&
+				(short)game->players[player_index].machine_index == (short)machine_index)
+			{
+				error(_error_silent, "start time change: controller %d has no player here; player %ld's (controller %d)",
+					(int)event->controller_index, player_index, (int)game->players[player_index].controller_index);
+				if (!network_game_client_request_start_time_change(client, TRUE))
+					error(2, "network_game_client_request_start_time_change() failed");
+				return TRUE;
+			}
+		}
+		error(_error_silent, "start time change: no player of this machine (%d)", (int)machine_index);
 	}
+	else
+		error(_error_silent, "start time change: no network game client");
 	return TRUE;
 }
 
@@ -2938,7 +2957,26 @@ static boolean network_game_start_slower(
 				return TRUE;
 			}
 		}
+		/* port: no player of this machine has the controller that pressed
+		it - on the Switch the button's controller and the one the player
+		joined with can be numbered apart (handheld, a pair of Joy-Con) -
+		so it is this machine's first player's: the button did nothing */
+		for (player_index = 0; player_index < (long)NUMBEROF(game->players); player_index++)
+		{
+			if (network_player_is_valid(&game->players[player_index]) &&
+				(short)game->players[player_index].machine_index == (short)machine_index)
+			{
+				error(_error_silent, "start time change: controller %d has no player here; player %ld's (controller %d)",
+					(int)event->controller_index, player_index, (int)game->players[player_index].controller_index);
+				if (!network_game_client_request_start_time_change(client, FALSE))
+					error(2, "network_game_client_request_start_time_change() failed");
+				return TRUE;
+			}
+		}
+		error(_error_silent, "start time change: no player of this machine (%d)", (int)machine_index);
 	}
+	else
+		error(_error_silent, "start time change: no network game client");
 	return TRUE;
 }
 
