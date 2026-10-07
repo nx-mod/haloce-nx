@@ -195,7 +195,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # whatever the runner happens to be called.
     nacp_title = "Halo: Combat Evolved"
     nacp_author = "thelinkin3000, nx-mod"
-    nacp_version = "1.0.1-nx"
+    nacp_version = "1.0.2-nx"
     # The icon does not go in the NACP: it is an asset, embedded by elf2nro
     # below. A 256x256 JPEG, converted from the same master the Android icon
     # comes from (port/android/art/android-icon.png, via tools/android_icon.py),
