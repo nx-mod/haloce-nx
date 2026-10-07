@@ -2430,6 +2430,18 @@ static boolean network_game_server_handle_message_client_game_start_request(
 		{
 			/* (a short on the wire: the rest of the long is not written) */
 			short countdown_event = (short)game_start_request.countdown_time;
+			boolean network_game_server_port_may_start_alone(struct network_game_server *server);
+
+			/* (nx-mod/haloce-nx) the host's START NOW (faster: the joined
+			event's number) when the host may start alone and no countdown
+			runs: the game starts, rather than waiting for a second machine
+			the countdown would begin with */
+			if (countdown_event == _network_game_server_countdown_event_player_joined &&
+				network_game_server_client_machine_is_local(server, client_machine) &&
+				network_game_server_port_may_start_alone(server))
+			{
+				countdown_event = _network_game_server_countdown_event_start_immediately;
+			}
 
 			/* port: the pregame screen's faster and slower, from any machine;
 			to stop the countdown or start at once (a script's), the host's own

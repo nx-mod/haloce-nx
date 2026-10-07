@@ -2901,6 +2901,7 @@ void network_game_server_begin_game_start_countdown(
 }
 
 long config_integer(char const *name);
+boolean server_ok_to_countdown(struct network_game_server *server);
 
 /* (nx-mod/haloce-nx) the players a game this machine hosts needs to start:
 network.host_minimum_players, 1 by default, which lets the host start alone
@@ -2914,6 +2915,17 @@ static long server_minimum_players(
 	long minimum = PIN(config_integer("network.host_minimum_players"), 1, 2);
 
 	return minimum < (long)server->game.minimum_players ? minimum : (long)server->game.minimum_players;
+}
+
+/* (nx-mod/haloce-nx) whether the host's START NOW starts the game when no
+countdown is running: where it may start alone (server_minimum_players),
+since the countdown begins by itself only once a second machine is in the
+game (network_game_server_update_countdown) - alone, it never began */
+boolean network_game_server_port_may_start_alone(
+	struct network_game_server *server)
+{
+	return server_minimum_players(server) <= 1 && !server->countdown_state.active &&
+		server_ok_to_countdown(server);
 }
 
 boolean server_needs_more_teams(
