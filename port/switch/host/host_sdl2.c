@@ -169,6 +169,16 @@ static void standin_window_size(int *width, int *height)
 	*height = docked ? 1080 : 720;
 }
 
+/* (nx-mod/haloce-nx) the screen's lines, for the render resolution's
+"auto" (port/switch/guest/d3d8_dk.c) */
+unsigned int host_screen_lines(void)
+{
+	int width, height;
+
+	standin_window_size(&width, &height);
+	return (unsigned int)height;
+}
+
 uint32_t host_sdl_create_window(const char *title, int width, int height, int64_t flags)
 {
 	Uint32 host_flags = SDL_WINDOW_FULLSCREEN;

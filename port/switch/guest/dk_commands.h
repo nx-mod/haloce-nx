@@ -77,6 +77,10 @@ struct dk_surface
 	uint32_t width;
 	uint32_t height;
 	uint32_t kind;
+	/* (nx-mod/haloce-nx) the host's pixels for each of the game's in this
+	target, across and down: the screen's targets are drawn at the render
+	resolution (display.render_resolution), the rest at 1 (0 is 1) */
+	float scale[2];
 };
 
 /* the surfaces later commands draw into (either can be DK_SURFACE_NONE) */

@@ -67,6 +67,11 @@ static float screen_scale[2] = { 1.0f, 1.0f };
 static long ui_offset;
 #define UI_OFFSET ((GLint)ui_offset)
 
+#ifdef HALO_SWITCH
+/* the console's screen's lines: 1080 docked, 720 in handheld (host_sdl2.c) */
+unsigned int host_screen_lines(void);
+#endif
+
 static void screen_mode_choose(long *width, float scale[2])
 {
 #ifdef HALO_ANDROID
@@ -83,6 +88,25 @@ static void screen_mode_choose(long *width, float scale[2])
 		*width = 1600;
 	*width &= ~1L;
 	scale[0] = scale[1] = 1.0f;
+#ifdef HALO_SWITCH
+	/* (nx-mod/haloce-nx) the screen's targets drawn at the render
+	resolution: the game keeps its 480 lines, each drawn as lines/480 of the
+	host's (the host scales the targets, viewports, scissors and clears:
+	host_dk.c). "auto" is the console's screen, 720 in handheld and 1080
+	docked, which can change between frames (halo_screen_commit) */
+	{
+		const char *setting = config_string("display.render_resolution");
+		long lines = atol(setting);
+
+		if (lines <= 0)
+			lines = (long)host_screen_lines();
+		if (lines < SCREEN_HEIGHT)
+			lines = SCREEN_HEIGHT;
+		if (lines > 1080)
+			lines = 1080;
+		scale[0] = scale[1] = (float)lines / (float)SCREEN_HEIGHT;
+	}
+#endif
 #else
 	long display_width, display_height;
 
@@ -449,6 +473,14 @@ static void surface_describe(const D3DSurface *surface, BOOL depth_only, struct 
 	out->width = (uint32_t)width;
 	out->height = (uint32_t)height;
 	out->kind = depth ? DK_SURFACE_DEPTH : DK_SURFACE_COLOR;
+	/* the screen's targets at the render resolution (screen_mode_choose) */
+	if (width == (unsigned long)halo_screen_width() && height == SCREEN_HEIGHT)
+	{
+		out->scale[0] = screen_scale[0];
+		out->scale[1] = screen_scale[1];
+	}
+	else
+		out->scale[0] = out->scale[1] = 1.0f;
 }
 
 /* the color surfaces drawn into, by their data, and the size each was last
@@ -1024,7 +1056,15 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (!index)
 		index = 1;
 	if (result)
-		*result = visibility_pending[index] ? host_dk_visibility((unsigned int)index) : 0;
+	{
+		/* in the game's pixels: the tests are of the screen's targets, which
+		have scale x scale of the host's for each (lens flares compare the
+		count with their area) */
+		float area = screen_scale[0] * screen_scale[1];
+		unsigned int count = visibility_pending[index] ? host_dk_visibility((unsigned int)index) : 0;
+
+		*result = area > 1.0f ? (UINT)((float)count / area + 0.5f) : count;
+	}
 	return S_OK;
 }
 

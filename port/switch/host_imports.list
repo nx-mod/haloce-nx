@@ -5,6 +5,7 @@
 host_dk_submit
 host_dk_retired
 host_dk_visibility
+host_screen_lines
 # the deko3d renderer's shader cache (port/switch/guest/dk_shaders.c,
 # port/switch/host/host_dk_shaders.c). A 64-bit hash travels in one X
 # register on both sides, and glsl/state_out are guest addresses

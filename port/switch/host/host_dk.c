@@ -45,6 +45,7 @@ give.
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 #define FRAMES 3
@@ -104,6 +105,10 @@ struct image_block
 struct target
 {
 	struct dk_surface surface;
+	/* its image's size: the surface's at its scale (nx-mod/haloce-nx: the
+	screen's targets are drawn at the render resolution) */
+	uint32_t pixel_width, pixel_height;
+	float scale[2];
 	DkImage image;
 	/* when it was last bound to be drawn into (dk.target_clock), and
 	whether it has been since a barrier made its pixels visible to the
@@ -360,7 +365,8 @@ static struct target *target_get(const struct dk_surface *surface)
 	struct target *target;
 	DkImageLayout layout;
 	DkMemBlock block;
-	uint32_t offset;
+	uint32_t offset, pixel_width, pixel_height;
+	float scale[2];
 	int index;
 
 	if (surface->kind == DK_SURFACE_NONE || !surface->width || !surface->height)
@@ -377,9 +383,18 @@ static struct target *target_get(const struct dk_surface *surface)
 			(unsigned)surface->data);
 		return NULL;
 	}
+	{
+		float scale_x = surface->scale[0] > 0.0f ? surface->scale[0] : 1.0f;
+		float scale_y = surface->scale[1] > 0.0f ? surface->scale[1] : 1.0f;
+
+		pixel_width = (uint32_t)((float)surface->width * scale_x + 0.5f);
+		pixel_height = (uint32_t)((float)surface->height * scale_y + 0.5f);
+		scale[0] = scale_x;
+		scale[1] = scale_y;
+	}
 	layout_make(&layout, surface->kind == DK_SURFACE_DEPTH ? DkImageFormat_Z24S8 : DkImageFormat_RGBA8_Unorm,
-		DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine | DkImageFlags_HwCompression, surface->width,
-		surface->height);
+		DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine | DkImageFlags_HwCompression, pixel_width,
+		pixel_height);
 	if (!image_memory(&layout, &block, &offset))
 	{
 		host_logf(HOST_LOG_ERROR, "deko3d: no image memory for the %ux%u target at %08x", (unsigned)surface->width,
@@ -388,9 +403,14 @@ static struct target *target_get(const struct dk_surface *surface)
 	}
 	target = &dk.targets[dk.target_count++];
 	target->surface = *surface;
+	target->pixel_width = pixel_width;
+	target->pixel_height = pixel_height;
+	target->scale[0] = scale[0];
+	target->scale[1] = scale[1];
 	dkImageInitialize(&target->image, &layout, block, offset);
-	host_logf(HOST_LOG_INFO, "deko3d: %s target %08x, %ux%u", surface->kind == DK_SURFACE_DEPTH ? "depth" : "color",
-		(unsigned)surface->data, (unsigned)surface->width, (unsigned)surface->height);
+	host_logf(HOST_LOG_INFO, "deko3d: %s target %08x, %ux%u (%ux%u pixels)",
+		surface->kind == DK_SURFACE_DEPTH ? "depth" : "color", (unsigned)surface->data, (unsigned)surface->width,
+		(unsigned)surface->height, (unsigned)pixel_width, (unsigned)pixel_height);
 	return target;
 }
 
@@ -872,6 +892,16 @@ static int initialize(void)
 
 static void textures_targets_changing(void);
 
+/* a coordinate in the game's pixels of the bound targets, in the host's: an
+edge at the target's scale (as d3d8_gl.c's scaled_pixel) */
+static int32_t bound_pixel(int32_t coordinate, int axis)
+{
+	const struct target *size_from = dk.color ? dk.color : dk.depth;
+	float scale = size_from ? size_from->scale[axis] : 1.0f;
+
+	return scale == 1.0f ? coordinate : (int32_t)floorf((float)coordinate * scale + 0.5f);
+}
+
 static void targets_bind(const struct dk_command_targets *command)
 {
 	DkImageView color_view, depth_view;
@@ -896,9 +926,9 @@ static void targets_bind(const struct dk_command_targets *command)
 	size_from = dk.color ? dk.color : dk.depth;
 	if (size_from)
 	{
-		DkViewport viewport = { 0.0f, 0.0f, (float)size_from->surface.width, (float)size_from->surface.height,
+		DkViewport viewport = { 0.0f, 0.0f, (float)size_from->pixel_width, (float)size_from->pixel_height,
 			0.0f, 1.0f };
-		DkScissor scissor = { 0, 0, size_from->surface.width, size_from->surface.height };
+		DkScissor scissor = { 0, 0, size_from->pixel_width, size_from->pixel_height };
 
 		dkCmdBufSetViewports(dk.commands, 0, &viewport, 1);
 		dkCmdBufSetScissors(dk.commands, 0, &scissor, 1);
@@ -926,7 +956,10 @@ static void clear(const struct dk_command_clear *command)
 	for (index = 0; index < command->rectangle_count; index++)
 	{
 		const uint32_t *rectangle = command->rectangles[index];
-		DkScissor scissor = { rectangle[0], rectangle[1], rectangle[2], rectangle[3] };
+		int32_t x0 = bound_pixel((int32_t)rectangle[0], 0), y0 = bound_pixel((int32_t)rectangle[1], 1);
+		int32_t x1 = bound_pixel((int32_t)(rectangle[0] + rectangle[2]), 0);
+		int32_t y1 = bound_pixel((int32_t)(rectangle[1] + rectangle[3]), 1);
+		DkScissor scissor = { (uint32_t)x0, (uint32_t)y0, (uint32_t)(x1 - x0), (uint32_t)(y1 - y0) };
 
 		dkCmdBufSetScissors(dk.commands, 0, &scissor, 1);
 		if (mask)
@@ -1052,7 +1085,9 @@ static void present(const struct dk_command_present *command)
 		/* letterboxed to the back buffer's shape */
 		uint32_t width = screen_width, height = screen_width * back_buffer->surface.height / back_buffer->surface.width;
 		DkImageView source;
-		DkImageRect from = { 0, 0, 0, back_buffer->surface.width, back_buffer->surface.height, 1 };
+		/* (the back buffer's pixels: the render resolution's) */
+		DkImageRect from = { 0, 0, 0, back_buffer->pixel_width, back_buffer->pixel_height, 1 };
+		DkImageRect game = { 0, 0, 0, back_buffer->surface.width, back_buffer->surface.height, 1 };
 		DkImageRect to;
 
 		if (height > screen_height)
@@ -1073,7 +1108,8 @@ static void present(const struct dk_command_present *command)
 			DkImageView readback;
 
 			dkImageViewDefaults(&readback, &dk.readback_image);
-			dkCmdBufBlitImage(dk.commands, &source, &from, &readback, &from, 0, 0);
+			/* (a screenshot is the game's size) */
+			dkCmdBufBlitImage(dk.commands, &source, &from, &readback, &game, DkBlitFlag_FilterLinear, 0);
 			screenshot = back_buffer;
 		}
 		dkCmdBufBlitImage(dk.commands, &source, &from, &screen_view, &to, DkBlitFlag_FilterLinear, 0);
@@ -2545,21 +2581,21 @@ static int state_apply(void)
 		return 0;
 	dk.state_dirty = 0;
 
-	viewport.x = (float)state->viewport[0];
-	viewport.y = (float)state->viewport[1];
-	viewport.width = (float)state->viewport[2];
-	viewport.height = (float)state->viewport[3];
+	viewport.x = (float)bound_pixel(state->viewport[0], 0);
+	viewport.y = (float)bound_pixel(state->viewport[1], 1);
+	viewport.width = (float)(bound_pixel(state->viewport[0] + state->viewport[2], 0) - (int32_t)viewport.x);
+	viewport.height = (float)(bound_pixel(state->viewport[1] + state->viewport[3], 1) - (int32_t)viewport.y);
 	viewport.near = state->depth_range[0];
 	viewport.far = state->depth_range[1];
 	dkCmdBufSetViewports(dk.commands, 0, &viewport, 1);
-	left = state->scissor[0] < 0 ? 0 : state->scissor[0];
-	top = state->scissor[1] < 0 ? 0 : state->scissor[1];
-	right = state->scissor[0] + state->scissor[2];
-	bottom = state->scissor[1] + state->scissor[3];
-	if (right > (int32_t)size_from->surface.width)
-		right = (int32_t)size_from->surface.width;
-	if (bottom > (int32_t)size_from->surface.height)
-		bottom = (int32_t)size_from->surface.height;
+	left = state->scissor[0] < 0 ? 0 : bound_pixel(state->scissor[0], 0);
+	top = state->scissor[1] < 0 ? 0 : bound_pixel(state->scissor[1], 1);
+	right = bound_pixel(state->scissor[0] + state->scissor[2], 0);
+	bottom = bound_pixel(state->scissor[1] + state->scissor[3], 1);
+	if (right > (int32_t)size_from->pixel_width)
+		right = (int32_t)size_from->pixel_width;
+	if (bottom > (int32_t)size_from->pixel_height)
+		bottom = (int32_t)size_from->pixel_height;
 	scissor.x = (uint32_t)left;
 	scissor.y = (uint32_t)top;
 	scissor.width = right > left ? (uint32_t)(right - left) : 0;

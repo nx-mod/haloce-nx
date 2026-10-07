@@ -451,6 +451,11 @@ static const struct config_setting config_settings[] =
 		"Log where every game thread is this often, in seconds (read by the\n"
 		"app, port/android/host/host_debug.c); 0 never." },
 #ifdef HALO_SWITCH
+	{ "display.render_resolution", _config_string, "\"auto\"", "HALO_RENDER_RESOLUTION", _environment_value,
+		_platform_android,
+		"The lines the game is drawn at: \"auto\" for the screen's (720 in handheld,\n"
+		"1080 docked), or \"480\", \"720\" or \"1080\". More lines are sharper and\n"
+		"take the GPU longer." },
 	{ "display.anisotropy", _config_integer, "4", "HALO_ANISOTROPY", _environment_value, _platform_android,
 		"The least anisotropic filtering a filtered, mipmapped texture gets (1 to\n"
 		"16; 1 for only what the game asks): sharper ground, walls and models seen\n"
