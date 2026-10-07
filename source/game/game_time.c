@@ -365,6 +365,9 @@ void game_time_start(
 	return;
 }
 
+/* (nx-mod/haloce-nx) a network game's catch-up in one frame: game_time_update */
+#define NETWORK_TICKS_PER_FRAME 4
+
 void game_time_update(
 	real time_delta_sec)
 {
@@ -402,8 +405,14 @@ void game_time_update(
 			case _game_connection_network_client:
 			case _game_connection_network_server:
 				/* (the distributed netcode: every machine ticks on its own
-				clock, and the host waits for nobody) */
-				connection = TICKS_PER_SECOND;
+				clock, and the host waits for nobody)
+				(nx-mod/haloce-nx) at most NETWORK_TICKS_PER_FRAME a frame,
+				not a second's worth. A machine whose tick costs more than a
+				tick's time (the Switch at its default clocks, in a busy game)
+				ran 30 after one slow frame, which made the next slower: a
+				spiral to frames of many seconds. Behind the host by more, it
+				takes the host's tick instead (network_client_manager.c) */
+				connection = NETWORK_TICKS_PER_FRAME;
 				break;
 			case _game_connection_local:
 				connection = 7;
