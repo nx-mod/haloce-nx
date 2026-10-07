@@ -334,24 +334,55 @@ void host_abort(const char *reason)
 	abort();
 }
 
+/* (nx-mod/haloce-nx) The exit is the main thread's. libnx's exit returns
+to the homebrew loader on the stack it was entered on - the main thread's -
+and from the game thread, where the game's exit arrives, the loader stopped
+the process with a break (Quit crashed: Atmosphere's report, hbl + 0x4044,
+from __libnx_exit on the game thread). So the game thread finishes what it
+owns - the GPU, the log - and hands the exit to the main thread, parked in
+main for it (host_wait_for_exit), which pauses every other thread and exits. */
+static UEvent exit_requested;
+static int exit_code;
+static int exit_waiting;
+
+void host_wait_for_exit(void)
+{
+	ueventCreate(&exit_requested, false);
+	__atomic_store_n(&exit_waiting, 1, __ATOMIC_RELEASE);
+	for (;;)
+	{
+		if (R_SUCCEEDED(waitSingle(waiterForUEvent(&exit_requested), -1)))
+			break;
+	}
+	/* every other thread stops where it is, because libnx's exit shuts the
+	controllers', sound's and sockets' services down and a thread still
+	using one aborts the process. Nothing takes a lock after this - a
+	paused thread may hold it. */
+	host_threads_pause();
+	_exit(__atomic_load_n(&exit_code, __ATOMIC_ACQUIRE));
+}
+
 void host_exit(int code)
 {
 	host_logf(HOST_LOG_INFO, "the game exited (%d)", code);
 	host_restore_clocks();
 	host_dk_shutdown();
-	host_logf(HOST_LOG_INFO, "exit: the GPU is finished and the display let go");
-	/* (nx-mod/haloce-nx) the log written out while its thread still runs;
-	then every other thread is paused where it is, because libnx's exit
-	shuts the controllers', sound's and sockets' services down and a thread
-	still using one aborts the process: Quit crashed. Nothing takes a lock
-	after the pause - a paused thread may hold it. */
+	host_logf(HOST_LOG_INFO, "exit: the GPU is finished and the display let go; the main thread exits");
 	pthread_mutex_lock(&log_lock);
 	log_drain_locked();
 	if (log_descriptor >= 0)
 		(void)fsync(log_descriptor);
 	pthread_mutex_unlock(&log_lock);
-	host_threads_pause();
-	_exit(code);
+	if (!__atomic_load_n(&exit_waiting, __ATOMIC_ACQUIRE))
+	{
+		/* before the game thread exists: this is the main thread */
+		host_threads_pause();
+		_exit(code);
+	}
+	__atomic_store_n(&exit_code, code, __ATOMIC_RELEASE);
+	ueventSignal(&exit_requested);
+	for (;;)
+		svcSleepThread(INT64_MAX);
 }
 
 int host_errno(void)
@@ -1525,7 +1556,8 @@ int main(int argc, char *argv[])
 			host_fatal("cannot start the game thread: %s (%d)", strerror(error), error);
 		host_logf(HOST_LOG_INFO, "the game thread has a %zu byte stack", sizes[index]);
 	}
-	/* the game ends the process itself (host_exit) */
-	for (;;)
-		pause();
+	/* the game ends the process (host_exit), and the exit is made here, on
+	this thread */
+	host_wait_for_exit();
+	return 0;
 }
