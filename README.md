@@ -61,6 +61,33 @@ The game updates itself from this repository's releases, asking first.
 | `overlay.shaders` | `true` | shaders loaded, and those still building |
 | `network.host_minimum_players` | `1` | players a hosted game needs to start; 2 is the Xbox's |
 
+## What nx-mod adds to thelinkin3000's port
+
+Graphics
+- 720p in handheld and 1080p docked: the game's 480-line picture drawn at the
+  render resolution, the screen presented at the console's own (`display.render_resolution`)
+- frames held while a shader compiles, and for the first frames of a map, so
+  no half-drawn frame is shown; shaders compiled before are cached on the card
+- shader keys shipped in the NRO: a new install compiles them in the background at start
+- 4x anisotropic filtering (`display.anisotropy`)
+- frame rate overlay: FPS, slowest frame, shaders loaded and building (`overlay.*`)
+
+Online (OpenCE, network version 21)
+- OpenCE merged to its latest: co-op improvements, netcode fixes, map hardening
+- internet play's brokers shipped in the NRO (the server browser lists games)
+- the console's sockets: Linux-only flags dropped, a larger socket budget
+- hosting alone: START NOW starts the match, others join it under way
+  (`network.host_minimum_players`)
+
+The console
+- one-file install: the game image inside `halo.nro`, the folder layout above
+- the disc's movies, and the icon from the disc
+- Quit closes the game back to the HOME Menu
+- the clocks are the console's or sys-clk's; the game no longer raises them
+- a stuck thread no longer keeps a CPU core at 100%
+- after unpacking the disc, the game starts again in a fresh process
+- the last multiplayer map kept in memory, not read from the card every frame
+
 ## Build
 
 ```sh
