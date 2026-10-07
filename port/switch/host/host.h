@@ -295,6 +295,8 @@ DKSH in memory (*dksh, *dksh_size: the caller frees it, and writes it to the
 card in a batch). Returns 0 on failure. Called on the compile thread only, and locked inside,
 so nothing else can ever be compiling at the same time. */
 int host_dk_compile_glsl(int fragment, const char *glsl, void **dksh, size_t *dksh_size);
+/* the new program in place: start again as it (host_main.c) */
+void host_update_restart(void);
 
 /* host_dk_shaders.c (DEKO3D.md, phase 5, step 3): the shader cache, called
 by the guest through imports. stage: 0 vertex, 1 pixel. A shader is known by
