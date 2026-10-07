@@ -632,6 +632,50 @@ static void ensure_movies(const char *root)
 		host_ui_close();
 }
 
+/* (nx-mod/haloce-nx) Starts the program again as a new process, which the
+kernel lays out afresh (appletRestartProgram); the attempts are counted in
+restart.count in the program's folder, three at most. Returns only if it did
+not restart. */
+static void restart_program(const char *why)
+{
+	char path[PATH_MAX + 32];
+	int attempt = 0;
+	FILE *file;
+	Result result;
+
+	host_logf(HOST_LOG_WARN, "%s: starting again", why);
+	snprintf(path, sizeof(path), "%s/restart.count", executable_root);
+	if ((file = fopen(path, "r")) != NULL)
+	{
+		if (fscanf(file, "%d", &attempt) != 1)
+			attempt = 0;
+		fclose(file);
+	}
+	if (attempt >= 3)
+	{
+		remove(path);
+		host_logf(HOST_LOG_ERROR, "already started again %d times", attempt);
+		return;
+	}
+	if ((file = fopen(path, "w")) != NULL)
+	{
+		fprintf(file, "%d\n", attempt + 1);
+		fclose(file);
+	}
+	result = appletRestartProgram(NULL, 0);
+	host_logf(HOST_LOG_ERROR, "the program could not start again: 0x%x", (unsigned)result);
+	remove(path);
+}
+
+/* a launch that loaded the game: the attempts start over */
+static void restart_count_clear(void)
+{
+	char path[PATH_MAX + 32];
+
+	snprintf(path, sizeof(path), "%s/restart.count", executable_root);
+	remove(path);
+}
+
 /* (nx-mod/haloce-nx) The save drives' folders are named for what they hold
 (port/linux/src/xbox_files.c): profiles/ (u:), saves/ (z:) and cache/ (z:'s
 map caches). Folders an earlier layout left are moved: save/u and save/z
@@ -1073,7 +1117,14 @@ static void *game_main(void *unused)
 		host_fatal("cannot read the game image %s: %s", path, strerror(errno));
 	log_marker("marker: loading the guest image into memory");
 	if (host_load_image(image, image_size) != 0)
+	{
+		/* (nx-mod/haloce-nx) Something the kernel placed at random - a
+		thread's local storage page, seen at 0x40ba7000 - can sit in the
+		image's fixed range for good. A new process gets a new layout. */
+		restart_program("the game image's range is taken");
 		host_fatal("cannot load the game image %s", path);
+	}
+	restart_count_clear();
 	log_marker("marker: guest image loaded");
 	/* Prove the whole image is there, and not just its code.
 	 *
