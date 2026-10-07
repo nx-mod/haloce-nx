@@ -1144,7 +1144,12 @@ menus' Quit: port/linux/game/menu_functions.c); Android's menus have none,
 as the system closes its apps */
 void platform_request_quit(void)
 {
-#ifndef HALO_ANDROID
+#if defined(HALO_SWITCH)
+	/* (nx-mod/haloce-nx) the Switch's Quit goes back to the home menu, as
+	closing the window does on the desktop (Android's menus have none) */
+	platform_log("quit");
+	exit(EXIT_SUCCESS);
+#elif !defined(HALO_ANDROID)
 	SDL_Event event;
 
 	memset(&event, 0, sizeof(event));
