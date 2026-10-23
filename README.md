@@ -1,435 +1,97 @@
-<div align="center">
+# Halo: Combat Evolved for Nintendo Switch
 
-# OpenCE Ports
+A native Switch port of Halo: Combat Evolved, built from the decompilation
+of the Xbox game, drawn with deko3d. It plays online with
+[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)'s other platforms.
 
-**Halo: Combat Evolved on Android phones and handhelds, the Nintendo Switch and the PlayStation 5, built from the decompilation of the Xbox game.**
-
-[![Latest release](https://img.shields.io/github/v/release/thelinkin3000/halo-ce-universal?label=latest&color=2ea44f)](https://github.com/thelinkin3000/halo-ce-universal/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/thelinkin3000/halo-ce-universal/total?color=blue)](https://github.com/thelinkin3000/halo-ce-universal/releases)
-[![Android](https://img.shields.io/badge/Android-Vulkan%20%C2%B7%20Turnip%20%C2%B7%20OpenGL%20ES-3ddc84?logo=android&logoColor=white)](#android)
-[![Nintendo Switch](https://img.shields.io/badge/Switch-deko3d-e60012)](#nintendo-switch)
-[![PlayStation 5](https://img.shields.io/badge/PS5-Vulkan%20%C2%B7%20RADV-003791)](#playstation-5)
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/9gqcHyr5km)
-
-[**Download**](#download) ·
-[Install](#install) ·
-[Graphics](#graphics-vulkan-turnip-and-deko3d) ·
-[Multiplayer](#multiplayer) ·
-[Controls](#controls) ·
-[Report a problem](#reporting-a-problem) ·
-[Building](#building) ·
-[Discord](https://discord.gg/9gqcHyr5km)
-
-<!-- Videos and screenshots from a contributor go here: one large capture,
-then a row of three, each taken on a phone, a Switch or a PS5. -->
-
-</div>
-
-It is not an emulator. The game's own code, decompiled from the Xbox build
-2342, is compiled for the device's processor (ARM, or the PS5's x86-64).
-Its Direct3D 8 rendering is translated to **Vulkan** on Android and the PS5
-and to **deko3d**, the Switch's own GPU interface, on the Switch.
-
-> [!IMPORTANT]
-> **No game data is included.** You need your own **Xbox** disc image of
-> Halo: Combat Evolved (`.iso` or `.xiso`, any region). The game unpacks
-> its maps from it on the first start.
-
-> [!WARNING]
-> **Official sources.** The only official downloads are the
-> [releases on this repository](https://github.com/thelinkin3000/halo-ce-universal/releases). Builds,
-> "updates" or donation requests offered anywhere else under this project's
-> name are not from us.
-
-<div align="center">
-
-[![Halo Combat Evolved - Nintendo Switch: watch on YouTube](https://img.youtube.com/vi/imNdnKszCVI/maxresdefault.jpg)](https://www.youtube.com/watch?v=imNdnKszCVI)
-
-*Halo: Combat Evolved on the Nintendo Switch (video by puginatux).*
-
-</div>
-
-## Contents
-
-- [What works](#what-works) · [Known issues](#known-issues)
-- [Download](#download) · [Install](#install): [Android](#android), [Nintendo Switch](#nintendo-switch), [PlayStation 5](#playstation-5), [updating](#updating)
-- [Graphics: Vulkan, Turnip and deko3d](#graphics-vulkan-turnip-and-deko3d)
-- [Multiplayer](#multiplayer) · [Controls](#controls)
-- [Reporting a problem](#reporting-a-problem)
-- [Building](#building) · [Credits](#credits)
-
-## What works
-
-| | |
-| --- | --- |
-| 🎮 **Campaign** | The whole campaign, with checkpoints, saves and cinematics. Xbox maps of every region; PAL maps are made to play as NTSC ones. |
-| 🖼️ **Vulkan on Android** | The default renderer. On Qualcomm Adreno GPUs the app can download and use **Turnip**, Mesa's open-source driver, in place of the phone's own. OpenGL ES 3 is still there as a fallback. |
-| 🟥 **deko3d on the Switch** | A renderer written for the console's GPU, docked at 1080p or handheld at 720p, switching on its own when you dock. |
-| 🟦 **The PS5** | A homebrew title for a jailbroken console: up to native 4K at 120 frames a second, aiming with the DualSense's gyroscope, voice chat through the pad's microphone. |
-| 👥 **Split screen** | Up to four players on one device, with one controller each. |
-| 🌐 **Multiplayer** | System link on the local network and internet play through invite links and the server browser, with voice chat. |
-| 🗺️ **Custom maps** | Xbox maps and Halo PC / Custom Edition maps, downloaded from the host when you join without them. |
-| ✋ **Touch** | On Android: touch controls in game with swipe aiming, optional gyro aiming, a layout editor; taps work in every menu. |
-| 🔠 **High-res HUD and text** | The HUD, the menus' text and their titles redrawn at high resolution. |
-| 🔄 **Self-updating** | Both builds look for a newer release when they start and offer to install it. |
-
-### Known issues
-
-- Bink movies don't play: the game skips them.
-- **Android:** kernels with 16 KB memory pages (a developer option on
-  Android 15, and some newer phones) can't run the game: the Xbox memory
-  uses 4 KB pages. The app also needs Android 9 or later and a 64-bit
-  ARM CPU.
-- **Android, Vulkan:** the first time a scene shows, a few parts can be
-  missing for a moment while the phone compiles their shaders.
-- **Switch:** Custom Edition maps need a 512 MB memory window. Now and then
-  the console hands out only 256 MB; the main menu then says so, and
-  restarting the game usually fixes it.
-
-The current list is in the [issues](https://github.com/thelinkin3000/halo-ce-universal/issues).
-
-## Download
-
-Each release is a build of `main` we choose to publish, numbered by its tag.
-These links always point to the latest one:
-
-| Platform | Play | Debug (for reports) |
-| --- | --- | --- |
-| Android | [halo-android-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-debug.zip) |
-| Nintendo Switch | [halo-switch-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-release.zip) | [halo-switch-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-debug.zip) |
-| PlayStation 5 | [halo-ps5-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-ps5-release.zip) | [halo-ps5-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-ps5-debug.zip) |
-
-Use the release build to play. The debug build stops at the first failed
-assertion and writes it to the log, which makes it the one to use when
-you're chasing a problem. The [releases page](https://github.com/thelinkin3000/halo-ce-universal/releases)
-keeps the last five builds, if the latest one has a problem.
-
-For Windows and Linux, see the upstream project,
-[OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
+**No game data is included:** you need your own Xbox copy of the game.
 
 ## Install
 
-### Android
+1. Copy `halo.nro` from the
+   [latest release](https://github.com/nx-mod/haloce-nx/releases/latest) into
+   `sdmc:/haloce-nx/`.
+2. Put your Xbox disc image (`.iso` or `.xiso`) in the same folder.
+3. Start `halo.nro` with full memory: a
+   [Sphaira](https://github.com/ITotalJustice/sphaira) forwarder, or a game's
+   title takeover (hold R while it starts).
 
-1. Unzip the download and install the APK.
-2. Copy your Xbox disc image to the phone.
-3. Start the app. On the first start it asks for the disc image: pick it,
-   and it unpacks the maps (about 1.7 GB) into its own data folder.
+The first start copies the maps and movies out of the disc image, then
+starts the game. After that the folder holds:
 
-The app needs Android 9 or later on 64-bit ARM. More, including where the
-data folder is and how to keep your saves across a reinstall, is in
-[port/android/README.md](port/android/README.md).
+| | |
+|---|---|
+| `icon.jpg` | the game's icon, for the forwarder |
+| `config.toml` | the settings |
+| `profiles/` | player profiles |
+| `saves/` | checkpoint and saved games |
+| `cache/` | map caches (safe to delete) |
+| `logs/` | `halo.log`, `debug.txt`, `gamestate.txt` |
+| `maps/`, `bink/` | game data and movies |
 
-### Nintendo Switch
+The game updates itself from this repository's releases, asking first.
 
-The Switch build is a homebrew program, for a console that runs custom
-firmware (Atmosphère). Run it with **title takeover** (hold R while you
-start a game, or use a forwarder), not from the album: the game needs the
-memory that only a full title gets.
+## Features
 
-1. Unzip the download into `sdmc:/switch/halo/` on the SD card, so that
-   you have `sdmc:/switch/halo/halo.nro` and `sdmc:/switch/halo/halo_guest.elf`.
-2. Put your disc image next to them as `sdmc:/switch/halo/halo.iso`.
-3. Start `halo.nro`. On the first start it unpacks the maps (about 1.7 GB;
-   it takes a few minutes, and the screen shows how far it has got).
+- deko3d renderer at 720 lines by default, with dynamic resolution
+- 60 fps; shaders compiled on two threads, shared shader keys downloaded so a
+  new install has them, and a map's load waits for its shaders
+- online play with OpenCE (network version 32): server browser, internet games
+  through UPnP, hosting up to 48 players, joining a game in progress
+- co-op campaign over the network
+- the disc's movies (intro, menus, credits, cutscene sound)
+- gyro aiming, controllers for players 1–4 and handheld
+- 4x anisotropic filtering
 
-An already unpacked `maps/` folder at `sdmc:/switch/halo/maps/` works as
-well. Saves go in `sdmc:/switch/halo/save/` and settings in
-`sdmc:/switch/halo/config.toml`. See
-[port/switch/README.md](port/switch/README.md).
+## Settings
 
-### PlayStation 5
+`config.toml`, beside `halo.nro`. The Switch's own:
 
-The PS5 build is a homebrew title, for a console on system software 13.60
-or lower, jailbroken (the Relapse exploit, or another kernel exploit, then
-kstuff), with ShadowMountPlus 1.7beta5 or later and an FTP server such as
-ftpsrv.
+| Setting | Default | |
+|---|---|---|
+| `display.resolution_limit` | `"720"` | lines drawn: `"480"`, `"720"`, `"900"`, `"1080"` |
+| `display.dynamic_resolution` | `false` | a step down while the GPU falls behind |
+| `display.anisotropy` | `4` | texture filtering at a slant, 1–16 |
+| `performance.cpu_clock` | `"1785"` | `"1785"`, `"1020"` (cooler), or `"stock"` (the console's or sys-clk's) |
+| `input.gyro_aim` | `"false"` | `"true"`, or `"zoom"` for zoomed aiming only |
 
-1. Unzip the download on your computer, and copy its `PPSA99500` folder
-   into `/data/homebrew` on the console over FTP.
-2. Make the folder `/data/halo` and copy your disc image into it.
-3. Start Halo: Combat Evolved from the home screen. On the first start it
-   unpacks the maps (under a minute); notifications show how far it has
-   got.
+## What nx-mod adds to thelinkin3000's port
 
-Saves and settings go in `/data/halo`. See
-[port/ps5/README.md](port/ps5/README.md).
+- one-file install: the game image inside `halo.nro`, and the folder layout
+  above (older `save/` folders are moved in)
+- the maps and movies copied out of the disc image on the console at first
+  start, then a fresh start of the game
+- the disc's movies, and the forwarder icon from the disc
+- updates from this repository's releases (the shared shader keys still come
+  from thelinkin3000's)
+- 4x anisotropic filtering (`display.anisotropy`)
+- the last multiplayer map kept in memory, not read from the card every frame
+- START NOW changes the start time for the pressing player's machine
+- interpolation: an object an animation carries is not snapped every tick
+- menu placeholder pictures drawn from the Xbox map's
 
-### Updating
+## Build
 
-The game updates itself: when it starts, it looks for a newer release and
-asks whether you want it. `update.auto = false` in `config.toml` turns the
-check off. On the PS5 it downloads the new release while you play and
-tells you to close the game and start it again. To update by hand, install
-the new APK over the old one, or copy the new files over the old ones on
-the SD card or the console. Your saves and settings stay.
-
-## Graphics: Vulkan, Turnip and deko3d
-
-**Android** draws with Vulkan by default. To change it, open **SETTINGS**
-from the main menu, choose a profile, and open **VIDEO SETUP**:
-
-- **GRAPHICS BACKEND:** `VULKAN` or `OPENGL` (OpenGL ES 3).
-- **VULKAN DRIVER** (with `VULKAN`): `STOCK`, the phone's own driver, or
-  `TURNIP`, the open-source Mesa driver for Qualcomm Adreno GPUs, which the
-  app downloads. On Adreno, Turnip is often the more correct of the two.
-
-Select **OK**, then close the game and start it again: the backend and the
-driver change only at start-up. The line below the version number in the
-main menu shows which ones are running. For driver archives of your own and
-what to send when something looks wrong, see "Graphics: OpenGL ES and
-Vulkan" in [port/android/README.md](port/android/README.md).
-
-**The Switch** draws with deko3d, the console's native graphics interface,
-through a renderer written for it ([port/switch/DEKO3D.md](port/switch/DEKO3D.md)).
-There is nothing to set.
-
-**The PS5** draws with the same Vulkan renderer as Android, on RADV, Mesa's
-driver for AMD's GPUs, built for the console by
-[PS5_Vulkan](https://github.com/mpereiraesaa/PS5_Vulkan). Its VIDEO SETUP has
-MAXIMUM RESOLUTION (2160P, 1440P or 1080P). The first visit to each place
-can stutter while its shaders are made; the second is smooth.
-
-## Multiplayer
-
-- **System link** on a local network, with up to 128 players. Android phones,
-  Switches and PS5s on the same network see each other's games.
-- **Internet play:** the host's invite link (Android puts it on the
-  clipboard, and opens `halo://join/...` links), or the server browser.
-  No server of this project is needed.
-- **Voice chat**, with the phone's microphone, a headset in the Switch's
-  jack, or the DualSense's microphone.
-- **Split screen** for up to four players on one device.
-- **Custom maps** are sent by the host to players who don't have them.
-
-### Custom Edition maps
-
-Put Halo PC / Custom Edition maps in `custom_maps`, beside `maps` (on the
-Switch, `sdmc:/switch/halo/custom_maps/`), with Custom Edition's
-`bitmaps.map`, `sounds.map` and `loc.map`. The level lists then have CUSTOM
-SINGLEPLAYER and CUSTOM MULTIPLAYER. A subfolder of `custom_maps` is listed
-under its own name and opens to its maps, so a set of maps (Cursed Halo,
-say) can keep its own folder; the campaign maps in it show under CUSTOM
-SINGLEPLAYER and the multiplayer maps under CUSTOM MULTIPLAYER. One level
-of folders is read, and `bitmaps.map`, `sounds.map` and `loc.map` stay in
-`custom_maps` itself. Joining a game on a map you don't have downloads it,
-with its progress at the top of the screen.
-
-<img width="640" alt="CUSTOM SINGLEPLAYER, listing folders of maps" src="docs/images/custom-singleplayer.jpg" />
-
-<img width="640" alt="A folder of CUSTOM MULTIPLAYER opened to its maps" src="docs/images/custom-multiplayer.jpg" />
-
-<img width="280" alt="custom_maps with bitmaps.map, sounds.map, loc.map and a folder for each set of maps" src="docs/images/custom-map-folders.png" />
-
-<img width="640" alt="The lobby downloading a Custom Edition map" src="docs/images/map-download.jpg" />
-
-The netcode is new: each machine moves its own player at once, and the host
-makes the decisions for the game. See [port/linux/NETCODE.md](port/linux/NETCODE.md).
-Keep the game in the front during a network game on Android: in the
-background, Android stops it and the others drop it after 15 seconds.
-
-## Controls
-
-Any controller that Android knows works, and on the Switch the Joy-Con,
-the Pro Controller and the Lite's own buttons, with rumble. The first
-controller is player 1 and the others are players 2 to 4. The buttons
-follow the Xbox controller's:
-
-| Xbox | DualSense | In game |
-| --- | --- | --- |
-| left / right stick | left / right stick | move / look |
-| right trigger | R2 | fire |
-| left trigger | L2 | throw a grenade |
-| A | Cross | jump, accept |
-| B | Circle | melee, back |
-| X | Square | action, reload |
-| Y | Triangle | change weapon |
-| white / black | L1 / R1 | flashlight / change grenade |
-| stick clicks | L3 / R3 | crouch / zoom |
-| start / back | Options / Create | pause / scoreboard |
-
-On Android without a controller, touch controls show in game: a move stick,
-swipe to look (with the controller's aim assist), and buttons that you can
-move, resize, hide or copy from **Options** at the top of the screen.
-In menus, tap an item to pick it and drag to
-scroll. All of it is in "Controls" in
-[port/android/README.md](port/android/README.md).
-
-The gyroscope can aim as well, the phone's on Android and the controller's
-on the Switch (each player's own): open a profile, **GAMEPADS**, then
-**GYRO AIM**, to turn it on (ON, or ONLY ON ZOOM for fine aiming through a
-scope) and set its sensitivity and inversion each way. See
-[port/switch/README.md](port/switch/README.md#gyro-aiming).
-
-<img width="640" alt="Controller setup, with Gyro Aim as its own row" src="docs/images/gyro-aim-row.jpg" />
-
-<img width="640" alt="The Gyro Aim screen: aim, sensitivity and invert" src="docs/images/gyro-aim.jpg" />
-
-The settings, which are the same on every platform, are described in
-[port/linux/README.md](port/linux/README.md#settings).
-
-## Reporting a problem
-
-Open an [issue](https://github.com/thelinkin3000/halo-ce-universal/issues) or ask on
-[Discord](https://discord.gg/9gqcHyr5km), and include:
-
-- the device (phone model and GPU, or Switch / Switch Lite / OLED) and the
-  build number from the main menu;
-- on Android, the renderer and driver line from the main menu;
-- `debug.txt` and `halo.log` from the game's folder
-  (`sdmc:/switch/halo/` on the Switch, the app's data folder on Android);
-- on the Switch, if it crashed, the newest report in
-  `sdmc:/atmosphere/crash_reports/`;
-- screenshots or a video of what looks wrong.
-
-A debug build gives the most useful logs.
-
-## Building
-
-You do not need the Xbox SDK. The port supplies the SDK declarations that
-the game uses. Refer to [port/include/xdk](port/include/xdk/README.md).
-
-To build the game:
-
-1. Install Python and [ninja](https://ninja-build.org/).
-2. Install the tools for your platform. Refer to the README for the
-   platform.
-3. In the root folder of the repository, enter `python configure.py`.
-4. Enter `ninja` with the target for the platform:
-
-| Target | Result |
-| --- | --- |
-| `ninja linux` | `build/linux/halo` |
-| `ninja linux_arm64` (on 64-bit ARM Linux) | `build/linux_arm64/halo` and `libSDL3.so.0` |
-| `ninja linux_x86_64` (on 64-bit x86 Linux, after `python configure.py --linux-x86-64`) | `build/linux_x86_64/halo` and `libSDL3.so.0` |
-| `ninja windows` (on Windows, or on Linux after `configure.py --windows-cross`) | `build/windows/halo.exe` and `SDL3.dll` |
-| `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` |
-| `ninja switch` | `build/switch/halo.nro` and `build/switch/halo_guest.elf` |
-
-The Switch needs two toolchains and neither can be replaced by the other.
-devkitPro builds the host (`devkitA64`, `libnx`, `switch-sdl2`,
-`switch-mesa`, `switch-libdrm_nouveau`), and the Android NDK builds the game
-image, which is ILP32 AArch64 - 32-bit pointers, because the Xbox data
-formats embed them and have to keep their layout. devkitA64 cannot build it,
-being LP64 only. So the Switch build wants the same NDK as the Android build,
-found as it is there, plus devkitPro:
-
-```
-sudo dkp-pacman -S --needed devkitA64 libnx switch-sdl2 switch-mesa switch-libdrm_nouveau
+```sh
+python3 configure.py    # --release for a release build
+ninja switch            # build/switch/halo.nro
 ```
 
-`configure.py` finds devkitPro through `DEVKITPRO`, or `/opt/devkitpro`, or
-`~/devkitpro`. Both files are needed to run: the NRO is the program, and the
-ELF is the game image it loads from the card.
-
-If you enter `ninja` without a target, ninja builds the game for the
-computer that you use: on 64-bit x86 Linux, the x86 build (`ninja linux`).
-
-`tools/ci_build.py` makes the same builds as GitHub Actions. For example,
-enter `python tools/ci_build.py linux release`.
-
-### Build options
-
-Give these options to `configure.py`:
-
-| Option | Result |
-| --- | --- |
-| (none) | A debug build. A failed assertion stops the game. |
-| `--release` | A release build. The game does not examine assertions, as in the retail game. |
-| `--portable` | The Linux and Windows builds operate on all x86-64 processors. The Linux build also operates on older distributions and on SteamOS: refer to "Portable build" in [port/linux/README.md](port/linux/README.md#portable-build). Use this option for builds that you give to other persons. |
-| `--lto=thin`, `--lto=off` | Less link-time optimization. The link is faster. |
-| `--pgo=off` | No profile-guided optimization. |
-| `--pgo=train` | Records a new optimization profile. Refer to "Optimization profiles". |
-| `--profile` | A profiling build. It records CPU times. Refer to "Profiling builds". |
-| `--web-emcc PATH` | The Emscripten `emcc` for `ninja web` (else the one on the PATH, or `~/emsdk`'s). |
-
-Without `--portable`, the Linux and Windows builds use all the instructions
-of the processor that builds them (`-march=native`). Such a build does not
-always start on a different computer.
-
-### Optimization profiles
-
-The builds use profiles of the game to optimize the code:
-
-- `pgo/halo_linux.profdata` for Linux and Android.
-- `pgo/halo_windows.profdata` for Windows.
-
-The profiles need clang 22 or later. With an older clang, the builds do not
-use the profiles.
-
-To record a new profile:
-
-1. Delete the profile.
-2. Enter `python configure.py --pgo=train`.
-3. Enter `ninja linux` or `ninja windows`.
-
-The build then plays the main menu and the first minute of each campaign
-level. This procedure continues for approximately 15 minutes. The game
-data must be in `assets/`.
-
-### Profiling builds
-
-A profiling build records where the game spends its time.
-
-1. Enter `python configure.py --profile`, then build as usual.
-2. Start a recording. Enter `profile_record` in the console (or the telnet
-   console), or set `debug.profile_record = true` in `config.toml`. To
-   record each game of a session, also set
-   `debug.profile_record_when = "game"`.
-3. Stop the recording. Enter `profile_stop`, load another map, or quit.
-
-The game writes numbered `.part<n>.json` files under `profiles/` in its data root
-and logs their paths. Parts are retained after the recording stops. Logs go to
-standard error; a Windows release build without standard error writes them to
-`halo.log` next to `halo.exe`.
-
-`tools/net_report.py` is a helper for developers. Enter
-`python tools/net_report.py <recording.part1.json>` to read a recording
-as tables. The command also writes `<recording>.summary.txt`, a short text
-file.
-
-| Command | Result |
-| --- | --- |
-| `profile_record [seconds]` | Starts a recording. With a number of seconds, the recording stops after that time. |
-| `profile_stop` | Stops the recording. |
-
-`debug.profile_memory` sets the memory of a recording in MB (default 256,
-from 4 to 1024). A recording has no length limit:
-the game writes a part each time the memory is full. Refer to "Settings" in
-[port/linux/README.md](port/linux/README.md).
-
-On Android, the files are in `/sdcard/Android/data/com.halo.decomp/files/profiles/`.
-Enter `adb pull` to copy the recording parts to a computer.
-
-A profiling build plays with normal builds. It does not use
-`--pgo=train`.
+Requirements and design: [port/switch/README.md](port/switch/README.md).
 
 ## Credits
 
-- The decompilation: [punpckhdq/halo](https://github.com/punpckhdq/halo),
-  continued in [bnunu/halo-1](https://github.com/bnunu/halo-1). It is of the
-  Xbox build 2342 (`cachebeta.exe`, SHA-256
-  `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
-- [OpenCE](https://github.com/OpenCommunityEdition/OpenCE), the upstream
-  port to Windows and Linux, which these ports follow and share the game
-  code, netcode and menus with.
-- [Mesa](https://mesa3d.org/)'s Turnip driver, in the builds of
-  [K11MCH1/AdrenoToolsDrivers](https://github.com/K11MCH1/AdrenoToolsDrivers).
-- [deko3d](https://github.com/devkitPro/deko3d), [libnx](https://github.com/switchbrew/libnx)
-  and devkitPro, for the Switch.
-- [SDL](https://www.libsdl.org/), on both platforms.
+- **Bungie**: Halo: Combat Evolved. Halo is a trademark of Microsoft.
+- **[punpckhdq/halo](https://github.com/punpckhdq/halo)**,
+  **[bnunu/halo-1](https://github.com/bnunu/halo-1)**: the decompilation.
+- **[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)**: the native
+  port, netcode, co-op and menus.
+- **[thelinkin3000/halo-ce-universal](https://github.com/thelinkin3000/halo-ce-universal)**:
+  the Switch port, its deko3d renderer and its online and performance work,
+  which this is a fork of.
+- **nx-mod**: the disc install and movies, the icon, the folder layout,
+  releases and updates.
+- **[devkitPro](https://devkitpro.org)**, **[FFmpeg](https://ffmpeg.org)**,
+  **[musl](https://musl.libc.org)**.
 
-Halo is a trademark of Microsoft. This project is not affiliated with or
-endorsed by Microsoft, Bungie or 343 Industries.
-
-## License
-
-This fork includes OpenCE's code, which OpenCE moved to the GNU Affero
-General Public License, version 3 or (at your option) any later version
-(`AGPL-3.0-or-later`), in its commit `4b09168e7`. The full text is in
-[LICENSE](LICENSE). The commits before that change came into this fork,
-and the releases built from them (up to Build 106), were released under
-[CC0 1.0](LICENSES/CC0-1.0.txt) and stay that way. Third-party code under
-`port/third_party`, and the fonts and art under `port/assets`, keep their
-own licenses.
+Not affiliated with Microsoft or Bungie.
