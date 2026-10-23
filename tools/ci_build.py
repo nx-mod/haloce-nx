@@ -101,9 +101,16 @@ def main() -> int:
     # release (build-<n>), for the self-updaters (port/linux/src/updater.c,
     # port/switch/host/host_update.c, the Android app); other builds have
     # none, and never look for updates
+    # (nx-mod/haloce-nx: its tags are v<version>, 1.1.0-nx say, and the
+    # release is named after the workflow's run, build-<run number>:
+    # .github/workflows/switch.yml)
     ref = os.environ.get("GITHUB_REF", "")
+    run_number = os.environ.get("GITHUB_RUN_NUMBER", "")
     if ref.startswith("refs/tags/v") and ref[len("refs/tags/v"):].isdigit():
         os.environ["HALO_BUILD_NUMBER"] = str(int(ref[len("refs/tags/v"):]))
+    elif ref.startswith("refs/tags/v") and run_number.isdigit():
+        os.environ["HALO_BUILD_NUMBER"] = run_number
+    if "HALO_BUILD_NUMBER" in os.environ:
         print(f"build number {os.environ['HALO_BUILD_NUMBER']}", flush=True)
     run(configure)
 
