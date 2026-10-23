@@ -828,6 +828,46 @@ int xiso_write_missing_loading_picture(const char *image_path, const char *desti
 }
 
 #ifdef HALO_EXTRACTOR_STANDALONE
+#include <sys/stat.h>
+
+/* (nx-mod/haloce-nx) opens the image and reads its root's files or folders
+(directories nonzero) into entries; the count, or -1 with the reason in error */
+static int xiso_root_entries(struct xiso_image *image, const char *image_path, int directories,
+	struct xiso_entry *entries, char *error, int error_size)
+{
+	unsigned long root_sector, root_size;
+	unsigned char *table;
+	posix_ulong size_low, size_high;
+	int out_of_memory, count;
+
+	memset(image, 0, sizeof(*image));
+	image->descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+	if (image->descriptor < 0)
+	{
+		xiso_error(error, error_size, "Could not open %s.", image_path);
+		return -1;
+	}
+	image->size = ~0ULL;
+	if (posix_seek(image->descriptor, 0, 0, SEEK_END, &size_low, &size_high) == 0)
+		image->size = (unsigned long long)size_high << 32 | size_low;
+	if (!xiso_find_volume(image, &root_sector, &root_size))
+	{
+		xiso_error(error, error_size, "This is not an Xbox disc image.");
+		return -1;
+	}
+	table = xiso_read_table(image, root_sector, root_size, &out_of_memory);
+	if (!table)
+	{
+		xiso_error(error, error_size, out_of_memory ? "Out of memory." : "The disc image's file system is damaged.");
+		return -1;
+	}
+	count = xiso_walk_table(table, root_size, directories, entries);
+	free(table);
+	if (count < 0)
+		xiso_error(error, error_size, "Out of memory.");
+	return count;
+}
+
 /* copies the files of the image's root folder <folder> into
 <destination>/<folder>, which may already exist (each file is written as
 <name>.partial and renamed when whole; one already there at its size is
@@ -837,94 +877,87 @@ int xiso_extract_folder(const char *image_path, const char *folder, const char *
 	xiso_progress_proc progress, void *context, char *error, int error_size)
 {
 	struct xiso_image image;
-	struct xiso_file *entries = NULL;
+	struct xiso_entry *entries = malloc(sizeof(*entries) * XISO_MAXIMUM_ENTRIES);
+	unsigned char *buffer = malloc(XISO_COPY_CHUNK);
 	unsigned char *table = NULL;
-	unsigned char *buffer = NULL;
-	unsigned long root_sector, root_size, folder_size;
+	char *directory = malloc(XISO_MAXIMUM_PATH), *path = malloc(XISO_MAXIMUM_PATH);
+	char *partial = malloc(XISO_MAXIMUM_PATH);
+	unsigned long folder_sector = 0, folder_size = 0;
 	unsigned long long total = 0, done = 0;
-	char directory[1024], partial[1320], path[1300];
-	int result = 0;
-	int index;
+	int count, index, out_of_memory, result = 0;
 
-	image.error = error;
-	image.error_size = error_size;
-	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
-	if (image.descriptor < 0)
-		return fail(&image, "Could not open %s.", image_path);
-	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
-	buffer = malloc(COPY_BUFFER_SIZE);
-	if (!entries || !buffer)
+	image.descriptor = -1;
+	if (!entries || !buffer || !directory || !path || !partial)
 	{
-		fail(&image, "Out of memory.%s", NULL);
+		xiso_error(error, error_size, "Out of memory.");
 		goto done;
 	}
-	if (!find_volume(&image, &root_sector, &root_size))
+	count = xiso_root_entries(&image, image_path, 1, entries, error, error_size);
+	if (count < 0)
 		goto done;
-	table = read_directory(&image, root_sector, root_size);
+	for (index = 0; index < count && !xiso_name_is(entries[index].name, (int)strlen(entries[index].name), folder); index++)
+		;
+	if (index == count)
+	{
+		result = 1;
+		goto done;
+	}
+	folder_sector = entries[index].sector;
+	folder_size = entries[index].size;
+	table = xiso_read_table(&image, folder_sector, folder_size, &out_of_memory);
 	if (!table)
 	{
-		fail(&image, "The disc image's file system is damaged.%s", NULL);
+		xiso_error(error, error_size, out_of_memory ? "Out of memory." : "The disc image's %s folder is damaged.", folder);
 		goto done;
 	}
+	count = xiso_walk_table(table, folder_size, 0, entries);
+	if (count < 0)
 	{
-		struct directory_walk walk = { table, root_size, entries, 0, MAXIMUM_FILES, 0, 1 };
-
-		walk_directory(&walk, 0, 0);
-		for (index = 0; index < walk.entry_count && !names_match(entries[index].name, folder); index++)
-			;
-		if (index == walk.entry_count)
-		{
-			result = 1;
-			goto done;
-		}
-		free(table);
-		folder_size = entries[index].size;
-		table = read_directory(&image, entries[index].sector, folder_size);
-		if (!table)
-		{
-			fail(&image, "The disc image's %s folder is damaged.", folder);
-			goto done;
-		}
+		xiso_error(error, error_size, "Out of memory.");
+		goto done;
 	}
+	for (index = 0; index < count; index++)
+		total += entries[index].size;
+	snprintf(directory, XISO_MAXIMUM_PATH, "%s/%s", destination, folder);
+	posix_make_directory(directory);
+	for (index = 0; index < count; index++)
 	{
-		struct directory_walk walk = { table, folder_size, entries, 0, MAXIMUM_FILES, 0, 0 };
+		struct stat existing;
 
-		walk_directory(&walk, 0, 0);
-		for (index = 0; index < walk.entry_count; index++)
-			total += entries[index].size;
-		snprintf(directory, sizeof(directory), "%s/%s", destination, folder);
-		posix_make_directory(directory);
-		for (index = 0; index < walk.entry_count; index++)
+		snprintf(path, XISO_MAXIMUM_PATH, "%s/%s", directory, entries[index].name);
+		if (stat(path, &existing) == 0 && (unsigned long long)existing.st_size == entries[index].size)
 		{
-			struct stat info;
-
-			snprintf(path, sizeof(path), "%s/%s", directory, entries[index].name);
-			if (stat(path, &info) == 0 && (unsigned long)info.st_size == entries[index].size)
-			{
-				done += entries[index].size;
-				continue;
-			}
-			snprintf(partial, sizeof(partial), "%s.partial", path);
-			platform_log("extracting %s/%s (%lu bytes)", folder, entries[index].name, entries[index].size);
-			if (!copy_file(&image, &entries[index], partial, buffer, &done, total, progress, context))
-				goto done;
-			remove(path);
-			if (rename(partial, path) != 0)
-			{
-				fail(&image, "Could not create %s.", path);
-				goto done;
-			}
+			done += entries[index].size;
+			continue;
+		}
+		snprintf(partial, XISO_MAXIMUM_PATH, "%s.partial", path);
+		platform_log("extracting %s/%s (%lu bytes)", folder, entries[index].name, entries[index].size);
+		if (!xiso_copy_file(&image, &entries[index], partial, buffer, &done, total, progress, context, error,
+			error_size))
+		{
+			goto done;
+		}
+		remove(path);
+		if (rename(partial, path) != 0)
+		{
+			xiso_error(error, error_size, "Could not create %s.", path);
+			goto done;
 		}
 	}
 	result = 1;
 
 done:
-	close(image.descriptor);
+	if (image.descriptor >= 0)
+		close(image.descriptor);
 	free(table);
-	free(entries);
+	free(partial);
+	free(path);
+	free(directory);
 	free(buffer);
+	free(entries);
 	return result;
 }
+
 /* copies the file <name> from the image's root to <destination_path>
 (written as <destination_path>.partial and renamed when whole). Returns
 nonzero on success, 0 with the reason in error */
@@ -932,63 +965,48 @@ int xiso_extract_file(const char *image_path, const char *name, const char *dest
 	int error_size)
 {
 	struct xiso_image image;
-	struct xiso_file *entries = NULL;
-	unsigned char *table = NULL;
-	unsigned char *buffer = NULL;
-	unsigned long root_sector, root_size;
+	struct xiso_entry *entries = malloc(sizeof(*entries) * XISO_MAXIMUM_ENTRIES);
+	unsigned char *buffer = malloc(XISO_COPY_CHUNK);
+	char *partial = malloc(XISO_MAXIMUM_PATH);
 	unsigned long long done = 0;
-	char partial[1100];
-	int result = 0;
-	int index;
+	int count, index, result = 0;
 
-	image.error = error;
-	image.error_size = error_size;
-	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
-	if (image.descriptor < 0)
-		return fail(&image, "Could not open %s.", image_path);
-	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
-	buffer = malloc(COPY_BUFFER_SIZE);
-	if (!entries || !buffer)
+	image.descriptor = -1;
+	if (!entries || !buffer || !partial)
 	{
-		fail(&image, "Out of memory.%s", NULL);
+		xiso_error(error, error_size, "Out of memory.");
 		goto done;
 	}
-	if (!find_volume(&image, &root_sector, &root_size))
+	count = xiso_root_entries(&image, image_path, 0, entries, error, error_size);
+	if (count < 0)
 		goto done;
-	table = read_directory(&image, root_sector, root_size);
-	if (!table)
+	for (index = 0; index < count && !xiso_name_is(entries[index].name, (int)strlen(entries[index].name), name); index++)
+		;
+	if (index == count)
 	{
-		fail(&image, "The disc image's file system is damaged.%s", NULL);
+		xiso_error(error, error_size, "The disc image has no %s.", name);
 		goto done;
 	}
+	snprintf(partial, XISO_MAXIMUM_PATH, "%s.partial", destination_path);
+	if (!xiso_copy_file(&image, &entries[index], partial, buffer, &done, entries[index].size, NULL, NULL, error,
+		error_size))
 	{
-		struct directory_walk walk = { table, root_size, entries, 0, MAXIMUM_FILES, 0, 0 };
-
-		walk_directory(&walk, 0, 0);
-		for (index = 0; index < walk.entry_count && !names_match(entries[index].name, name); index++)
-			;
-		if (index == walk.entry_count)
-		{
-			fail(&image, "The disc image has no %s.", name);
-			goto done;
-		}
-		snprintf(partial, sizeof(partial), "%s.partial", destination_path);
-		if (!copy_file(&image, &entries[index], partial, buffer, &done, entries[index].size, NULL, NULL))
-			goto done;
-		remove(destination_path);
-		if (rename(partial, destination_path) != 0)
-		{
-			fail(&image, "Could not create %s.", destination_path);
-			goto done;
-		}
+		goto done;
+	}
+	remove(destination_path);
+	if (rename(partial, destination_path) != 0)
+	{
+		xiso_error(error, error_size, "Could not create %s.", destination_path);
+		goto done;
 	}
 	result = 1;
 
 done:
-	close(image.descriptor);
-	free(table);
-	free(entries);
+	if (image.descriptor >= 0)
+		close(image.descriptor);
+	free(partial);
 	free(buffer);
+	free(entries);
 	return result;
 }
 #endif
