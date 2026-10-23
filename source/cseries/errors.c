@@ -277,11 +277,19 @@ static void debug_file_port_write(
 	{
 		fclose(file);
 		debug_file_port = NULL;
-		remove("d:\\debug.old.txt");
+#if defined(HALO_SWITCH)
+		/* (port) the Switch's game folder keeps its logs in logs\ */
+#define DEBUG_FILE_PORT_PATH "d:\\logs\\debug.txt"
+#define DEBUG_FILE_PORT_OLD_PATH "d:\\logs\\debug.old.txt"
+#else
+#define DEBUG_FILE_PORT_PATH "d:\\debug.txt"
+#define DEBUG_FILE_PORT_OLD_PATH "d:\\debug.old.txt"
+#endif
+		remove(DEBUG_FILE_PORT_OLD_PATH);
 		/* (or, where it cannot be renamed, begun again in place) */
-		file = rename("d:\\debug.txt", "d:\\debug.old.txt") ?
-			fopen("d:\\debug.txt", "w+b") :
-			fopen("d:\\debug.txt", "a+b");
+		file = rename(DEBUG_FILE_PORT_PATH, DEBUG_FILE_PORT_OLD_PATH) ?
+			fopen(DEBUG_FILE_PORT_PATH, "w+b") :
+			fopen(DEBUG_FILE_PORT_PATH, "a+b");
 		if (!file)
 		{
 			return;
