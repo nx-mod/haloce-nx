@@ -1,5 +1,86 @@
 # Changelog
 
+## Build 122
+
+- Switch: Join Game > Direct Link shows a QR code: scan it with a phone (or open the address under it) and paste an invite link there, and the Switch joins its game. The page is served on the local network only while Direct Link is open (network.link_page). (thelinkin3000)
+- Switch: Server Setup's invite row opens the game's invite link as a QR code, for a phone to read; B closes it. (thelinkin3000)
+- Bots play Capture the Flag, by Quake III Arena's bots' rules: defenders and attackers, carriers run home, the team's flag is chased and returned. (thelinkin3000)
+- Bots play King of the Hill, fixed or moving: they take the hill and hold it, and fight whoever stands on it first. (thelinkin3000)
+- Bots in Infection hunt as zombies and hold together as humans; in SWAT they aim for the head. (thelinkin3000)
+- Bots aim at the head with the pistol and the sniper rifle once shields are down, and at the feet with rockets and the fuel rod: legendary always, easy seldom. (thelinkin3000)
+- Bots can join private internet games (hosted, not listed in the server browser), as well as split screen and system link ones. (thelinkin3000)
+- Switch: on the carnage report, A picks the next game and B quits, as in the menus. (thelinkin3000)
+
+## Build 121
+
+- Bots can join and leave a Slayer game in progress, one at a time, from the console or the Switch's overlay: add_bot and drop_bot in free for all, add_bot_red, add_bot_blue, drop_bot_red and drop_bot_blue in team games. Only the host adds and drops them. (thelinkin3000)
+- Bots play in system link games too, not only split screen: the host plays them and the other machines see them as any player (bots.count fills the lobby, and the commands above work in game). Not in games hosted for internet play. (thelinkin3000)
+- Switch: pressing + and − together (or Home and +) no longer quits the game at once, mid-match. (thelinkin3000)
+
+## Build 120
+
+- Switch: in the menus, the button marked A (on the right) chooses and B (at the bottom) goes back, as in the console's own menus; in a game the buttons are as before. controls.nintendo_menu_buttons = false in config.toml brings back the Xbox layout in the menus. (thelinkin3000)
+- Switch and PS5: the controller buttons on screen are the console's own, from Kenney's Input Prompts: the menus' buttons, the "Press (A)" icons in text and the game's prompts, with the shoulders, triggers and sticks. (thelinkin3000)
+- Switch: the Ultrahand overlay (hardran3's OpenCE-Ultrahand package) works only with the package installed, and the main menu says "Ultrahand Overlay present and enabled". Its command file is now /switch/.packages/halo/overlay/command.txt, and the game keeps an empty file in that folder's flags for each true/false command that is on (cheat_infinite_ammo.flag, display.vsync.flag), so the overlay can show its toggles' state. (thelinkin3000)
+
+## Build 119
+
+- Switch: with a mod of high-resolution textures (Uncompressed Textures, say), textures the game lets go of are kept in the console's memory outside the game's own, 512 MB of them, and read back from there instead of the SD card: most of the hitches in busy matches with the mod. Blood Gulch and Battle Creek with 63 bots went from 53.9 and 48.6 to 59.3 and 53.8 frames a second. (thelinkin3000)
+- Switch: Custom Edition maps' textures are kept there too. (thelinkin3000)
+- Switch: Custom Edition maps load faster: Lumoria A from 79 to 50 seconds. (thelinkin3000)
+- Mods' files stay open between reads and are no longer checked for changes at each read, so their textures load without hitching. (thelinkin3000)
+- The sound mixer lets the game in between voices, rather than holding it off for a whole mix, which removed stutters in busy fights: Chill Out stays at 60 frames a second on the Switch. (thelinkin3000)
+- Switch: no more "Restart to get a 512 MB memory window" message at startup: the texture memory above makes up for the smaller window. (thelinkin3000)
+- Switch: an Ultrahand overlay can control the game: a console command or a "config <setting> <value>" line written to switch/halo/overlay/command.txt is run within a second (game.overlay_commands, on by default). (thelinkin3000)
+
+### From OpenCE
+
+- Network version 38: this build plays online only with other builds of this version or newer. (MrBruh)
+- The server browser names OpenCE gametypes (SWAT, HC CTF), for LAN and internet games. (MrBruh)
+- A host can leave the shield effects to each player's own setting (SHIELD EFFECTS: PLAYERS' OWN); they stay the host's by default. (MrBruh)
+
+## Build 118
+
+- The game no longer stays on a black screen at startup with interpolation turned off (Video Setup, or display.interpolation in config.toml): its loading screen waited for a vertical blank that had not started yet. Seen on the Switch; the fix is in every renderer. (thelinkin3000)
+
+## Build 117
+
+- Switch: 64-player matches run much faster: Damnation from 44 to about 60 frames a second, Chill Out from 38 to about 59, Blood Gulch from 51 to 60, with far fewer stutters (Chill Out's frames over 33 ms from 90 to 5 in a 45-second fight). (thelinkin3000)
+- Android: busy matches are faster too: Chill Out with 64 players from 92 to 109 frames a second on a Galaxy Z Fold. (thelinkin3000)
+- Particles that are not attached to anything (sparks, casings, debris) move 30 times a second, as on the Xbox, drawn smoothly between their steps, and those off the screen less often: their collision tests were the largest cost of a big firefight on every platform. debug.original_particles moves them every frame. (thelinkin3000)
+- At most 4096 particles are alive at once (2048 on the Switch), the oldest making way for the new ones, so fresh impacts always have their sparks; the Xbox's limit was 1024. display.particle_limit sets it, 0 for the full 8192. (thelinkin3000)
+- The 8 biggest dynamic lights on the screen (muzzle flashes, plasma, explosions) light the level, and the 2 biggest add their shine to it, the first-person weapon's first; every light still lights the players and objects near it. display.dynamic_light_limit and display.specular_light_limit set them, 0 for every light as on the Xbox. (thelinkin3000)
+- Switch: online and local games ask the console's network service far less often: the game no longer waits on it once or twice a frame to learn there is nothing to read. (thelinkin3000)
+- The game no longer waits for the sound mixer every frame, nor for long when a sound starts or stops, which made busy fights hitch. (thelinkin3000)
+- A bullet's mark on a wall no longer costs a check of every mark in the game, which only debug builds now make. (thelinkin3000)
+- Player names over heads test their line of sight once a tick, and only for players in range and on the screen. (thelinkin3000)
+- Switch: Custom Edition maps no longer fail to load now and then at startup ("Custom Edition's tag cache range is taken"). (thelinkin3000)
+
+## Build 116
+
+- Android: anti-aliasing (MSAA) costs much less on phones whose driver can keep the samples in the GPU's own tile memory (Adreno, Mali): with MSAA 4x, busy multiplayer maps run about 15% faster (Damnation 85 → 97 frames a second, Chill Out 64 → 73, with 64 players on a Galaxy Z Fold). debug.original_multisample turns it off. (thelinkin3000)
+- Android and PS5: lens flares and the sun's glow no longer stall the GPU under Vulkan: the opening of The Pillar of Autumn, which ran at about 10 frames a second on a Galaxy Z Fold, now runs at 120. (thelinkin3000)
+- Android: the frame breaks off less often under Vulkan, each break costing a phone's GPU about a millisecond: the sun's glow and the water's ripples are made at the end of the frame, screen clears come free with the next drawing, and a shadow map is made readable as soon as it is drawn. (thelinkin3000)
+- Android and PS5: the GPU savings of Build 114 (shadows and lights drawn only where they change the screen) now fully take effect; a missing setting had left part of them off. (thelinkin3000)
+- Android: the high-res HUD is prepared while a map loads, as on the Switch, instead of during play. (thelinkin3000)
+- The steam from the cryo tube at the start of the campaign, and other blurs drawn on a small copy of the screen, are smooth again instead of blocky. (thelinkin3000)
+- Up to 63 bots in a local game. (thelinkin3000)
+- A built-in benchmark on every platform: debug.benchmark = "standard" in config.toml plays five campaign levels and four multiplayer maps with 63 bots, and writes the frame rates to benchmark.txt. (thelinkin3000)
+- Android: debug.profile_run = true records a profile of each run (CPU, GPU time, logs, benchmark) into its own folder in Download/halo_profiles, ready to send with a report. (thelinkin3000)
+
+### From OpenCE
+
+- Network version 36: this build plays online only with other builds of this version or newer. (bnunu)
+- New gametypes: SWAT, Infection, Gun Game and Hardcore, in Select Gametype's OPENCE bank, and an OPENCE OPTIONS screen in the gametype editor. (MrBruh)
+- In network games, the shield effects are the host's choice. (bnunu)
+- Co-op: the host can make the players' AI allies immune to their fire. (Guven)
+- Co-op: clients break, and see broken, the map's scenery shields as the host does, and their tripmine hits and explosions count on the host. (Guven)
+- Co-op: a client taken by a teleport lands with their feet on the floor. (Jonas Volman)
+- Custom Edition HUDs: replacements, ammo counters, meters and prompts are drawn right, with or without the high-res HUD (OpenGL renderers). (chestahh)
+- Android, OpenGL ES: no more stretched or missing geometry on affected phones, and Custom Edition maps keep their textures. (chestahh)
+- Android, OpenGL ES: phones without DXT1 texture support get those textures as ASTC. (Jonas Volman)
+- The PC vehicle set shows its name and help instead of <missing string>. (bnunu)
+
 ## Build 115
 
 - Switch: a console whose clock is wrong is told so at the start and in the server browser, with how far off it is: the server browser shows no internet games while the clock is more than an hour off, which homebrew consoles that never reach Nintendo often are. (thelinkin3000)

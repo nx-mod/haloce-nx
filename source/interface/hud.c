@@ -1128,6 +1128,37 @@ void hud_player_name_color(
 	}
 }
 
+/* port: the line of sight to an enemy's head, tested once a tick for each
+local player's view rather than at every frame drawn: in a 64-player match
+the names' rays and head markers were a tenth of the HUD's time */
+static struct
+{
+	long player_index;
+	long tick;
+	boolean in_sight;
+} hud_player_name_sight[MAXIMUM_LOCAL_PLAYERS][HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+
+static boolean hud_player_name_in_sight_this_tick(
+	long player_index,
+	long unit_index,
+	real_point3d const *head_position)
+{
+	long slot = player_index & 0xFFFF;
+	short view = render.local_player_index;
+	long tick = game_time_get();
+
+	if (slot >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS || !VALID_INDEX(view, MAXIMUM_LOCAL_PLAYERS))
+		return hud_player_name_in_sight(unit_index, head_position);
+	if (hud_player_name_sight[view][slot].player_index != player_index ||
+		hud_player_name_sight[view][slot].tick != tick)
+	{
+		hud_player_name_sight[view][slot].player_index = player_index;
+		hud_player_name_sight[view][slot].tick = tick;
+		hud_player_name_sight[view][slot].in_sight = hud_player_name_in_sight(unit_index, head_position);
+	}
+	return hud_player_name_sight[view][slot].in_sight;
+}
+
 static void hud_draw_player_name(
 	long player_index,
 	boolean ally,
@@ -1149,20 +1180,31 @@ static void hud_draw_player_name(
 
 	if (font_index == NONE)
 		return;
+	/* (port: an enemy whose body is well past the range has no head in it
+	either - the head is within a world unit of the body's origin - and is
+	not looked for) */
+	if (!ally &&
+		distance3d(&render.camera.position, &object_get(player->unit_index)->object.position) >= enemy_range + 2.0f)
+	{
+		return;
+	}
 	unit_get_head_position(player->unit_index, &head_position);
 	distance = distance3d(&render.camera.position, &head_position);
 	if (!ally && distance >= enemy_range)
 		return;
-	if (!ally &&
-		(unit_get(player->unit_index)->unit.active_camouflage > 0.5f ||
-		!hud_player_name_in_sight(player->unit_index, &head_position)))
-	{
+	if (!ally && unit_get(player->unit_index)->unit.active_camouflage > 0.5f)
 		return;
+	/* (where the game draws a teammate's triangle; off the screen, no line
+	of sight is tested) */
+	{
+		real_point3d above = head_position;
+
+		above.z += 0.30000001f;
+		matrix4x3_transform_point(&render.frustum.world_to_view, &above, &view_position);
 	}
-	/* (where the game draws a teammate's triangle) */
-	head_position.z += 0.30000001f;
-	matrix4x3_transform_point(&render.frustum.world_to_view, &head_position, &view_position);
 	if (!render_camera_view_to_screen(&render.camera, &render.frustum, &view_position, &screen_position))
+		return;
+	if (!ally && !hud_player_name_in_sight_this_tick(player_index, player->unit_index, &head_position))
 		return;
 	x = (short)fast_ftol(screen_position.x) - render.camera.viewport_bounds.x0;
 	y = (short)fast_ftol(screen_position.y) - render.camera.viewport_bounds.y0;

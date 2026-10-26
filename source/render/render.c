@@ -473,6 +473,9 @@ static void render_window(
 	}
 
 	halo_render_marker("debug and end");
+	/* port: the sun's glow the window drew from the frame before's, made for the next (rasterizer_xbox_lights.c) */
+	rasterizer_sun_glow_frame_end();
+	rasterizer_water_frame_end();
 	bink_playback_render();
 	render_camera_debug_frustum(&render.camera, &render.frustum);
 	render_debug();

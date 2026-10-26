@@ -1023,10 +1023,16 @@ static struct network_connection *network_connection_create_client_from_endpoint
 	return connection;
 }
 
+/* port: the most of the stream read at once, the incoming queue's size: a
+host's stream to a game of 64 players is many messages a tick, and each read
+is a call to the system's sockets (on the Switch an IPC to its socket service,
+about 9% of the game thread when read RELIABLE_MESSAGE_MAXIMUM_SIZE at a time) */
+#define RELIABLE_READ_MAXIMUM_SIZE 0x8000
+
 static boolean network_connection_idle_client_reliable_endpoint(
 	struct network_connection *connection)
 {
-	byte buffer[RELIABLE_MESSAGE_MAXIMUM_SIZE];
+	byte buffer[RELIABLE_READ_MAXIMUM_SIZE];
 	unsigned long start_time = system_milliseconds();
 	boolean success = TRUE;
 	long free_space;
@@ -1055,9 +1061,9 @@ static boolean network_connection_idle_client_reliable_endpoint(
 	{
 		long bytes_read;
 
-		if (free_space >= RELIABLE_MESSAGE_MAXIMUM_SIZE)
+		if (free_space >= RELIABLE_READ_MAXIMUM_SIZE)
 		{
-			free_space = RELIABLE_MESSAGE_MAXIMUM_SIZE;
+			free_space = RELIABLE_READ_MAXIMUM_SIZE;
 		}
 		bytes_read = read_endpoint(connection->reliable_endpoint, buffer, free_space);
 		if (bytes_read <= 0)
@@ -1957,7 +1963,9 @@ static boolean network_connection_flush_reliable(
 		}
 		else if (sent == _transport_result_operation_would_block)
 		{
-			if (current_time - connection->reliable_outgoing_time >= NETWORK_CONNECTION_WRITE_TIMEOUT)
+			/* port: network.client_timeout_seconds (NETWORK_CONNECTION_WRITE_TIMEOUT
+			by default) */
+			if (current_time - connection->reliable_outgoing_time >= network_client_timeout_milliseconds())
 			{
 				error(_error_silent, "a reliable connection's peer has stopped reading");
 				return FALSE;

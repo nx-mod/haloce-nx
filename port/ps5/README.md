@@ -281,9 +281,14 @@ work as there).
   upload limit (`network.map_share_upload`, 1024 KB/s by default: a 500 MB
   map takes eight minutes).
 - Not on a console: Discord, the `halo://` link handler and the command
-  line, and a clipboard shared with other programs (the game's own holds
-  only what it put there, its invite). Join internet games from the server
-  browser.
+  line, and a clipboard shared with other programs. Server Setup's INVITE
+  LINK shows the game's invite link as a QR code for a phone to read (B
+  closes it). Join internet games from the server browser, or with an
+  invite link sent from a phone: while Join Game >
+  Direct Link is open, the game serves a page on the local network, shown
+  there as a QR code and an address, where the link is pasted
+  (`network.link_page`, as the Switch's: `port/linux/src/link_page.c`).
+  Direct Link has no PASTE LINK.
 
 `HALO_PS5_NET_TEST=1` in `environment.txt` runs the console's socket
 checks before the game starts (`net test:` lines in the log): a socket,

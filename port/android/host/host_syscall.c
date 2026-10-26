@@ -364,7 +364,8 @@ static void log_bytes(int fd, const char *bytes, size_t size)
 		if (c == '\n' || stream->length == sizeof(stream->line) - 1)
 		{
 			stream->line[stream->length] = 0;
-			__android_log_write(fd == 2 ? ANDROID_LOG_WARN : ANDROID_LOG_INFO, "halo", stream->line);
+			/* (through the log's sink: logcat, and a profiled run's halo.log, host_main.c) */
+			host_log(fd == 2 ? ANDROID_LOG_WARN : ANDROID_LOG_INFO, stream->line);
 			stream->length = 0;
 			if (c == '\n')
 				continue;

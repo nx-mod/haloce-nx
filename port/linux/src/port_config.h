@@ -24,6 +24,12 @@ const char *config_string(const char *name);
 writes it into config.toml (only its line changes); 1 on success */
 int config_write(const char *name, const char *value);
 int config_write_boolean(const char *name, int value);
+/* a setting set from its value as config.toml writes it ("true", "4096", "\"900\""); 0, with why in error, for
+no such setting or a value not of its type */
+int config_set_text(const char *name, const char *value, char *error, size_t error_size);
+/* the index'th setting, if it is a boolean this platform has: 1 with its name and value, 0 for one that is not, -1
+past the last */
+int config_boolean_setting(unsigned index, const char **name, int *value);
 /* a setting's value as text ("true", "60", "1.5", "all"); 0 if there is no
 such setting */
 int config_text(const char *name, char *text, size_t size);
@@ -37,5 +43,33 @@ int config_default(const char *name, char *text, size_t size);
 /* how many times config_write has changed a setting: what keeps one reads
 it again when this moves */
 unsigned long config_changes(void);
+
+/* whether this is a dedicated server (server.enabled, --server,
+HALO_SERVER: port/linux/src/server_mode.c), whose settings the file holds */
+int config_server_mode_enabled(void);
+
+/* a setting, for a list of them (a dedicated server's Settings page): the
+one at index; 0 past the last */
+struct config_setting_info
+{
+	const char *name;
+	/* "boolean", "integer", "real" or "string" */
+	const char *type;
+	/* NULL: none */
+	const char *environment;
+	const char *comment;
+	/* as text, a string's without its quotes */
+	char default_text[300];
+	/* its environment variable sets it for this run */
+	int pinned;
+	/* this build writes it into config.toml */
+	int written;
+};
+int config_setting_info(int index, struct config_setting_info *info);
+
+/* the settings whose names begin with prefix ("server.") read from
+config.toml again, but for those their environment variables set; 1 on
+success (a file that cannot be read leaves them as they were) */
+int config_reload(const char *prefix);
 
 #endif

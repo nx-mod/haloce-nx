@@ -615,8 +615,11 @@ void host_vk_command_draw(const struct vk_command_draw *draw, uint32_t size)
 				/* the target being drawn into cannot be sampled in the same rendering */
 				if (target && target != B.color)
 				{
+					target->sampled = 1;
 					if (target->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 					{
+						if (B.rendering)
+							B.counts.sample_splits++;
 						host_vk_rendering_end();
 						host_vk_target_transition(host_vk_frame_command(), target, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 					}

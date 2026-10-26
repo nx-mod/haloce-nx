@@ -1673,3 +1673,48 @@ boolean game_engine_ctf_read_network_state(
 	}
 	return TRUE;
 }
+
+/* port: a team's flag as the bots see it (port/linux/game/bots.c, the
+host's alone): FALSE if the team has none this game (one flag's assault:
+the attackers'); else where it is (in a unit's hands, where the unit is),
+who carries it (NONE), whether it stands at home untouched, and where home
+is (its netgame flag) */
+boolean game_engine_ctf_flag_state(
+	long team_index,
+	real_point3d *position,
+	long *carrier_player_index,
+	boolean *at_home,
+	real_point3d *home)
+{
+	long weapon_index;
+	struct weapon_datum *weapon;
+
+	if (!VALID_INDEX(team_index, NUMBER_OF_CTF_TEAMS) || !ctf_globals.flags[team_index])
+		return FALSE;
+	weapon_index = ctf_globals.weapon_indices[team_index];
+	weapon = weapon_index != NONE ? weapon_try_and_get(weapon_index) : NULL;
+	if (!weapon || weapon->object.owner_team_index != team_index)
+		return FALSE;
+	item_get_position_even_if_in_inventory(weapon_index, position);
+	*carrier_player_index = ctf_find_flag_carrier(weapon_index);
+	*at_home = !TEST_FLAG(weapon->weapon.flags, _ctf_weapon_handled_bit) && *carrier_player_index == NONE;
+	*home = ctf_globals.flags[team_index]->position;
+	return TRUE;
+}
+
+/* port: (the bots') whether touching one's own flag away from home returns
+it (the variant's flag must reset says only its time does) */
+boolean game_engine_ctf_touch_returns(
+	void)
+{
+	return !game_engine_get_variant()->game_engine_variant.ctf.flag_must_reset;
+}
+
+/* port: (the bots') whether a capture needs the capturer's own flag at home
+(the variant's flag at home to score, two flags) */
+boolean game_engine_ctf_home_to_score(
+	void)
+{
+	return game_engine_get_variant()->game_engine_variant.ctf.flag_at_home_to_score &&
+		game_engine_get_variant()->game_engine_variant.ctf.single_flag_time == 0;
+}

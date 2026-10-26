@@ -32,8 +32,21 @@ where its offset falls in their combined offset space.
 #include "tag_schema.h"
 #include "map_share.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <xtl.h>
+
+#ifdef HALO_SWITCH
+/* the host's cache of textures' bytes, outside the Xbox window (port/switch/host/host_texture_cache.c), which a
+Custom Edition map's bitmaps are kept in as read, before custom_edition_bitmap_pixels_arrived converts them: the
+texture cache, half the window, takes them back from it rather than from the card. Keyed by where they are in the
+map's combined space, the top bit set (a mod bitmap's keys have it clear: mod_bitmaps.c); emptied as each map's tags
+go (mod_bitmaps_tags_unloaded) */
+int host_texture_cache_get(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_put(uint64_t key, uint32_t buffer, uint32_t size);
+void memory_watch_prepare_write(void *address, unsigned long size);
+#define CUSTOM_EDITION_TEXTURE_KEY(offset) ((1ull << 63) | (uint64_t)(unsigned long)(offset))
+#endif
 
 /* ---------- constants */
 
@@ -640,6 +653,14 @@ static void custom_edition_behaviours_log(
 	{
 		if (!((behaviours >> behaviour) & 1))
 			continue;
+		if (behaviour == _custom_edition_behaviour_gearbox_meters ||
+			behaviour == _custom_edition_behaviour_old_widescreen_fix)
+		{
+			error(_error_silent,
+				"custom edition: relies on Halo PC's %s (Chimera's map list), partially supported (HUD tint/warning placement)",
+				custom_edition_behaviour_name(behaviour));
+			continue;
+		}
 		error(
 			_error_silent,
 			(FOLLOWED_BEHAVIOURS >> behaviour) & 1 ?
@@ -786,7 +807,7 @@ static boolean custom_edition_cache_tags_convert(
 
 	return custom_edition_cache_tags_validate(tag_cache, report) &&
 		custom_edition_bitmaps_verify(tag_cache, loaded_bytes) &&
-		custom_edition_reordered_bitmaps_find(tag_cache, loaded_bytes) &&
+		custom_edition_reordered_bitmaps_find(tag_cache, loaded_bytes, custom_edition_cache_globals.behaviours) &&
 		custom_edition_scripts_convert(tag_cache, loaded_bytes) &&
 		custom_edition_cache_models_convert(tag_cache, report);
 }
@@ -1325,6 +1346,12 @@ void custom_edition_cache_tags_unload(
 	return;
 }
 
+struct resource_map const *custom_edition_cache_bitmap_resources(void)
+{
+	return custom_edition_cache_tags_loaded() ?
+		custom_edition_cache_globals.resource_maps[_resource_map_bitmaps] : NULL;
+}
+
 void custom_edition_cache_read(
 	long tag_index,
 	long offset,
@@ -1359,6 +1386,19 @@ void custom_edition_cache_read(
 		file_offset = (unsigned long)offset;
 	}
 
+#ifdef HALO_SWITCH
+	/* (a bitmap's pixels kept by the host: as read, and converted below as
+	they would be) */
+	if (tag_index != NONE && size > 0)
+	{
+		memory_watch_prepare_write(buffer, (unsigned long)size);
+		if (host_texture_cache_get(CUSTOM_EDITION_TEXTURE_KEY(offset), (uint32_t)(uintptr_t)buffer, (uint32_t)size))
+		{
+			custom_edition_bitmap_pixels_arrived(globals->tag_cache, globals->loaded_bytes, tag_index, offset, buffer);
+			return;
+		}
+	}
+#endif
 	/* the game reads its map from its main thread only (scenario and
 	structure BSP loading, the texture and sound caches), so the streams and
 	the staging buffer need no lock */
@@ -1385,6 +1425,10 @@ void custom_edition_cache_read(
 	}
 	else if (tag_index != NONE)
 	{
+#ifdef HALO_SWITCH
+		if (size > 0)
+			host_texture_cache_put(CUSTOM_EDITION_TEXTURE_KEY(offset), (uint32_t)(uintptr_t)buffer, (uint32_t)size);
+#endif
 		custom_edition_bitmap_pixels_arrived(globals->tag_cache, globals->loaded_bytes, tag_index, offset, buffer);
 	}
 

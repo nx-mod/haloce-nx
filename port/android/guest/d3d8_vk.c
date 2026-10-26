@@ -858,11 +858,64 @@ static BOOL targets_bind(BOOL *has_depth)
 	return TRUE;
 }
 
-/* the part of a frame being drawn: only the Switch's renderer keeps it
-(port/switch/guest/d3d8_dk.c) */
+/* the part of a frame being drawn, for the GPU's time by part (host_vk_profile.c): told the host only while a profile
+is recorded (debug.profile_run, Android's), as the Switch's renderer keeps it (port/switch/guest/d3d8_dk.c) */
+int halo_render_defer_sun_glow(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int deferred = -1;
+
+	if (deferred < 0)
+	{
+		deferred = !config_boolean("debug.original_sun_glow");
+		if (!deferred)
+			platform_log("sun glow: made in the middle of the frame, as the game does (debug.original_sun_glow)");
+	}
+	return deferred;
+#else
+	return 0;
+#endif
+}
+
+int halo_render_defer_water(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int deferred = -1;
+
+	if (deferred < 0)
+	{
+		deferred = !config_boolean("debug.original_water");
+		if (!deferred)
+			platform_log("water: its ripples made in the middle of the frame, as the game does (debug.original_water)");
+	}
+	return deferred;
+#else
+	return 0;
+#endif
+}
+
 void halo_render_marker(char const *name)
 {
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int profiling = -1;
+	struct vk_command_marker *command;
+	size_t length = 0;
+
+	if (profiling < 0)
+		profiling = config_boolean("debug.profile_run") ? 1 : 0;
+	if (!profiling)
+		return;
+	command = stream_command(VK_COMMAND_MARKER, sizeof(*command));
+	while (name[length] && length < sizeof(command->name) - 1)
+	{
+		command->name[length] = name[length];
+		length++;
+	}
+	while (length < sizeof(command->name))
+		command->name[length++] = 0;
+#else
 	(void)name;
+#endif
 }
 
 /* ---------- the GPU's savings the Switch's renderer made first (port/switch/guest/d3d8_dk.c)
@@ -1066,6 +1119,13 @@ static const void *rendered_find(unsigned long data, unsigned long *width, unsig
 calls, which under Vulkan have no context and do nothing */
 void xgpu_gl_state_invalidate(void)
 {
+}
+
+/* (the dedicated server's question, whose renderer may be none: this one is
+always up, and those callers' GL does nothing here, as before they asked) */
+int xgpu_gl_ready(void)
+{
+	return 1;
 }
 
 /* ---------- debug.vk_self_test: the data a draw reads is copied at the draw (phase 3)
@@ -3786,6 +3846,17 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	else
 	{
+		/* (port: the vertical blanks that retire the flips counted, started
+		here if the game has not yet: the boot's loading screen presents
+		before it sets its callback or waits for one, and with
+		display.interpolation off its third frame waited for ever, a black
+		screen) */
+		if (!vertical_blank_thread_started)
+		{
+			pthread_mutex_unlock(&vertical_blank_lock);
+			vertical_blank_start();
+			pthread_mutex_lock(&vertical_blank_lock);
+		}
 		while (pending_flips >= 2)
 			pthread_cond_wait(&vertical_blank_condition, &vertical_blank_lock);
 		pending_flips++;

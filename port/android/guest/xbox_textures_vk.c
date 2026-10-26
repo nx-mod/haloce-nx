@@ -26,6 +26,7 @@ VK_HIRES says whether they are on).
 #include "menu_files.h"
 #include "text_hires.h"
 #include "../../linux/game/cache_file_formats.h"
+#include "../../linux/game/android_ce_texture_cache.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -903,8 +904,104 @@ static struct
 	uint32_t id;
 	unsigned long levels;
 	BOOL tried;
+	/* (asked of the host this frame already: texture_frame + 1) */
+	unsigned long asked_frame;
 } *hud_images;
 
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* Android: each sheet decoded by the host, as a map loads (port/android/host/host_vk_hud.c, VK_COMMAND_HUD_PREPARE),
+its image made from what it decoded once it is ready (VK_COMMAND_HUD_IMAGE): the original bitmap is drawn until then.
+Decoded here at the first frame to draw it, a sheet held that frame (a benchmark's Blood Gulch, 248 ms), and the
+guest's heap has no room to decode a map's ahead. As the Switch's (port/switch/guest/xbox_textures_dk.c) */
+static BOOL hud_images_made(void)
+{
+	if (!hud_images)
+		hud_images = calloc(hud_hires_embedded_count, sizeof(*hud_images));
+	return hud_images != NULL;
+}
+
+static void hud_sheet_fill(long asset, struct vk_hud_sheet *sheet)
+{
+	const struct hud_hires_embedded *embedded = &hud_hires_embedded[asset];
+
+	sheet->asset = (uint32_t)asset;
+	sheet->png = (uint32_t)(uintptr_t)embedded->png;
+	sheet->png_size = embedded->png_size;
+	sheet->tag = (uint32_t)(uintptr_t)embedded->tag;
+}
+
+/* (hud_hires.c's map_loaded: the map's sheets, the titles' left out) */
+void textures_hud_prepare(const long *assets, long count)
+{
+	struct vk_command_hud_prepare *command;
+	long index, queued = 0;
+
+	if (!hud_images_made() || count <= 0)
+		return;
+	command = vk_stream_command(VK_COMMAND_HUD_PREPARE, sizeof(*command) + (unsigned long)count * sizeof(command->sheets[0]));
+	for (index = 0; index < count; index++)
+	{
+		/* (not one already made) */
+		if (assets[index] >= 0 && assets[index] < (long)hud_hires_embedded_count && !hud_images[assets[index]].tried)
+			hud_sheet_fill(assets[index], &command->sheets[queued++]);
+	}
+	command->count = (uint32_t)queued;
+}
+
+void textures_hud_forget(void)
+{
+	vk_stream_command(VK_COMMAND_HUD_FORGET, sizeof(struct vk_command_hud_forget));
+}
+
+/* its image, or 0: the host's not decoded yet (the original drawn meanwhile), or never */
+static uint32_t hud_image(long asset, unsigned long *levels)
+{
+	*levels = 1;
+	if (asset < 0 || asset >= (long)hud_hires_embedded_count || !hud_images_made())
+		return 0;
+	if (!hud_images[asset].tried)
+	{
+		const struct hud_hires_embedded *embedded = &hud_hires_embedded[asset];
+		const unsigned char *png = (const unsigned char *)embedded->png;
+		int answer;
+
+		if (hud_images[asset].asked_frame == texture_frame + 1)
+			return 0;
+		hud_images[asset].asked_frame = texture_frame + 1;
+		answer = host_vk_hud_ready((unsigned int)asset, (unsigned int)(uintptr_t)embedded->png, embedded->png_size,
+			(unsigned int)(uintptr_t)embedded->tag);
+		if (!answer)
+			return 0;
+		hud_images[asset].tried = TRUE;
+		if (answer > 0 && embedded->png_size >= 24 && (hud_images[asset].id = id_take()) != 0)
+		{
+			struct vk_command_hud_image *command = vk_stream_command(VK_COMMAND_HUD_IMAGE, sizeof(*command));
+			unsigned long width = (unsigned long)png[16] << 24 | png[17] << 16 | png[18] << 8 | png[19];
+			unsigned long height = (unsigned long)png[20] << 24 | png[21] << 16 | png[22] << 8 | png[23];
+			unsigned long largest = width > height ? width : height;
+
+			command->id = hud_images[asset].id;
+			hud_sheet_fill(asset, &command->sheet);
+			/* (the host's levels: every one down to 1 by 1) */
+			hud_images[asset].levels = 1;
+			while (largest >> hud_images[asset].levels)
+				hud_images[asset].levels++;
+		}
+		else
+			platform_log("high-res hud: could not decode the texture for %s bitmap %d", embedded->tag,
+				embedded->bitmap);
+	}
+	*levels = hud_images[asset].levels;
+	return hud_images[asset].id;
+}
+
+/* whether it never will have one (the host could not decode it): the original is drawn */
+static BOOL hud_image_failed(long asset)
+{
+	return asset < 0 || asset >= (long)hud_hires_embedded_count ||
+		(hud_images && hud_images[asset].tried && !hud_images[asset].id);
+}
+#else
 static uint32_t hud_image(long asset, unsigned long *levels)
 {
 	if (asset < 0 || asset >= (long)hud_hires_embedded_count)
@@ -929,6 +1026,23 @@ static uint32_t hud_image(long asset, unsigned long *levels)
 	return hud_images[asset].id;
 }
 
+/* (decoded here: it is made, or it never will be) */
+static BOOL hud_image_failed(long asset)
+{
+	unsigned long levels;
+
+	return !hud_image(asset, &levels);
+}
+#endif
+
+/* whether its image is there to draw */
+static BOOL hud_image_ready(long asset)
+{
+	unsigned long levels;
+
+	return hud_image(asset, &levels) != 0;
+}
+
 #else
 
 static uint32_t atlas_image(unsigned long data)
@@ -949,6 +1063,18 @@ static uint32_t hud_image(long asset, unsigned long *levels)
 	(void)asset;
 	*levels = 1;
 	return 0;
+}
+
+static BOOL hud_image_failed(long asset)
+{
+	(void)asset;
+	return TRUE;
+}
+
+static BOOL hud_image_ready(long asset)
+{
+	(void)asset;
+	return FALSE;
 }
 
 #endif
@@ -1101,10 +1227,12 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 			entry->override = hud_hires_override_find(entry->address, entry->description.width,
 				entry->description.height, entry->description.levels > 1 ?
 				xgpu_texture_level_offset(&entry->description, 1) : xgpu_texture_face_size(&entry->description));
-			if (entry->override >= 0 && !hud_image(entry->override, &levels))
+			if (entry->override >= 0 && !hud_image(entry->override, &levels) && hud_image_failed(entry->override))
 				entry->override = -1;
 		}
-		if (entry->override < 0 && platform_is_contiguous((void *)entry->address) &&
+		/* (the original too while its replacement is not ready: the host decodes it, host_vk_hud.c) */
+		if ((entry->override < 0 || !hud_image_ready(entry->override)) &&
+			platform_is_contiguous((void *)entry->address) &&
 			platform_is_contiguous((void *)(entry->address + entry->size - 1)))
 		{
 			if (config_boolean("debug.texture_log"))
@@ -1263,3 +1391,28 @@ void halo_custom_edition_texels_forget(void)
 	custom_edition_texel_count = 0;
 	custom_edition_texel_capacity = 0;
 }
+
+/* ---------- upstream's OpenGL ES pieces this image has not: Custom Edition's map pixels stay in the texture cache, at their
+Xbox addresses, which this renderer reads (android_ce_texture_cache.h), and the CE meters' draw scope is xbox_textures.c's */
+
+void halo_custom_edition_hud_meter(int active)
+{
+	(void)active;
+}
+
+#ifdef HALO_ANDROID
+int android_ce_texture_enabled(void)
+{
+	return 0;
+}
+
+void android_ce_texture_gpu_forget(const void *resource)
+{
+	(void)resource;
+}
+
+void android_ce_texture_unbind(const void *resource)
+{
+	(void)resource;
+}
+#endif

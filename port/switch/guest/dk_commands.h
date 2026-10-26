@@ -573,4 +573,11 @@ struct dk_command_draw
 	uint32_t streams[][2];
 };
 
+/* mod textures' bytes kept in the host's memory, outside the Xbox window
+(port/switch/host/host_texture_cache.c; port/linux/game/mod_bitmaps.c
+declares them too): by a key, 1 and the bytes copied if kept */
+int host_texture_cache_get(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_put(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_clear(void);
+
 #endif

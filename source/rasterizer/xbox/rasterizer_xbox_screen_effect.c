@@ -801,6 +801,13 @@ drawn as the game draws it, as the small targets would lose what it keeps
 as the game draws them, 24 passes of 1080p, were 57 ms each). TRUE with the
 scale from the viewport's game pixels to the small targets' texels. */
 #define RASTERIZER_SCREEN_EFFECT_PORT_BLUR_LEAST_SPREAD 0.5f
+/* port: the spread a blur keeps over the small targets' texels, where the screen has the lines to draw them larger: on
+a screen of many times the Xbox's lines (a phone's 1848, the targets of 360 lines a fifth of it), a blur fading out
+(a10's waking up, from a radius of 10 to nothing over five seconds) drawn small showed the small target's texels, a
+fifth of the screen's resolution, as if the screen had lost its anti-aliasing until the blur was over. The targets
+are a third, then half the screen's lines for a blur too slight to hide the smaller ones' texels (a spread of at least
+this many), and half the screen's, as before, down to the least spread */
+#define RASTERIZER_SCREEN_EFFECT_PORT_BLUR_HIDING_SPREAD 2.0f
 
 /* (the port's, port/linux/src/sdl_platform.c) */
 void platform_log(char const *format, ...);
@@ -810,8 +817,11 @@ static boolean rasterizer_screen_effect_port_small_blur(
 	real *scale_x,
 	real *scale_y)
 {
-	static real logged_radius = -1.0f;
+	/* (said when how it is drawn changes, not its radius: a blur that fades changes its radius every frame, and Lumoria's
+	logged a line a frame) */
+	static short logged_type = -1;
 	static short logged_passes = -1;
+	static short logged_small = -1;
 	real screen_scale;
 	real spread;
 	short viewport_width;
@@ -838,18 +848,36 @@ static boolean rasterizer_screen_effect_port_small_blur(
 	divisor = (short)(viewport_height * screen_scale / RASTERIZER_SCREEN_EFFECT_PORT_WARP_LINES + 0.5f);
 	if (viewport_width <= 0 || viewport_height <= 0 || divisor < 2)
 		return FALSE;
-	width = (short)(viewport_width * screen_scale / divisor + 0.5f);
-	height = (short)(viewport_height * screen_scale / divisor + 0.5f);
 	pass_count = (parameters->convolution_extra_passes + 1) * 2;
 	/* a pass moves each copy by the radius each way: over the passes the
 	spread is the radius times the root of their count, in game pixels, here
-	in the small targets' texels */
-	spread = parameters->convolution_radius * square_root((real)pass_count) * (real)width / (real)viewport_width;
-	small = spread >= RASTERIZER_SCREEN_EFFECT_PORT_BLUR_LEAST_SPREAD;
-	if (parameters->convolution_radius != logged_radius || pass_count != logged_passes)
+	in the screen's (the small targets' texels are divisor of them) */
+	spread = parameters->convolution_radius * square_root((real)pass_count) * screen_scale;
+	/* (port: the targets as small as the blur hides: the smallest, a third of the screen's lines or half of them; and
+	half of them for a slighter blur, down to the least spread) */
 	{
-		logged_radius = parameters->convolution_radius;
+		short candidates[3];
+		short candidate;
+
+		candidates[0] = divisor;
+		candidates[1] = (short)((divisor + 1) / 2);
+		candidates[2] = 2;
+		for (candidate = 0; candidate < 3; candidate++)
+		{
+			if (candidates[candidate] >= 2 && spread / (real)candidates[candidate] >= RASTERIZER_SCREEN_EFFECT_PORT_BLUR_HIDING_SPREAD)
+				break;
+		}
+		divisor = candidate < 3 ? candidates[candidate] : 2;
+	}
+	width = (short)(viewport_width * screen_scale / divisor + 0.5f);
+	height = (short)(viewport_height * screen_scale / divisor + 0.5f);
+	spread /= (real)divisor;
+	small = spread >= RASTERIZER_SCREEN_EFFECT_PORT_BLUR_LEAST_SPREAD;
+	if (parameters->convolution_type != logged_type || pass_count != logged_passes || small != logged_small)
+	{
+		logged_type = parameters->convolution_type;
 		logged_passes = pass_count;
+		logged_small = small;
 		platform_log("screen blur: %s, radius %.2f, %d passes, a spread of %.1f texels at %dx%d: %s",
 			parameters->convolution_type == _rasterizer_screen_effect_convolution_type_warp ? "warp" : "blur",
 			parameters->convolution_radius, pass_count, spread, width, height,

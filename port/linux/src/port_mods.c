@@ -53,6 +53,7 @@ at startup whether to play them anyway, turn those named off, or quit
 #include "tomlc17.h"
 
 #include <SDL3/SDL.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +83,12 @@ twice would otherwise be walked 2 to the depth times) */
 /* what the file reads go through on their way into the Xbox's memory, which
 the renderer watches (memory_watch.c) */
 #define READ_BOUNCE_SIZE 0x10000
+/* the mods' files kept open between reads (port_mods_file_read): a mod's
+bitmaps are read again each time the texture cache takes them back, and an
+open, a seek and a close each time were the most of a Switch's hitches with
+a mod of uncompressed textures (each a request to its file system); closed
+when the files are found again (files_dispose) */
+#define OPEN_FILES 8
 /* the most a folder name's character takes in load_order.toml (\\u00XX) */
 #define TOML_CHARACTER_LENGTH 6
 
@@ -272,9 +279,44 @@ static void toml_names(toml_datum_t table, const char *key, const char *path, st
 	}
 }
 
+#ifdef HALO_GUEST
+typedef FILE *open_stream;
+#define OPEN_STREAM_CLOSE(stream) fclose(stream)
+#else
+typedef SDL_IOStream *open_stream;
+#define OPEN_STREAM_CLOSE(stream) SDL_CloseIO(stream)
+#endif
+
+static struct
+{
+	long file;
+	open_stream stream;
+	unsigned long used;
+} open_files[OPEN_FILES];
+static unsigned long open_files_clock;
+static pthread_mutex_t open_files_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* (under open_files_lock) every one closed */
+static void open_files_close(void)
+{
+	int index;
+
+	for (index = 0; index < OPEN_FILES; index++)
+	{
+		if (open_files[index].stream)
+			OPEN_STREAM_CLOSE(open_files[index].stream);
+		open_files[index].stream = NULL;
+		open_files[index].file = -1;
+	}
+}
+
 static void files_dispose(void)
 {
 	long index;
+
+	pthread_mutex_lock(&open_files_lock);
+	open_files_close();
+	pthread_mutex_unlock(&open_files_lock);
 
 	for (index = 0; index < port_mods.file_count; index++)
 	{
@@ -1017,18 +1059,45 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 	SDL_IOStream *stream;
 #endif
 
+	int slot = -1, index;
+
 	if (file < 0 || file >= port_mods.file_count)
 		return 0;
 	path = port_mods.files[file].path;
 	if (bounce && !(staging = malloc(READ_BOUNCE_SIZE)))
 		return 0;
+	pthread_mutex_lock(&open_files_lock);
+	/* (the file's stream if it is open, else the least lately used slot's,
+	closed, for it) */
+	for (index = 0; index < OPEN_FILES; index++)
+	{
+		if (open_files[index].stream && open_files[index].file == file)
+		{
+			slot = index;
+			break;
+		}
+		if (slot < 0 || !open_files[index].stream ||
+			(open_files[slot].stream && open_files[index].used < open_files[slot].used))
+			slot = index;
+	}
+	if (!open_files[slot].stream || open_files[slot].file != file)
+	{
+		if (open_files[slot].stream)
+			OPEN_STREAM_CLOSE(open_files[slot].stream);
 #ifdef HALO_GUEST
-	stream = fopen(path, "rb");
+		open_files[slot].stream = fopen(path, "rb");
+#else
+		/* (SDL's, for UTF-8 paths on Windows) */
+		open_files[slot].stream = SDL_IOFromFile(path, "rb");
+#endif
+		open_files[slot].file = open_files[slot].stream ? file : -1;
+	}
+	open_files[slot].used = ++open_files_clock;
+	stream = open_files[slot].stream;
+#ifdef HALO_GUEST
 	if (!stream || fseek(stream, (long)offset, SEEK_SET) != 0)
 		read = 0;
 #else
-	/* (SDL's, for UTF-8 paths on Windows) */
-	stream = SDL_IOFromFile(path, "rb");
 	if (!stream || SDL_SeekIO(stream, (Sint64)offset, SDL_IO_SEEK_SET) < 0)
 		read = 0;
 #endif
@@ -1051,14 +1120,14 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 		}
 		done += wanted;
 	}
-	if (stream)
+	/* (a stream a read failed on is closed, to be opened again next time) */
+	if (!read && stream)
 	{
-#ifdef HALO_GUEST
-		fclose(stream);
-#else
-		SDL_CloseIO(stream);
-#endif
+		OPEN_STREAM_CLOSE(stream);
+		open_files[slot].stream = NULL;
+		open_files[slot].file = -1;
 	}
+	pthread_mutex_unlock(&open_files_lock);
 	free(staging);
 	return read;
 }
@@ -1102,6 +1171,40 @@ int port_mods_describe(long index, char *text, unsigned long size, const char *m
 		mod->refusal ? mod->refusal : "",
 		mod->order < 0 || mod->file_count ? "" : " (no tags folder, or nothing in it)");
 	return 1;
+}
+
+int port_mods_list(char *text, unsigned long size)
+{
+	long position;
+	int count = 0;
+	size_t length = 0;
+
+	if (!size)
+		return 0;
+	text[0] = 0;
+	for (position = 0; position < port_mods.mod_count; position++)
+	{
+		long index = port_mods.ordered[position];
+		const struct port_mod *mod;
+		int written;
+
+		if (index < 0 || index >= port_mods.mod_count)
+			continue;
+		mod = &port_mods.mods[index];
+		if (!mod_on(mod))
+			continue;
+		written = snprintf(text + length, size - length, "%s%s%s%s", count ? "\n" : "", mod->folder,
+			mod->version[0] ? " " : "", mod->version);
+		/* (a line that does not fit is left out whole) */
+		if (written < 0 || (size_t)written >= size - length)
+		{
+			text[length] = 0;
+			break;
+		}
+		length += (size_t)written;
+		count++;
+	}
+	return count;
 }
 
 unsigned long port_mods_scans(void)

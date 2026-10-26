@@ -174,14 +174,14 @@ SCREENS = {
             # (the OpenGL renderer's: the deko3d and Vulkan ones do not draw
             # its fade up the body, d3d8_gl_set_height_fade)
             ("OVERSHIELD:", "display.overshield_effect", ON_OFF,
-             "The overshield rises up the body as it charges\nand stays lit, in its own color. Off: stock.",
+             "The overshield rises up the body and stays lit,\nin its own color. Online: the host's choice.",
              "desktop android web"),
             ("MODEL DETAIL:", "display.model_detail", [("STOCK", "stock"), ("NATIVE", "native"), ("HIGHEST", "highest")],
              "Stock picks models' detail by the Xbox's 480 lines;\nnative by this display's; highest, always the best.", None),
             ("SHIELD GLOW:", "display.shield_glow", ON_OFF,
-             "Shields light their surroundings as they flare,\nin the shield's own color.", None),
+             "Shields light their surroundings as they flare.\nOnline: the host's choice.", None),
             ("GLOW INTENSITY:", "display.shield_glow_intensity", [("DEFAULT", "default"), ("LIGHT SHOW", "light_show")],
-             "Light Show: the shield glow three times as far,\nat full from a third of the flare.", None),
+             "Light Show: three times as far, at full from a\nthird of the flare. Online: the host's choice.", None),
             ("MATCH TIMER:", "display.match_timer", ON_OFF,
              "Draw a clock at the bottom right in multiplayer,\ncounting up from the start of the game.", None),
             # (the OpenGL renderer's alone, as texture filtering: the deko3d
@@ -284,8 +284,10 @@ SCREENS = {
              [("DEFAULT", "0"), ("SWAP TRIGGERS", "1"), ("SWAP A, L TRIGGER", "2"), ("SWAP B, L TRIGGER", "3"),
               ("SWAP B, R STICK", "4"),
               # (the port's: the later games' layouts as Halo: CE's controls
-              # go, source/interface/player_ui.c)
-              ("BOXER", "5"), ("GREEN THUMB", "6"), ("BUMPER JUMPER", "7"), ("RECLAIMER", "8")],
+              # go, source/interface/player_ui.c; upstream's Fishsticks and
+              # Recon after this fork's, whose numbers saved profiles keep)
+              ("BOXER", "5"), ("GREEN THUMB", "6"), ("BUMPER JUMPER", "7"), ("RECLAIMER", "8"),
+              ("FISHSTICKS", "9"), ("RECON", "10")],
              "Which of the controller's buttons does what (not\nthe keyboard's: Controls Setup sets those).", None),
             ("STICK LAYOUT:", "profile.joystick_preset",
              [("DEFAULT", "0"), ("SOUTHPAW", "1"), ("LEGACY", "2"), ("LEGACY SOUTHPAW", "3")],
@@ -428,6 +430,8 @@ _network["categories"] = [
      "Players' names above their heads, the\nscoreboard, and the text chat."),
     ("STREAMER MODE:", "network_setup/streamer_mode",
      "Hide offensive words in names and text from\nother players, maps and mods, as stars."),
+    ("SERVER BROWSER:", "network_setup/server_browser",
+     "What the Server Browser lists and its order: the\nsame settings as its Filters screen."),
 ]
 SCREENS["network_setup/map_sharing"] = {
     "screen": "map_sharing_settings_screen", "header": _network["header"], "spacing": 30,
@@ -463,6 +467,36 @@ SCREENS["gameplay"] = {
          None),
     ],
 }
+# Network Setup's server browser (menu_functions.c's lobby_browser_update): where
+# its games come from (network.listings, master_list.c), the Filters screen's
+# settings and its order; the master servers that answered, shown, not set
+# (a row with no values: its value's text, menu_functions.c's
+# master_servers_show)
+SCREENS["network_setup/server_browser"] = {
+    "screen": "server_browser_settings_screen", "header": _network["header"], "spacing": 30,
+    "rows": [
+        ("LISTS:", "network.listings",
+         [("ALL GAMES", "both"), ("DEDICATED", "masters"), ("P2P GAMES", "brokers")],
+         "The master servers' dedicated servers, the games\nplayers host (through the brokers), or all of them.", None),
+        ("SHOW EMPTY SERVERS:", "network.browser_show_empty", YES_NO, "List games no one is playing yet.", None),
+        ("SHOW FULL SERVERS:", "network.browser_show_full", YES_NO, "List games with no room left.", None),
+        ("SHOW MISSING MAPS:", "network.browser_maps",
+         [("NO", "no"), ("YES", "yes"), ("IF DOWNLOADABLE", "downloadable")],
+         "List games on maps you do not have: IF\nDOWNLOADABLE, those Map Sharing can download.", None),
+        # (a column title chosen again writes the order reversed, "-players": the row shows its order's word,
+        # menu_functions.c's setting_value_index, and writes it again only if another is chosen)
+        ("SORT BY:", "network.browser_sort",
+         [("DEDICATED FIRST", "servers"), ("PLAYERS", "players"), ("NAME", "name"), ("MAP", "map"),
+          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked")],
+         "The list's order. Its column titles sort it too;\nchoosing one again reverses it.", None),
+        ("MASTER SERVERS:", "network.masters_file", None,
+         "The master servers (masters.txt) that answered\nwhen the Server Browser last asked.", None,
+         "master_servers"),
+    ],
+}
+# (the read-only row's words, its screen's words: menu_functions.c's
+# master_servers_show)
+SCREENS["network_setup/server_browser"]["words"] = ["OF", "NONE LISTED", "NOT ASKED YET", "OFF"]
 
 # Network Setup's multiplayer HUD: its rows, moved from Network Setup, and the
 # text chat's (port/linux/game/network_chat.c)
@@ -500,7 +534,8 @@ SCREENS["network_setup/streamer_mode"] = {
 # the clipboard, the updates)
 SCREENS["network_setup/in_game"] = {
     "screen": "in_game_network_settings_screen", "header": _network["header"], "spacing": 30,
-    "platform_places": True, "rows": [], "categories": _network["categories"],
+    "platform_places": True, "rows": [],
+    "categories": [category for category in _network["categories"] if category[1] != "network_setup/server_browser"],
 }
 
 # Controls Setup: the keyboard and mouse's actions, in groups (the order of
@@ -510,7 +545,7 @@ CONTROL_ROWS = 7
 
 # the settings whose rows have the wider spinner (a device's name)
 WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "streamer.slurs", "streamer.swearing",
-                 "streamer.insults"}
+                 "streamer.insults", "network.listings", "network.browser_maps", "network.browser_sort"}
 
 # the host's voice chat and vote kicks, on Teamplay Options
 # (_teamplay_options_extras): each row's key, its label, its choices' words
@@ -670,6 +705,21 @@ def _setting_screen(folder: str, spec: dict) -> list:
             if setting not in spec.get("same_place", ()) and key not in spec.get("same_place", ()):
                 place += 1
             rows.append((row, platform, place))
+        # (a row with no values shows its value, set by the game: its text)
+        if choices is None:
+            extra += _widget(row, [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
+                                   ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF"), ("platform", platform)],
+                             [f'<child{attributes([("widget", f"{base}/{key}_label")])}/>',
+                              f'<child{attributes([("widget", f"{base}/{key}_value"), ("x", 286), ("y", 1)])}/>'])
+            extra += _widget(f"{base}/{key}_label",
+                             [("type", "text"), ("controller", 1), ("width", 300), ("height", 22),
+                              ("string_list", f"{base}/labels"), ("string_index", index), ("font", "ui\\large_ui"),
+                              ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 4)], [])
+            extra += _widget(f"{base}/{key}_value",
+                             [("type", "text"), ("controller", 1), ("width", 212), ("height", 22),
+                              ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("align", "center"), ("text_y", 1),
+                              ("text_flags", "no_focus_test")], [])
+            continue
         # (a device's name wants the wider spinner Server Setup's co-op rows
         # have: WIDE_SETTINGS)
         wide = setting in WIDE_SETTINGS
@@ -721,6 +771,8 @@ def _setting_screen(folder: str, spec: dict) -> list:
                                               '<on event="start" run="port settings save" back="true"/>'])
     extra += _strings(f"{base}/labels", [label for label, *_ in spec["rows"]] +
                       [label for label, *_ in spec.get("categories", ())])
+    if spec.get("words"):
+        extra += _strings(f"{base}/words", spec["words"])
     # (the help of the row whose label is string n is n + 1: the buttons' is 0)
     extra += _strings(f"{base}/help_strings",
                       [""] + [help_text.replace("\n", "\\n") for _, _, _, help_text, *_ in spec["rows"]] +
@@ -826,19 +878,88 @@ MT = "main_menu/multiplayer_type_select"
 # in turn: menu_functions.c's gametype_option_help)
 SLAYER_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit/slayer_edit"
 PLAYER_EDIT = "main_menu/settings_select/multiplayer_setup/player_options_edit"
+# (its rows, the PC version's, in order: ce_menus.py moves them 27 apart)
+PLAYER_OPTIONS_ROWS = ['number_of_lives', 'maximum_health', 'shields', 'respawn_time', 'respawn_time_growth', 'odd_man_out', 'invisible_players', 'suicide_penalty']
+# the vehicle sets' PC set (game_engine.h's VARIANT_VEHICLE_SET_PC), between
+# GUN TURRETS and CUSTOM (menu_functions.c's VEHICLE_PRESET_PC), and its help
+# among the sets' (its rows' values' in turn: gametype_option_help)
+VEHICLE_EDIT = "main_menu/settings_select/multiplayer_setup/vehicle_options_edit"
 AIM_ASSIST_HELP = [
     "Players keep their current mouse aim assist setting.",
     "Disable mouse aim assist for mouse/keyboard players.\\nController and touch aim assist are unchanged.",
 ]
+# the host's shield effects, for every player of a network game
+# (network_shield_effects.c): their words, then their helps
+SHIELD_EFFECTS = ['STOCK', 'GLOW', 'LIGHT SHOW', 'OVERSHIELD', 'GLOW+OVERSHIELD', 'SHOW+OVERSHIELD',
+                  "PLAYERS' OWN"]
+SHIELD_EFFECTS_HELP = [
+    "Everyone sees the stock game's shields and\\novershield, whatever their own settings.",
+    "Everyone's shields light their surroundings as\\nthey flare.",
+    "Everyone's shields light their surroundings as\\nthey flare, three times as far (Light Show).",
+    "For everyone, the overshield rises up the body\\nand stays lit, in its own color.",
+    "For everyone, shields light their surroundings,\\nand the overshield rises and stays lit.",
+    "For everyone, Light Show's shield glow, and the\\novershield rising and staying lit.",
+    "Not synced: each player sees the shield effects\\nof their own Video Setup settings.",
+]
+
+# OpenCE's gametypes' options (port/linux/game/game_modes.c), a screen of the
+# gametype editor's (menu_functions.c's "mp profile init opence options"): the
+# mode and Hardcore, then the mode's own rows, which menu_functions.c's
+# gametype_option_help shows (op_inf_ for Infection, op_gg_ for Gun Game)
+# below them; a row's values are menu_functions.c's gametype_options'
+PLAYLIST_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit"
+OPENCE_EDIT = "main_menu/settings_select/multiplayer_setup/opence_options_edit"
+OPENCE_ROWS = [
+    ("oce_mode", "MODE:", ["NONE", "SWAT", "INFECTION", "GUN GAME"], [
+        "The game type's own rules.",
+        "No shields, and a shot to the head kills. Slayer only.",
+        "Humans killed join the zombies, who win when\\nno human is left. Team Slayer only.",
+        "Each kill gives the next weapon; a kill with the\\nlast wins. Free for all Slayer only."]),
+    ("oce_hardcore", "HARDCORE:", ["OFF", "ON"], [
+        "The motion sensor and aim assist as the game\\ntype has them.",
+        "No motion sensor, no aim assist, and a kill\\nrestores the killer's health and shields."]),
+    ("inf_zombies", "FIRST ZOMBIES:", ["1", "2", "3", "4", "8", "16"],
+     ["The zombies chosen when the round starts\\n(a human is always left)."] * 6),
+    ("inf_speed", "ZOMBIE SPEED:", ["100%", "110%", "125%", "150%", "175%", "200%"],
+     ["How fast zombies move, of a human's speed."] * 6),
+    ("inf_damage", "SKULL DAMAGE:", ["100%", "150%", "200%", "250%"],
+     ["The damage of a zombie's skull's melee."] * 4),
+    ("inf_respawn", "ZOMBIE RESPAWN:", ["1 SECOND", "3 SECONDS", "5 SECONDS", "10 SECONDS", "15 SECONDS",
+                                        "30 SECONDS"],
+     ["How long a dead zombie waits to respawn."] * 6),
+    ("inf_countdown", "COUNTDOWN:", ["NONE", "5 SECONDS", "10 SECONDS", "15 SECONDS", "30 SECONDS"],
+     ["How long the round waits, once two players are\\nalive, before the first zombies are chosen."] * 5),
+    ("inf_shields", "ZOMBIE SHIELDS:", ["OFF", "ON"],
+     ["Zombies have no shields.", "Zombies have shields, as humans do."]),
+    ("gg_order", "WEAPON ORDER:", ["STRONGEST FIRST", "WEAKEST FIRST", "RANDOM"], [
+        "From the rocket launcher to the pistol.", "From the pistol to the rocket launcher.",
+        "In an order the host draws for each game."]),
+    ("gg_melee", "MELEE DEMOTES:", ["OFF", "ON"], [
+        "A melee kill takes nothing from the victim.",
+        "A melee kill takes the victim back a weapon."]),
+]
+OPENCE_ITEM = f"{PLAYLIST_EDIT}/playlist_edit_opence_item"
 
 STRING_INSERTS = {
-    f"{PLAYER_EDIT}/player_options_labels": [(8, ["AIM ASSIST:"])],
-    f"{PLAYER_EDIT}/cap_player_options": [(28, AIM_ASSIST_HELP)],
+    # (Filters' SHOW MISSING MAPS' third value's help, after the PC version's:
+    # menu_functions.c's filters_help)
+    f"{MT}/join_game/filters/cap_filter_options": [(11, [
+        "Show servers on maps you do not have if their\\nhost shares them: they download as you join."])],
+    # (the gametype editor's OPENCE OPTIONS' words, after the PC version's:
+    # menu_functions.c's playlist_edit_description)
+    f"{PLAYLIST_EDIT}/playlist_edit_list_extended_dsc_text": [(8, [
+        "Choose the rules of OpenCE's\\ngametypes: SWAT, Infection,\\nGun Game and Hardcore.\\nThis gametype:"])],
+    f"{PLAYER_EDIT}/player_options_labels": [(8, ["AIM ASSIST:", "SHIELD EFFECTS:"])],
+    f"{PLAYER_EDIT}/cap_player_options": [(28, AIM_ASSIST_HELP + SHIELD_EFFECTS_HELP)],
     # (Teamplay Options' voice chat and vote kick rows, after its own:
     # TEAMPLAY_ROWS)
     f"{TEAMPLAY_EDIT}/teamplay_options_labels": [(3, [label for _, label, *_ in TEAMPLAY_ROWS])],
     f"{TEAMPLAY_EDIT}/cap_teamplay_options": [(10, [text for *_, helps in TEAMPLAY_ROWS for text in helps])],
     f"{SLAYER_EDIT}/var_kills_to_win": [(5, ["75", "100", "150", "200", "250", "500"])],
+    f"{VEHICLE_EDIT}/var_vehicle_set": [(8, ["PC"])],
+    f"{VEHICLE_EDIT}/cap_vehicle_options": [(17, [
+        "Every vehicle the map places will spawn, as in\\nHalo PC.",
+    ])],
     f"{SLAYER_EDIT}/cap_slayer": [(11, [
         "Seventy-five kills to win. Settle in for a long\\nfight.",
         "A hundred kills to win. Made for big games.",
@@ -875,7 +996,8 @@ STRING_OVERRIDES.update({
         "Play the campaign with a\\nfriend in split screen:\\nplayer 2 on a gamepad.",
         "Set all the attributes for your \\nmultiplayer gametypes and\\nkeep them for future use.",
     ],
-    "main_menu/gametype_select/var_gametype_banks": ["STANDARD", "CUSTOM"],
+    # (and the port's OPENCE: OpenCE's gametypes, port/linux/game/game_modes.c)
+    "main_menu/gametype_select/var_gametype_banks": ["STANDARD", "OPENCE", "CUSTOM"],
     # (the PC's weapon sets, then the Xbox's NO GRENADES: menu_functions.c's
     # gametype_options maps them to the engine's)
     "main_menu/settings_select/multiplayer_setup/item_options_edit/item_options_labels": ["INFINITE GRENADES:", "WEAPON SET:", "VEHICLE SET:", "STARTING EQUIPMENT:",
@@ -923,7 +1045,7 @@ OVERRIDE_ORIGINALS = {
     f"{PE}/profile_edit_descriptions": [0, None, None, None, None, None, None, 7, None],
     f"{MT}/multiplayer_options": [0, 1, 2, 3, None, 5, None, None],
     f"{MT}/multiplayer_option_descriptions": [0, 1, None, None, 4, None, 5],
-    "main_menu/gametype_select/var_gametype_banks": [0, 2],
+    "main_menu/gametype_select/var_gametype_banks": [0, None, 2],
     "main_menu/settings_select/multiplayer_setup/item_options_edit/item_options_labels": [0, 1, 2, 3, 4] + [None] * 4,
     # (the first's note that infinite grenades work only with 4 players or
     # fewer is left out: not so here)
@@ -936,6 +1058,17 @@ OVERRIDE_ORIGINALS = {
 # CUSTOM MULTIPLAYER maps (_map_kind)
 MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
 
+# the main menu's news: the latest release's notes (tools/embed_assets.py's
+# news_text) in a window the main menu's X opens (WIDGET_PATCHES), its lines
+# filled and scrolled by menu_functions.c's news screen ("port news ...")
+NEWS = "main_menu/news"
+NEWS_ROWS = 12
+# the window's panel (bitmaps/controller_border, drawn a texel a unit from
+# its widget's corner: the panel is its texels 49 to 556 across and 104 to
+# 349 down), placed in the middle of the screen
+NEWS_PANEL = (17, 14)
+
+
 # changes to the PC version's widgets (by our names): attributes set, all
 # their handlers replaced, children added, game data inputs added
 WIDGET_PATCHES = {
@@ -946,11 +1079,27 @@ WIDGET_PATCHES = {
     }},
     # (the main menu's MODS, before Quit: _mods)
     "main_menu/main_menu_select_list": {"insert_before": {"main_menu/main_menu_item_quit_game": [
-        f'<child widget="main_menu/main_menu_item_mods" x="{MODS_ITEM_PLACE[0]}" y="{MODS_ITEM_PLACE[1]}"/>']}},
+        f'<child widget="main_menu/main_menu_item_mods" x="{MODS_ITEM_PLACE[0]}" y="{MODS_ITEM_PLACE[1]}"/>']},
+        # (the main menu's X - the west face button: Y on a Switch, Square on
+        # a PS5 - opens the news, the latest release's notes: _news_screen;
+        # on the main menu alone)
+        "handlers": ['<on event="down"/>', f'<on event="x" open="{NEWS}/news_screen"/>']},
+    # (and the hint that X opens it, over the build number: a tap or a click
+    # on it presses X, its picture a key's icon to the pointer, x_butn_news)
+    "main_menu/main_menu": {"insert_before": {"main_menu/build_number": [
+        f'<child widget="{NEWS}/x_butn_news" x="450" y="380"/>',
+        f'<child widget="{NEWS}/news_hint" x="450" y="380"/>']}},
     f"{PLAYER_EDIT}/player_options_menu": {"insert_before": {
         f"{PLAYER_EDIT}/player_button_bar": [
-            f'<child widget="{PLAYER_EDIT}/op_aim_assist" x="54" y="313"/>']}},
+            f'<child widget="{PLAYER_EDIT}/op_aim_assist" x="54" y="289"/>',
+            f'<child widget="{PLAYER_EDIT}/op_shield_effects" x="54" y="316"/>']}},
+    # (its rows 27 apart, not 30, so that ten fit above the help, which keeps
+    # the three lines some have: ce_menus.py's CHILD_OFFSETS)
     f"{PLAYER_EDIT}/player_options_help": {"set": {"top": 345, "height": 60}},
+    # (the gametype editor's OPENCE OPTIONS, after its own rows: _opence_options)
+    f"{PLAYLIST_EDIT}/edit_playlist_select_list": {
+        "insert_before": {f"{PLAYLIST_EDIT}/playlist_edit_button_bar": [f'<child widget="{OPENCE_ITEM}"/>']},
+        "inputs": ["port playlist edit desc"]},
     # (the profile settings' picture: on Gamepad Setup's row, the profile's
     # button settings, BITMAP_FRAMES; menu_functions.c's
     # profile_gamepad_layout)
@@ -1013,6 +1162,43 @@ WIDGET_PATCHES = {
     ]},
     # (the small font's line does not fit below their 4 units of offset)
     f"{MT}/join_game/ticker_player_info": {"set": {"text_y": 1}},
+    # (the server browser's top-left tab: which games it lists, not Internet
+    # or LAN, which are menu items of their own here; wider for its words, in
+    # the small font of the counts beside it, and moved left to stay centred
+    # in its tab: ce_menus.py's CHILD_OFFSETS)
+    # (the tab behind it without CE's rounded box: the screen's border
+    # picture already outlines the tab, and the two outlines clashed)
+    f"{MT}/join_game/op_browser_mode": {"set": {"bitmap": None}},
+    f"{MT}/join_game/browser_mode_spinner": {"set": {
+        "string_list": None, "strings": "ALL GAMES|DEDICATED|P2P GAMES", "setting": "network.browser_source",
+        "values": "all|dedicated|players", "width": 117, "footer_bounds": "7 120 19 126", "font": "ui\\small_ui",
+        "text_y": 3}},
+    # (the server browser's error panel: its words in a box of their own in
+    # the error box's place, under its title and button; menu_functions.c's
+    # lobby_browser_error hides the error box)
+    f"{MT}/join_game/gamespy_error_fullscreen": {"insert_before": {"error/error_modal": [
+        f'<child widget="{MT}/join_game/error_words" x="192" y="176"/>']}},
+    # (wider to the left, for "SERVERS: 8 (5 dedicated)": ce_menus.py's
+    # CHILD_OFFSETS keeps its right edge)
+    f"{MT}/join_game/server_count_label": {"set": {"width": 210}},
+    # (the page, when there is more than one: centred in the counts' panel,
+    # between the players and the servers, whatever their numbers' widths;
+    # menu_functions.c's lobby_browser_update places it)
+    f"{MT}/join_game/page_count_label": {"set": {"align": "center"}},
+    # (Filters' rows set the network.browser_* settings, as Network Setup's
+    # SERVER BROWSER does: menu_functions.c's filters_show and
+    # "gamespy update filter settings". SHOW MISSING MAPS has a third value,
+    # those a host shares: Map Sharing downloads them)
+    f"{MT}/join_game/filters/empty_servers_spinner": {"set": {
+        "string_list": None, "strings": "NO|YES", "setting": "network.browser_show_empty", "values": "false|true"}},
+    f"{MT}/join_game/filters/full_servers_spinner": {"set": {
+        "string_list": None, "strings": "NO|YES", "setting": "network.browser_show_full", "values": "false|true"}},
+    f"{MT}/join_game/filters/game_type_spinner": {"set": {
+        "string_list": None, "strings": "ANY|CTF|SLAYER|ODDBALL|KING|RACE", "setting": "network.browser_gametype",
+        "values": "any|ctf|slayer|oddball|king|race"}},
+    f"{MT}/join_game/filters/installed_maps_spinner": {"set": {
+        "string_list": None, "strings": "NO|YES|IF DOWNLOADABLE", "setting": "network.browser_maps",
+        "values": "no|yes|downloadable"}},
     f"{MT}/join_game/ticker_rules_info": {"set": {"text_y": 1}},
     # (Item Options' loadout rows, over its buttons)
     "main_menu/settings_select/multiplayer_setup/item_options_edit/item_options_menu": {"insert_before": {
@@ -1188,11 +1374,52 @@ def _value_row(base: str, key: str, label_index: int, run: str) -> list:
     return lines
 
 
+# the server browser's words (menu_functions.c's lobby_browser_update, in
+# this order: its _browser_word_*): the line below the rows, the rows' status,
+# the counts, and the error panel's
+BROWSER_WORDS = [
+    # (the chosen game's line: "12 of 16 players", and its state)
+    "of", "players", "player", "under way", "full or starting",
+    # (where it was listed, and what it needs)
+    "Dedicated server by", "listed on", "master server", "master servers", "Dedicated server",
+    "Hosted by a player (anonymous listing)", "Password required",
+    "Needs the newer build: Settings > Network Setup > Check for updates",
+    "Runs an older build: it can be joined once it updates",
+    # (a join, as it goes: p2p_join_progress)
+    "Asking the brokers for the host...", "The host answered: connecting (UDP hole punching)...",
+    "Connected: joining the game...",
+    "The host did not answer (offline, or its listing is stale)",
+    "No route to the host: a forwarded port on either side helps",
+    "The host refused: full", "The host refused: closed", "The host refused: banned",
+    "The host refused: wrong password", "The host refused: another version", "The host refused: its invite changed",
+    "Strict NAT: turn on UPnP, or forward a port",
+    # (the list's state)
+    "Internet play is off (Settings)", "The server browser is off (network.public_lobby)",
+    "Looking for public games...", "Games on a newer version (update the game to join them):",
+    "No public games found", "No games match the filters",
+    "No master server answered: showing player-hosted games only",
+    # (the counts: "SERVERS: 8 (3 dedicated)"; the rows' status)
+    "dedicated", "JOINING", "NEWER", "OLDER", "FAILED", "LIVE", "CLOSED",
+    # (the error panel: nothing can be listed)
+    "Internet play is off:\\nSettings > Network Setup",
+    "Neither the master servers\\nnor the brokers answer:\\ncheck the connection",
+    # (a refusal added later, last so that the others keep their places)
+    "The host refused: your player name",
+]
+
+
 def _join_game_extras() -> list:
-    """the browser's added titles, Direct Link's clipboard button, and the
-    password screen"""
+    """the browser's added titles, Direct Link's clipboard button, the
+    password screen, and the browser's words"""
     base = f"{MT}/join_game"
     lines = _password_screen()
+    lines += _strings(f"{base}/browser_words", BROWSER_WORDS)
+    # (the error panel's words, in a box as the error box: its own text is
+    # the game's error messages')
+    lines += _widget(f"{base}/error_words", [("type", "text"), ("controller", 1), ("width", 280), ("height", 159),
+                                             ("bitmap", "bitmaps/alert_bkd"), ("font", "ui\\large_ui"),
+                                             ("color", "#FF2896FF"), ("text_x", 9),
+                                             ("text_y", 35), ("text_flags", "no_focus_test")], [])
     lines += _header(f"{base}/header_server_browser", f"{base}/header_server_browser")
     lines += _header(f"{base}/header_direct_link", f"{base}/header_direct_link")
     lines += _widget(f"{base}/button_clipboard", [("type", "text"), ("width", 128), ("height", 24),
@@ -1368,8 +1595,8 @@ def _server_settings() -> list:
         "Each team's vehicles and their respawn time, for\\nthis game.",
         "The motion tracker and nav points, for this game.",
         "Friendly fire and team balance, for this game.",
-        # (LISTING's, by its choice)
-        "Anyone can see and join your game: it is listed\\nin everyone's Server Browser.",
+        # (LISTING's, by its choice; PUBLIC's with a publisher key is last)
+        "Anyone can see and join your game: it is listed\\nfor everyone through the brokers.",
         "Only players with your invite link can join.",
         # (co-op's options' rows: COOP_SETUP_SCREENS)
         *(help_text for _, _, help_text, _ in COOP_SETUP_SCREENS),
@@ -1377,6 +1604,9 @@ def _server_settings() -> list:
         "Players from the Server Browser must type it to\\njoin (an invite link needs none). Enter sets it.",
         # (MAP SHARING's)
         MAP_SHARE_SETUP[2],
+        # (LISTING's PUBLIC, on a machine with a publisher key: menu_functions.c's
+        # server_settings_update)
+        "Listed for everyone through the brokers, and on\\nthe master servers with your publisher key.",
     ])
     lines = _screen(base, spec, rows, ["server settings update"],
                     ['<on event="created" run="server settings init"/>'], extra)
@@ -1433,6 +1663,12 @@ COOP_SETUP_SCREENS = [
         ("coop_player_collisions", "PLAYER COLLISIONS:", ["ON", "OFF"], [
             "Players bump into each other, as in the campaign.",
             "Players walk through each other, so that no one\\nblocks a doorway. The AI's characters still block.",
+        ]),
+        # (network.coop_ally_friendly_fire: game_engine.c's
+        # game_engine_friendly_damage)
+        ("coop_ally_friendly_fire", "ALLY FRIENDLY FIRE:", ["ON", "OFF"], [
+            "Players can hurt and kill their AI allies, as in\\nthe campaign.",
+            "Players can not hurt their AI allies, so that no\\none can kill Keyes or the Marines a level needs.",
         ]),
     ]),
     ("voice_options", "VOICE AND VOTING", "Voice chat, text chat and votes to kick a player,\\nfor this game.",
@@ -1595,6 +1831,9 @@ def _lobby() -> list:
     lines += _widget(f"{base}/lobby_game_data", [("type", "text"), ("controller", 1), ("left", 417), ("top", 250),
                                                  ("width", 146), ("height", 144), ("font", "ui\\small_ui"),
                                                  ("color", "#FF2896FF")], [])
+    # (its words: menu_functions.c's lobby_update. "<name> - dedicated": the
+    # game's host is a dedicated server)
+    lines += _strings(f"{base}/lobby_words", ["dedicated"])
     lines += _widget(f"{base}/lobby_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
                                                   ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
                      # (SWITCH TEAM first: hidden in a game without teams, which
@@ -1774,24 +2013,49 @@ def _item_options_extras() -> list:
 
 
 def _player_options_extras() -> list:
-    """The host's aim-assist policy, hidden while editing saved gametypes."""
+    """The host's aim-assist policy and shield effects, hidden while editing
+    saved gametypes."""
     base = PLAYER_EDIT
-    lines = _widget(f"{base}/op_aim_assist", [("width", 512), ("height", 28),
-        ("flags", "pass_unhandled_to_focused_child"), ("bitmap", "bitmaps/option_bkds"),
-        ("color", "#FF2896FF")], [f'<child widget="{base}/aim_assist_label"/>',
-        f'<child widget="{base}/aim_assist_spinner" x="286" y="1"/>'])
-    lines += _widget(f"{base}/aim_assist_label", [("type", "text"), ("controller", 1),
-        ("width", 280), ("height", 22), ("string_list", f"{base}/player_options_labels"),
-        ("string_index", 8), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
-        ("text_x", 13), ("text_y", 4)], [])
-    lines += _widget(f"{base}/aim_assist_spinner", [("type", "spinner"), ("top", 2),
-        ("width", 206), ("height", 20), ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
-        ("string_list", f"{base}/var_aim_assist"), ("font", "ui\\large_ui"),
-        ("color", "#FF2896FF"), ("align", "center"), ("text_y", 4),
-        ("list_flags", "items_from_strings"), ("header_bitmap", "bitmaps/arrow_sm_left"),
-        ("footer_bitmap", "bitmaps/arrow_sm_right"), ("header_bounds", "7 -13 19 -7"),
-        ("footer_bounds", "7 208 19 214")], ['<on event="left_mouse" run="mouse spinner 1wide click"/>'])
-    return lines + _strings(f"{base}/var_aim_assist", ["ALLOWED", "BLOCK M+KB"])
+    lines = []
+    for key, label_index, words in (("aim_assist", 8, ["ALLOWED", "BLOCK M+KB"]),
+                                    ("shield_effects", 9, SHIELD_EFFECTS)):
+        lines += _widget(f"{base}/op_{key}", [("width", 512), ("height", 28),
+            ("flags", "pass_unhandled_to_focused_child"), ("bitmap", "bitmaps/option_bkds"),
+            ("color", "#FF2896FF")], [f'<child widget="{base}/{key}_label"/>',
+            f'<child widget="{base}/{key}_spinner" x="286" y="1"/>'])
+        lines += _widget(f"{base}/{key}_label", [("type", "text"), ("controller", 1),
+            ("width", 280), ("height", 22), ("string_list", f"{base}/player_options_labels"),
+            ("string_index", label_index), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+            ("text_x", 13), ("text_y", 4)], [])
+        lines += _widget(f"{base}/{key}_spinner", [("type", "spinner"), ("top", 2),
+            ("width", 206), ("height", 20), ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
+            ("string_list", f"{base}/var_{key}"), ("font", "ui\\large_ui"),
+            ("color", "#FF2896FF"), ("align", "center"), ("text_y", 4),
+            ("list_flags", "items_from_strings"), ("header_bitmap", "bitmaps/arrow_sm_left"),
+            ("footer_bitmap", "bitmaps/arrow_sm_right"), ("header_bounds", "7 -13 19 -7"),
+            ("footer_bounds", "7 208 19 214")], ['<on event="left_mouse" run="mouse spinner 1wide click"/>'])
+    return lines + _strings(f"{base}/var_aim_assist", ["ALLOWED", "BLOCK M+KB"]) + \
+        _strings(f"{base}/var_shield_effects", SHIELD_EFFECTS)
+
+
+def _opence_options() -> list:
+    """the gametype editor's OPENCE OPTIONS: its row, after the editor's own
+    (as they are laid out), and its screen, as the gametype's options' are
+    (_setup_option_screen), its spinners the gametype's (menu_functions.c's
+    gametype_options), its header its words (no picture of its own)"""
+    lines = _setup_option_screen(OPENCE_EDIT, "opence", OPENCE_ROWS)
+    lines = [line.replace("port setup options init", "mp profile init opence options")
+             .replace("port setup options save", "mp profile set opence options")
+             .replace(f'bitmap="{OPENCE_EDIT}/header_opence"',
+                      'type="text" text="OPENCE OPTIONS" font="ui\\large_ui" color="#FFFFFFFF" text_x="13" text_y="16"')
+             for line in lines]
+    lines += _widget(OPENCE_ITEM, [("type", "text"), ("left", 51), ("top", 309), ("width", 232), ("height", 32),
+                                   ("bitmap", "bitmaps/list_item_bkd"), ("text", "OPENCE OPTIONS"),
+                                   ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 5)],
+                     [f'<on event="a" open="{OPENCE_EDIT}/opence_screen"/>',
+                      f'<on event="start" open="{OPENCE_EDIT}/opence_screen"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>'])
+    return lines
 
 
 def _teamplay_options_extras() -> list:
@@ -1848,6 +2112,93 @@ def _map_kind() -> list:
     return lines
 
 
+def _news_screen() -> list:
+    """the news window: its title over a panel (bitmaps/controller_border)
+    of NEWS_ROWS lines of the notes, and under it the buttons that scroll
+    (the menus' scroll arrows, shown while there is more than the panel
+    holds) and close it (B as the console's picture of it: the menus'
+    %-codes); the title's and the lines' texts menu_functions.c's alone,
+    which makes them as long as it needs.
+    Up and down (the D-pad, the sticks, the mouse wheel) scroll a line, left
+    and right a page, B, Back or X again close it. And the main menu's hint
+    that X opens it (WIDGET_PATCHES)"""
+    base = NEWS
+    left, top = NEWS_PANEL[0] + 49, NEWS_PANEL[1] + 104
+    close = ['<on event="b" run="port news close"/>', '<on event="back" run="port news close"/>',
+             '<on event="x" run="port news close"/>']
+    scroll = [f'<on event="{event}" run="port news up"/>' for event in ("up", "stick_up", "right_stick_up")]
+    scroll += [f'<on event="{event}" run="port news down"/>' for event in ("down", "stick_down", "right_stick_down")]
+    scroll += ['<on event="left" run="port news page up"/>', '<on event="right" run="port news page down"/>']
+    lines = _widget(f"{base}/news_screen", [("width", 640), ("height", 480), ("bitmap", "bitmaps/gradient_big")],
+                    ['<data input="port news update"/>', '<on event="created" run="port news init"/>', *close,
+                     *scroll, f'<child widget="{base}/news_panel" x="{NEWS_PANEL[0]}" y="{NEWS_PANEL[1]}"/>',
+                     f'<child widget="{base}/news_title" x="{left}" y="{top - 34}"/>',
+                     *[f'<child widget="{base}/news_line" x="{left + 16}" y="{top + 12 + 18 * row}"/>'
+                       for row in range(NEWS_ROWS)],
+                     # (under the panel, the buttons left to right from a little
+                     # left of its middle: the up arrow, "Scroll", the down
+                     # arrow, B's picture and "Back"; widgets of their own,
+                     # which the menus' centring of a text with pictures in it
+                     # put apart; no picture of the D-pad is drawn in text, so
+                     # the menus' own scroll arrows. The arrows are the d-pad's
+                     # up and down to a tap or a click (a key's icon by their
+                     # names: ui_widget.c's ui_mouse_key_button), each further
+                     # than a key's label from "Scroll", so that it is neither's.
+                     # Their pictures sit high in their 16 texels: 7 down puts
+                     # their middles at the text's)
+                     f'<child widget="{base}/dpad_up_butn_news" x="{left + 164}" y="{top + 253 + 7}"/>',
+                     f'<child widget="{base}/news_scroll_text" x="{left + 198}" y="{top + 253}"/>',
+                     f'<child widget="{base}/dpad_down_butn_news" x="{left + 254}" y="{top + 253 + 7}"/>',
+                     # (Back's tap and click: B's, as the hint's is X's)
+                     f'<child widget="{base}/b_butn_news_back" x="{left + 300}" y="{top + 253}"/>',
+                     f'<child widget="{base}/news_back_text" x="{left + 300}" y="{top + 253}"/>'])
+    lines += _widget(f"{base}/news_panel", [("width", 640), ("height", 480), ("bitmap", "bitmaps/controller_border")],
+                     [])
+    lines += _widget(f"{base}/news_title", [("type", "text"), ("controller", 1), ("width", 507), ("height", 30),
+                                           ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/news_line", [("type", "text"), ("controller", 1), ("width", 475), ("height", 18),
+                                          ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"),
+                                          ("text_flags", "no_focus_test")], [])
+    for name in ("up", "down"):
+        lines += _widget(f"{base}/dpad_{name}_butn_news", [("width", 16), ("height", 16),
+                                                           ("bitmap", f"bitmaps/arrow_sm_{name}")], [])
+    for name, text, width in (("scroll", "Scroll", 48), ("back", "%b-button Back", 120)):
+        lines += _widget(f"{base}/news_{name}_text", [("type", "text"), ("controller", 1), ("width", width),
+                                                      ("height", 20), ("text", text), ("font", "ui\\small_ui"),
+                                                      ("color", "#FFFFFFFF"), ("text_flags", "no_focus_test")], [])
+    # (the hint's tap and click: a widget named as a screen key's icon is X's
+    # to the pointer, and the text beside it its label, ui_widget.c's
+    # ui_mouse_key_button; nothing of it drawn, the hint's own picture is)
+    lines += _widget(f"{base}/x_butn_news", [("width", 16), ("height", 20)], [])
+    lines += _widget(f"{base}/b_butn_news_back", [("width", 16), ("height", 20)], [])
+    lines += _widget(f"{base}/news_hint", [("type", "text"), ("controller", 1), ("width", 150), ("height", 20),
+                                          ("text", "%x-button NEWS"), ("font", "ui\\small_ui"),
+                                          ("color", "#FFCCCCCC"), ("text_flags", "no_focus_test")], [])
+    return lines
+
+
+def _invite_qr_screen() -> list:
+    """(the Switch's) Server Setup's invite link as a QR code, for a phone
+    to read: its own screen, opened by the invite row's A (menu_functions.c's
+    invite_copy), which only B closes; the code is drawn above its line of
+    text (menu_functions.c's link_qr_draw)"""
+    base = f"{MT}/server_settings/invite_qr"
+    lines = _widget(f"{base}/invite_qr_screen", [("width", 640), ("height", 480), ("flags", "pause_game"),
+                                                 ("bitmap", "bitmaps/gradient")],
+                    ['<on event="b" run="ss invite qr back"/>',
+                     f'<child widget="{base}/invite_qr_title"/>',
+                     f'<child widget="{base}/invite_qr_text"/>'])
+    lines += _widget(f"{base}/invite_qr_title", [("type", "text"), ("controller", 1), ("left", 35), ("top", 24),
+                                                 ("width", 570), ("height", 30), ("text", "INVITE LINK"),
+                                                 ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/invite_qr_text", [("type", "text"), ("controller", 1), ("left", 40), ("top", 410),
+                                                ("width", 560), ("height", 18),
+                                                ("text", "Scan it with your phone for the invite link. B: back"),
+                                                ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"), ("align", "center"),
+                                                ("text_flags", "no_focus_test")], [])
+    return lines
+
+
 def multiplayer_files() -> dict:
     """the port's multiplayer widgets: the browser's additions, the server
     settings, the lobby"""
@@ -1855,13 +2206,17 @@ def multiplayer_files() -> dict:
             "<!-- The port's multiplayer screens, in the PC version's style (tools/port_settings.py) -->", "<menus>"]
     return {
         f"{MT}/join_game".replace("/", ".") + ".port.xml": head + _join_game_extras() + ["</menus>", ""],
-        f"{MT}/server_settings".replace("/", ".") + ".xml": head + _server_settings() + ["</menus>", ""],
+        f"{MT}/server_settings".replace("/", ".") + ".xml": head + _server_settings() + _invite_qr_screen() +
+        ["</menus>", ""],
         f"{MT}/lobby".replace("/", ".") + ".xml": head + _lobby() + ["</menus>", ""],
         f"{MT}/coop".replace("/", ".") + ".xml": head + _coop() + ["</menus>", ""],
         "main_menu/new_select".replace("/", ".") + ".port.xml": head + _map_kind() + ["</menus>", ""],
+        # (and the main menu's news)
+        NEWS.replace("/", ".") + ".xml": head + _news_screen() + ["</menus>", ""],
         "main_menu/settings_select/multiplayer_setup/item_options_edit".replace("/", ".") + ".port.xml": head + _item_options_extras() + ["</menus>", ""],
         PLAYER_EDIT.replace("/", ".") + ".port.xml": head + _player_options_extras() + ["</menus>", ""],
         TEAMPLAY_EDIT.replace("/", ".") + ".port.xml": head + _teamplay_options_extras() + ["</menus>", ""],
+        OPENCE_EDIT.replace("/", ".") + ".port.xml": head + _opence_options() + ["</menus>", ""],
         MODS.replace("/", ".") + ".xml": [head[0], "<!-- The port's Mods screen, in the PC version's style "
                                           "(tools/port_settings.py) -->", head[2]] + _mods() + ["</menus>", ""],
     }

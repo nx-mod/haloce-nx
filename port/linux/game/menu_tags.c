@@ -360,7 +360,7 @@ static char const *const port_function_names[] =
 	"color picker menu initialize", "color picker menu dispose", "color picker select color",
 	"player profile list initialize", "player profile list dispose", "request del player profile",
 	"final del player profile",
-	"ss copy invite", "join controller to mp game", "mp level list initialize", "mp level list dispose",
+	"ss copy invite", "ss invite qr back", "join controller to mp game", "mp level list initialize", "mp level list dispose",
 	"mp level select", "mp profiles list initialize", "mp profiles list dispose", "mp profile set for game",
 	"port lobby preview join",
 	"port setup edit",
@@ -380,6 +380,8 @@ static char const *const port_function_names[] =
 	"mp profile init indicator opts", "mp profile set ctf rules", "mp profile set koth rules",
 	"mp profile set slayer rules", "mp profile set oddball rules", "mp profile set racing rules",
 	"mp profile set player options", "mp profile set item options", "mp profile set indicator opts",
+	/* (the gametype editor's OPENCE OPTIONS: OpenCE's gametypes, game_modes.c) */
+	"mp profile init opence options", "mp profile set opence options",
 	/* (Settings' OK: the Xbox's fails when the profile has no changes, the
 	settings' screens having written theirs to config.toml) */
 	"player profile save changes",
@@ -393,6 +395,9 @@ static char const *const port_function_names[] =
 	/* (the main menu's Mods: menu_functions.c) */
 	"port mods init", "port mods close", "port mods toggle", "port mods move up", "port mods move down",
 	"port mods save",
+	/* (the main menu's news: menu_functions.c) */
+	"port news init", "port news close", "port news up", "port news down", "port news page up",
+	"port news page down",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -420,6 +425,10 @@ static char const *const port_game_data_input_names[] =
 	"port mods update",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
+	/* (the gametype editor's description, with OPENCE OPTIONS' row) */
+	"port playlist edit desc",
+	/* (the main menu's news) */
+	"port news update",
 };
 
 static struct

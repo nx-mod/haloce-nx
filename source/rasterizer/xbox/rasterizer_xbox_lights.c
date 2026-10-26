@@ -78,6 +78,7 @@ symbols in this file:
 #include "math/real_math.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "main/main.h"
 
 #include <math.h>
 
@@ -151,6 +152,22 @@ static short rasterizer_sun_glow_convolve(
 /* ---------- globals */
 
 extern struct pixel_shader_definition pixel_shader;
+
+/* port: the glow deferred to the frame's end (rasterizer_sun_glow_draw, rasterizer_sun_glow_frame_end): what the
+frame's glow was drawn with, to make its mask, copy and blur at the frame's end, and the blurred target that made,
+which the next frame's glow is drawn from (valid: made last frame) */
+static struct
+{
+	boolean pending, valid;
+	real vertex_constants[5][4];
+	real_rectangle2d bounds, screen_bounds;
+	real depth;
+	short target;
+} sun_glow_deferred;
+
+static void rasterizer_sun_glow_mask(
+	real_rectangle2d const *bounds,
+	real depth);
 
 /* ---------- public code */
 
@@ -267,164 +284,25 @@ void rasterizer_sun_glow_draw(
 			screen_bounds.x1 > (real)global_window_parameters.camera.viewport_bounds.x0 &&
 			screen_bounds.y1 > (real)global_window_parameters.camera.viewport_bounds.y0)
 		{
-			rasterizer_set_vertex_shader_permutation(0x38, 6, FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_CULLMODE,
-				D3DCULL_CCW);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_COLORWRITEENABLE,
-				D3DCOLORWRITEENABLE_ALPHA);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ALPHABLENDENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ALPHATESTENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZBIAS,
-				0);
-
-			csmemset(&pixel_shader, 0, sizeof(pixel_shader));
-			pixel_shader.combiner_count = 1;
-			pixel_shader.final_combiner_constant_0 = 0;
-			pixel_shader.final_combiner_inputs_efg = 0x1100;
-			rasterizer_set_pixel_shader(&pixel_shader);
-
-			IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
-			IDirect3DDevice8_SetVertexData2f(
-				global_d3d_device,
-				0,
-				bounds.x0,
-				bounds.y0);
-			IDirect3DDevice8_SetVertexData2f(
-				global_d3d_device,
-				0,
-				bounds.x1,
-				bounds.y0);
-			IDirect3DDevice8_SetVertexData2f(
-				global_d3d_device,
-				0,
-				bounds.x1,
-				bounds.y1);
-			IDirect3DDevice8_SetVertexData2f(
-				global_d3d_device,
-				0,
-				bounds.x0,
-				bounds.y1);
-			IDirect3DDevice8_End(global_d3d_device);
-
-			rasterizer_set_vertex_shader_permutation(0x38, 6, FALSE);
-			rasterizer_set_texture_direct(0, global_rasterizer_data->glow.index, 0);
-			IDirect3DDevice8_SetTextureStageState(
-				global_d3d_device,
-				0,
-				D3DTSS_ADDRESSU,
-				D3DTADDRESS_CLAMP);
-			IDirect3DDevice8_SetTextureStageState(
-				global_d3d_device,
-				0,
-				D3DTSS_ADDRESSV,
-				D3DTADDRESS_CLAMP);
-			IDirect3DDevice8_SetTextureStageState(
-				global_d3d_device,
-				0,
-				D3DTSS_MAGFILTER,
-				D3DTEXF_LINEAR);
-			IDirect3DDevice8_SetTextureStageState(
-				global_d3d_device,
-				0,
-				D3DTSS_MINFILTER,
-				D3DTEXF_LINEAR);
-			IDirect3DDevice8_SetTextureStageState(
-				global_d3d_device,
-				0,
-				D3DTSS_MIPFILTER,
-				D3DTEXF_LINEAR);
-
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_CULLMODE,
-				D3DCULL_CCW);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_COLORWRITEENABLE,
-				D3DCOLORWRITEENABLE_ALPHA);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ALPHABLENDENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ALPHATESTENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZENABLE,
-				TRUE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZFUNC,
-				D3DCMP_LESSEQUAL);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZWRITEENABLE,
-				FALSE);
-			IDirect3DDevice8_SetRenderState(
-				global_d3d_device,
-				D3DRS_ZBIAS,
-				0);
-
-			csmemset(&pixel_shader, 0, sizeof(pixel_shader));
-			pixel_shader.texture_modes = 1;
-			pixel_shader.combiner_count = 1;
-			pixel_shader.alpha_inputs[0] = 0x18200000;
-			pixel_shader.alpha_outputs[0] = 0x200C0;
-			pixel_shader.final_combiner_inputs_efg = 0x1C00;
-			rasterizer_set_pixel_shader(&pixel_shader);
-
-			IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
-			IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 0);
-			IDirect3DDevice8_SetVertexData4f(
-				global_d3d_device,
-				0,
-				bounds.x0,
-				bounds.y0,
-				center.z,
-				1.0f);
-			IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 1, 0);
-			IDirect3DDevice8_SetVertexData4f(
-				global_d3d_device,
-				0,
-				bounds.x1,
-				bounds.y0,
-				center.z,
-				1.0f);
-			IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 1, 1);
-			IDirect3DDevice8_SetVertexData4f(
-				global_d3d_device,
-				0,
-				bounds.x1,
-				bounds.y1,
-				center.z,
-				1.0f);
-			IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 1);
-			IDirect3DDevice8_SetVertexData4f(
-				global_d3d_device,
-				0,
-				bounds.x0,
-				bounds.y1,
-				center.z,
-				1.0f);
-			IDirect3DDevice8_End(global_d3d_device);
+			/* port: deferred (halo_render_defer_sun_glow), the glow drawn now is the one the frame before made, at its
+			end (rasterizer_sun_glow_frame_end): its mask, copy and blur need the screen read in the middle of the frame,
+			which a phone's GPU pays for by storing the screen out of its tile memory and loading it back, 2 to 3 ms a
+			frame on an Adreno 840 at 2464x1848 with 4x MSAA. What it needs at the frame's end is kept. One window only:
+			split screen draws each as the game does */
+			if (halo_render_defer_sun_glow() && main_get_window_count() == 1 && !sun_glow_deferred.pending)
+			{
+				csmemcpy(sun_glow_deferred.vertex_constants, vertex_constants, sizeof(vertex_constants));
+				sun_glow_deferred.bounds = bounds;
+				sun_glow_deferred.screen_bounds = screen_bounds;
+				sun_glow_deferred.depth = center.z;
+				sun_glow_deferred.pending = TRUE;
+				if (!sun_glow_deferred.valid)
+					return;
+				success = TRUE;
+				blurred_target = sun_glow_deferred.target;
+				goto draw_rays;
+			}
+			rasterizer_sun_glow_mask(&bounds, center.z);
 
 			success = TRUE;
 			rasterizer_sun_glow_copy_source(_rasterizer_target_sun_glow_primary, &screen_bounds);
@@ -434,6 +312,7 @@ void rasterizer_sun_glow_draw(
 				_rasterizer_target_sun_glow_secondary,
 				SUN_GLOW_CONVOLVE_PASS_COUNT);
 
+		draw_rays:
 			rasterizer_set_vertex_shader_permutation(0x38, 6, FALSE);
 			rasterizer_set_target_as_texture(0, blurred_target, FALSE);
 			IDirect3DDevice8_SetTextureStageState(
@@ -680,7 +559,200 @@ void rasterizer_sun_glow_draw(
 	return;
 }
 
+/* port: the frame's end, its window's last (render.c, "debug and end"): the glow the frame drew from the frame
+before's is made for the next, its mask against the frame's finished depth, then copied and blurred, where the screen's
+rendering ends anyway; a frame with no glow leaves none for the next */
+void rasterizer_sun_glow_frame_end(
+	void)
+{
+	if (!sun_glow_deferred.pending)
+	{
+		sun_glow_deferred.valid = FALSE;
+		return;
+	}
+	sun_glow_deferred.pending = FALSE;
+	IDirect3DDevice8_SetVertexShaderConstant(global_d3d_device, -68, sun_glow_deferred.vertex_constants, 5);
+	rasterizer_sun_glow_mask(&sun_glow_deferred.bounds, sun_glow_deferred.depth);
+	rasterizer_sun_glow_copy_source(_rasterizer_target_sun_glow_primary, &sun_glow_deferred.screen_bounds);
+	rasterizer_sun_glow_copy_source(_rasterizer_target_sun_glow_secondary, &sun_glow_deferred.screen_bounds);
+	sun_glow_deferred.target = rasterizer_sun_glow_convolve(
+		_rasterizer_target_sun_glow_primary,
+		_rasterizer_target_sun_glow_secondary,
+		SUN_GLOW_CONVOLVE_PASS_COUNT);
+	sun_glow_deferred.valid = TRUE;
+
+	return;
+}
+
 /* ---------- private code */
+
+/* the glow's mask: the alpha channel of the screen in bounds cleared, then the glow's shape drawn into it where nothing
+is in front of it (depth, the sun's); copied and blurred (rasterizer_sun_glow_copy_source, _convolve) it is the glow.
+(port: a function of its own, for the glow made at the frame's end: rasterizer_sun_glow_frame_end) */
+static void rasterizer_sun_glow_mask(
+	real_rectangle2d const *bounds,
+	real depth)
+{
+	rasterizer_set_vertex_shader_permutation(0x38, 6, FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_CULLMODE,
+		D3DCULL_CCW);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_COLORWRITEENABLE,
+		D3DCOLORWRITEENABLE_ALPHA);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ALPHABLENDENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ALPHATESTENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZBIAS,
+		0);
+
+	csmemset(&pixel_shader, 0, sizeof(pixel_shader));
+	pixel_shader.combiner_count = 1;
+	pixel_shader.final_combiner_constant_0 = 0;
+	pixel_shader.final_combiner_inputs_efg = 0x1100;
+	rasterizer_set_pixel_shader(&pixel_shader);
+
+	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
+	IDirect3DDevice8_SetVertexData2f(
+		global_d3d_device,
+		0,
+		bounds->x0,
+		bounds->y0);
+	IDirect3DDevice8_SetVertexData2f(
+		global_d3d_device,
+		0,
+		bounds->x1,
+		bounds->y0);
+	IDirect3DDevice8_SetVertexData2f(
+		global_d3d_device,
+		0,
+		bounds->x1,
+		bounds->y1);
+	IDirect3DDevice8_SetVertexData2f(
+		global_d3d_device,
+		0,
+		bounds->x0,
+		bounds->y1);
+	IDirect3DDevice8_End(global_d3d_device);
+
+	rasterizer_set_vertex_shader_permutation(0x38, 6, FALSE);
+	rasterizer_set_texture_direct(0, global_rasterizer_data->glow.index, 0);
+	IDirect3DDevice8_SetTextureStageState(
+		global_d3d_device,
+		0,
+		D3DTSS_ADDRESSU,
+		D3DTADDRESS_CLAMP);
+	IDirect3DDevice8_SetTextureStageState(
+		global_d3d_device,
+		0,
+		D3DTSS_ADDRESSV,
+		D3DTADDRESS_CLAMP);
+	IDirect3DDevice8_SetTextureStageState(
+		global_d3d_device,
+		0,
+		D3DTSS_MAGFILTER,
+		D3DTEXF_LINEAR);
+	IDirect3DDevice8_SetTextureStageState(
+		global_d3d_device,
+		0,
+		D3DTSS_MINFILTER,
+		D3DTEXF_LINEAR);
+	IDirect3DDevice8_SetTextureStageState(
+		global_d3d_device,
+		0,
+		D3DTSS_MIPFILTER,
+		D3DTEXF_LINEAR);
+
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_CULLMODE,
+		D3DCULL_CCW);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_COLORWRITEENABLE,
+		D3DCOLORWRITEENABLE_ALPHA);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ALPHABLENDENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ALPHATESTENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZENABLE,
+		TRUE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZFUNC,
+		D3DCMP_LESSEQUAL);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZWRITEENABLE,
+		FALSE);
+	IDirect3DDevice8_SetRenderState(
+		global_d3d_device,
+		D3DRS_ZBIAS,
+		0);
+
+	csmemset(&pixel_shader, 0, sizeof(pixel_shader));
+	pixel_shader.texture_modes = 1;
+	pixel_shader.combiner_count = 1;
+	pixel_shader.alpha_inputs[0] = 0x18200000;
+	pixel_shader.alpha_outputs[0] = 0x200C0;
+	pixel_shader.final_combiner_inputs_efg = 0x1C00;
+	rasterizer_set_pixel_shader(&pixel_shader);
+
+	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 0);
+	IDirect3DDevice8_SetVertexData4f(
+		global_d3d_device,
+		0,
+		bounds->x0,
+		bounds->y0,
+		depth,
+		1.0f);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 1, 0);
+	IDirect3DDevice8_SetVertexData4f(
+		global_d3d_device,
+		0,
+		bounds->x1,
+		bounds->y0,
+		depth,
+		1.0f);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 1, 1);
+	IDirect3DDevice8_SetVertexData4f(
+		global_d3d_device,
+		0,
+		bounds->x1,
+		bounds->y1,
+		depth,
+		1.0f);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 1);
+	IDirect3DDevice8_SetVertexData4f(
+		global_d3d_device,
+		0,
+		bounds->x0,
+		bounds->y1,
+		depth,
+		1.0f);
+	IDirect3DDevice8_End(global_d3d_device);
+}
+
 
 static boolean rasterizer_project_billboard(
 	real_point3d const *point,

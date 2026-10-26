@@ -748,9 +748,11 @@ boolean update_client_dequeue(
 	if (game_connection() == _game_connection_network_client)
 		return update_client_dequeue_distributed(actions);
 	update = update_client_get_update(update_client_globals.next_update_number_to_dequeue);
+	/* port: a dedicated server's game goes on with nobody in it, its update
+	holding no action (port/linux/game/server_director.c ends it) */
 	if (!update ||
 		update_client_globals.next_update_number_to_dequeue>update_client_globals.latest_update_number_received ||
-		update->update.action_count<=0 ||
+		(update->update.action_count<=0 && !(halo_server_mode() && update->update.action_count == 0)) ||
 		update->update.action_count>MAXIMUM_NUMBER_OF_PLAYERS)
 	{
 		return FALSE;
@@ -823,8 +825,9 @@ long update_client_get_maximum_possible_server_time(
 	{
 		struct update *update = update_client_get_update(update_number);
 
+		/* port: as update_client_dequeue, a dedicated server's empty game */
 		if (!update ||
-			update->update.action_count<=0 ||
+			(update->update.action_count<=0 && !(halo_server_mode() && update->update.action_count == 0)) ||
 			update->update.action_count>MAXIMUM_NUMBER_OF_PLAYERS)
 		{
 			break;
@@ -1139,6 +1142,24 @@ void update_server_handle_distributed_input(
 	update_server_distributed_inputs[absolute_index].received_time =
 		game_time_initialized() ? game_time_get() : 0;
 	queue->current_action = *action;
+}
+
+/* port: a bot's action this tick (port/linux/game/bots.c), which the host's
+tick runs in place of what the bot's queue held, written into the update the
+tick ran: the distributed netcode relays each player's input from there to
+the clients (network_distributed.c), which drive the bot with it */
+void update_server_note_bot_action(
+	short player_index,
+	struct player_action const *action)
+{
+	long update_number = update_server_ticked_update_number();
+	struct update *update = update_number != NONE ? update_server_get_update(update_number) : NULL;
+
+	if (update && update->update_number == update_number && player_index >= 0 &&
+		player_index < (short)update->update.action_count)
+	{
+		update->update.actions[player_index] = *action;
+	}
 }
 
 long update_server_ticked_update_number(

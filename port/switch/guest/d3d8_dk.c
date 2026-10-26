@@ -482,6 +482,16 @@ unsigned char halo_screen_fast_blur(void)
 
 /* the part of a frame the game is about to draw, for the host's record of
 the commands it ran (DK_COMMAND_MARKER) */
+int halo_render_defer_sun_glow(void)
+{
+	return 0;
+}
+
+int halo_render_defer_water(void)
+{
+	return 0;
+}
+
 void halo_render_marker(char const *name)
 {
 	struct dk_command_marker *command = stream_command(DK_COMMAND_MARKER, sizeof(*command));
@@ -1034,6 +1044,13 @@ struct xgpu_render_target *xgpu_render_target_find(unsigned long data)
 calls, which under deko3d have no context and do nothing */
 void xgpu_gl_state_invalidate(void)
 {
+}
+
+/* (the dedicated server's question, whose renderer may be none: this one is
+always up, and those callers' GL does nothing here, as before they asked) */
+int xgpu_gl_ready(void)
+{
+	return 1;
 }
 
 /* ---------- device creation */
@@ -3486,6 +3503,17 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	else
 	{
+		/* (port: the vertical blanks that retire the flips counted, started
+		here if the game has not yet: the boot's loading screen presents
+		before it sets its callback or waits for one, and with
+		display.interpolation off its third frame waited for ever, a black
+		screen) */
+		if (!vertical_blank_thread_started)
+		{
+			pthread_mutex_unlock(&vertical_blank_lock);
+			vertical_blank_start();
+			pthread_mutex_lock(&vertical_blank_lock);
+		}
 		while (pending_flips >= 2)
 			pthread_cond_wait(&vertical_blank_condition, &vertical_blank_lock);
 		pending_flips++;

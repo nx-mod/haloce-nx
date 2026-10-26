@@ -15,7 +15,11 @@ frame chain into a preallocated ring (nothing in the handler allocates, locks
 or logs), and a thread appends the ring to profile.bin in the data folder every
 ten seconds, with each guest thread's CPU time (/proc/self/task/<tid>/schedstat)
 once a second, the threads' names, and /proc/self/maps at the start of the file
-so that addresses outside the guest image can be named by library.
+so that addresses outside the guest image can be named by library. Each frame
+shown (host_debug_profile_frame, from the Vulkan renderer's present) is kept too,
+as the number of samples taken by its end and its length, so that a slow
+frame's samples can be told from the others'. debug.profile_run (host_main.c)
+writes it into the run's profile folder instead of the data folder.
 tools/android_profile_report.py reads it (port/android/VULKAN.md, step 6).
 */
 
@@ -228,7 +232,7 @@ struct profile_file_header
 	uint32_t hz, sample_size, maps_size, reserved;
 };
 
-enum { PROFILE_BLOCK_SAMPLES = 1, PROFILE_BLOCK_CPU = 2, PROFILE_BLOCK_NAMES = 3 };
+enum { PROFILE_BLOCK_SAMPLES = 1, PROFILE_BLOCK_CPU = 2, PROFILE_BLOCK_NAMES = 3, PROFILE_BLOCK_FRAMES = 4 };
 
 struct profile_block
 {
@@ -246,6 +250,36 @@ struct profile_name
 	uint32_t tid, reserved;
 	char name[16];
 };
+
+/* a frame shown: the samples taken by its end (the ring's head) and its length, in microseconds */
+struct profile_frame
+{
+	uint64_t samples;
+	uint32_t microseconds, reserved;
+};
+
+/* the frames since the last flush (the renderer's thread adds, the profiler's takes) */
+#define PROFILE_FRAME_ROOM 4096
+static struct profile_frame profile_frames[PROFILE_FRAME_ROOM];
+static uint32_t profile_frame_count;
+static pthread_mutex_t profile_frames_lock = PTHREAD_MUTEX_INITIALIZER;
+static int profile_running;
+
+void host_debug_profile_frame(uint64_t nanoseconds)
+{
+	if (!profile_running)
+		return;
+	pthread_mutex_lock(&profile_frames_lock);
+	if (profile_frame_count < PROFILE_FRAME_ROOM)
+	{
+		struct profile_frame *frame = &profile_frames[profile_frame_count++];
+
+		frame->samples = __atomic_load_n(&profile_head, __ATOMIC_ACQUIRE);
+		frame->microseconds = nanoseconds / 1000 > 0xffffffffull ? 0xffffffffu : (uint32_t)(nanoseconds / 1000);
+		frame->reserved = 0;
+	}
+	pthread_mutex_unlock(&profile_frames_lock);
+}
 
 static int profile_hz;
 static char profile_path[640];
@@ -333,6 +367,22 @@ static void profile_flush(FILE *file, uint64_t *tail, const pid_t *threads, stru
 		name_count++;
 	}
 	profile_write_block(file, PROFILE_BLOCK_NAMES, name_count, names, sizeof(names[0]));
+	{
+		struct profile_frame *frames = malloc(sizeof(profile_frames));
+		uint32_t frame_count = 0;
+
+		if (frames)
+		{
+			pthread_mutex_lock(&profile_frames_lock);
+			frame_count = profile_frame_count;
+			memcpy(frames, profile_frames, (size_t)frame_count * sizeof(*frames));
+			profile_frame_count = 0;
+			pthread_mutex_unlock(&profile_frames_lock);
+			if (frame_count)
+				profile_write_block(file, PROFILE_BLOCK_FRAMES, frame_count, frames, sizeof(*frames));
+			free(frames);
+		}
+	}
 	fflush(file);
 	host_logf(HOST_LOG_INFO, "profile: %u samples written (%llu dropped so far)", count, (unsigned long long)profile_dropped);
 }
@@ -473,6 +523,7 @@ void host_debug_start_profiler(int hz, const char *data_root)
 	}
 	profile_capacity = capacity;
 	snprintf(profile_path, sizeof(profile_path), "%s/profile.bin", data_root);
+	profile_running = 1;
 	install_sample_handler();
 	if (pthread_create(&thread, NULL, profiler, NULL) == 0)
 		pthread_detach(thread);

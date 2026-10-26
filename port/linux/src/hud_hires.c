@@ -92,6 +92,58 @@ int hud_hires_asset_custom_edition(long asset)
 	return asset >= 0 && asset < hud_hires_asset_count() && hud_hires_embedded[asset].custom_edition;
 }
 
+int hud_hires_asset_ce_only(long asset)
+{
+	return asset >= 0 && asset < hud_hires_asset_count() && hud_hires_embedded[asset].ce_only;
+}
+
+long hud_hires_ce_stock_find(char const *tag, long bitmap)
+{
+	unsigned int index;
+	for (index = 0; index < hud_hires_ce_stock_count; index++)
+		if (hud_hires_ce_stock[index].bitmap == bitmap && !strcmp(tag, hud_hires_ce_stock[index].tag))
+			return (long)index;
+	return -1;
+}
+
+long hud_hires_ce_stock_count_get(void) { return hud_hires_ce_stock_count; }
+char const *hud_hires_ce_stock_tag(long index) { return hud_hires_ce_stock[index].tag; }
+long hud_hires_ce_stock_bitmap(long index) { return hud_hires_ce_stock[index].bitmap; }
+
+int hud_hires_ce_stock_matches(long index, unsigned long address, long width, long height,
+	unsigned long size)
+{
+	const struct hud_hires_ce_stock *stock;
+	if (index < 0 || (unsigned long)index >= hud_hires_ce_stock_count || !address)
+		return 0;
+	stock = &hud_hires_ce_stock[index];
+	return width == stock->width && height == stock->height && size == stock->size &&
+		crc32(0L, (const Bytef *)address, (uInt)size) == stock->crc;
+}
+
+/* whether the asset's picture is right where it is drawn now: in a game (gameplay), or in the menus, whose buttons
+the Switch can swap (controls.nintendo_menu_buttons; xinput_sdl.c) */
+int hud_hires_asset_applies(long asset, int gameplay)
+{
+	unsigned int contexts;
+	unsigned int now = HUD_HIRES_CONTEXT_GAME;
+
+	if (asset < 0 || asset >= hud_hires_asset_count())
+		return 0;
+	contexts = hud_hires_embedded[asset].contexts;
+	if (!contexts)
+		return 1;
+	if (!gameplay)
+	{
+#ifdef HALO_SWITCH
+		now = config_boolean("controls.nintendo_menu_buttons") ? HUD_HIRES_CONTEXT_MENUS_SWAPPED : HUD_HIRES_CONTEXT_MENUS;
+#else
+		now = HUD_HIRES_CONTEXT_MENUS;
+#endif
+	}
+	return (contexts & now) != 0;
+}
+
 char const *hud_hires_asset_tag(long asset)
 {
 	return hud_hires_embedded[asset].tag;
@@ -160,7 +212,15 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 	/* (a Custom Edition map's stock HUD bitmap, laid out as this texture's,
 	has its own pixels) */
 	if (hud_hires_asset_stock_custom_edition(address, (long)width, (long)height, asset))
-		return asset;
+	{
+		const struct hud_hires_embedded *embedded = &hud_hires_embedded[asset];
+
+		/* Resource maps can be modified too. Match the stock pixels after
+		the CE loader has put them in hardware order, not just their name. */
+		return width == embedded->ce_width && height == embedded->ce_height &&
+			level0_size == embedded->ce_size &&
+			crc32(0L, (const Bytef *)address, (uInt)level0_size) == embedded->ce_crc ? asset : -1;
+	}
 	if (crc32(0L, (const Bytef *)address, (uInt)level0_size) != hud_hires_embedded[asset].crc)
 	{
 		if (!textures[asset].other_pixels_logged)
@@ -323,12 +383,13 @@ static void upscale_weights(float t, float *weights)
 	weights[3] = -0.5f * square + 0.5f * cube;
 }
 
-unsigned char *hud_hires_upscale_pixels(const unsigned char *bgra, unsigned long width, unsigned long height)
+static unsigned char *upscale_pixels(const unsigned char *bgra, unsigned long width, unsigned long height,
+	unsigned long maximum)
 {
 	unsigned char *out;
 	unsigned long x, y, channel;
 
-	if (!bgra || !width || !height || width > 256 || height > 256)
+	if (!bgra || !width || !height || width > maximum || height > maximum)
 		return NULL;
 	out = malloc(width * height * 16 * 4);
 	if (!out)
@@ -374,6 +435,11 @@ unsigned char *hud_hires_upscale_pixels(const unsigned char *bgra, unsigned long
 		}
 	}
 	return out;
+}
+
+unsigned char *hud_hires_upscale_pixels(const unsigned char *bgra, unsigned long width, unsigned long height)
+{
+	return upscale_pixels(bgra, width, height, 256);
 }
 
 static unsigned char *png_decode(const unsigned char *data, unsigned long size,
@@ -427,10 +493,13 @@ static void upscale_outline(unsigned char *pixels, const unsigned char *bgra,
 unsigned int hud_hires_upscale_texture(const unsigned char *bgra, unsigned long width,
 	unsigned long height, long kind, unsigned long *levels)
 {
-	unsigned char *pixels = hud_hires_upscale_pixels(bgra, width, height);
+	unsigned char *pixels;
 	unsigned long largest;
 	GLuint texture;
 
+	if (!xgpu_gl_ready())
+		return 0;
+	pixels = kind == 4 ? upscale_pixels(bgra, width, height, 512) : hud_hires_upscale_pixels(bgra, width, height);
 	if (!pixels)
 		return 0;
 	upscale_outline(pixels, bgra, width, height, kind);
@@ -582,8 +651,12 @@ static unsigned int png_pixels_texture(unsigned char *pixels, unsigned long widt
 	unsigned long largest;
 	GLuint texture;
 
-	if (!pixels)
+	/* (no OpenGL: a null renderer's postgame scoreboard asks for its icons) */
+	if (!pixels || !xgpu_gl_ready())
+	{
+		free(pixels);
 		return 0;
+	}
 	*levels = 1;
 	for (largest = width > height ? width : height; largest > 1; largest >>= 1)
 		(*levels)++;
@@ -619,7 +692,7 @@ unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 {
 	const struct hud_hires_embedded *embedded;
 
-	if (asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed)
+	if (asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed || !xgpu_gl_ready())
 		return 0;
 	if (textures[asset].texture)
 	{
@@ -706,11 +779,28 @@ static void *decode_thread_main(void *unused)
 }
 #endif
 
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* Android's Vulkan renderer has its sheets decoded by the host as a map loads (port/android/guest/xbox_textures_vk.c,
+port/android/host/host_vk_hud.c), and defines these; the OpenGL ES renderer's image, sharing this file, decodes each
+when first drawn, as before, and has these do nothing */
+void __attribute__((weak)) textures_hud_prepare(const long *assets, long count)
+{
+	(void)assets;
+	(void)count;
+}
+
+void __attribute__((weak)) textures_hud_forget(void)
+{
+}
+#endif
+
 void hud_hires_map_unloaded(void)
 {
 #ifdef HALO_SWITCH
 	/* (the host's sheets decoded for the map and not drawn) */
 	dk_hud_forget();
+#elif defined(HALO_ANDROID)
+	textures_hud_forget();
 #endif
 #ifdef HUD_HIRES_DECODE_AHEAD
 	long asset;
@@ -729,7 +819,7 @@ void hud_hires_map_unloaded(void)
 #endif
 }
 
-#if defined(HALO_SWITCH) && !defined(HUD_HIRES_DECODE_AHEAD)
+#if (defined(HALO_SWITCH) || defined(HALO_ANDROID)) && !defined(HUD_HIRES_DECODE_AHEAD)
 static long assets_queued[MAXIMUM_TEXTURES];
 #endif
 
@@ -784,6 +874,20 @@ void hud_hires_map_loaded(const long *assets, long count)
 			assets_queued[queued++] = assets[index];
 	}
 	dk_hud_prepare(assets_queued, queued);
+#elif defined(HALO_ANDROID)
+	/* (the Vulkan renderer's host decodes them: textures_hud_prepare. The titles' are decoded when first drawn) */
+	long index, queued = 0;
+
+	textures_hud_forget();
+	if (!config_boolean("display.high_res_hud"))
+		return;
+	for (index = 0; index < count; index++)
+	{
+		if (assets[index] >= 0 && assets[index] < hud_hires_asset_count() &&
+			!hud_hires_embedded[assets[index]].title)
+			assets_queued[queued++] = assets[index];
+	}
+	textures_hud_prepare(assets_queued, queued);
 #else
 	(void)assets;
 	(void)count;

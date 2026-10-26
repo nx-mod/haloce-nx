@@ -248,6 +248,15 @@ void host_debug_start_sampler(const char *setting);
 /* config.toml's debug.profile_hz: samples of every guest thread a second, into
 profile.bin in data_root; 0 does nothing */
 void host_debug_start_profiler(int hz, const char *data_root);
+/* a frame shown, `nanoseconds` after the last (the Vulkan renderer's present: host_vk_profile.c), for the profile's
+slow frames; nothing unless the profiler runs */
+void host_debug_profile_frame(uint64_t nanoseconds);
+/* the run's profile folder, for the Vulkan renderer's gpu.txt (host_vk_profile.c); empty when no profile is
+recorded (debug.profile_run: host_main.c) */
+extern char host_vk_profile_folder[512];
+extern int host_vk_profile_split;
+/* debug.original_multisample: images of samples rather than VK_EXT_multisampled_render_to_single_sampled */
+extern int host_vk_original_multisample;
 
 /* ---------- the Vulkan probe (host_vk_probe.c; port/android/VULKAN.md, phase 0) */
 
@@ -370,6 +379,20 @@ struct host_message_box
 };
 
 typedef char host_message_box_size_check[sizeof(struct host_message_box) == 92 ? 1 : -1];
+
+/* host_https_get's buffers' sizes and its answer (host_https.c), the guest's
+layout (port/android/guest/runtime/guest_host.h) */
+struct host_https_sizes
+{
+	int headers_size;
+	int body_capacity;
+	int error_size;
+	/* the answer: its status, and how much of the body came */
+	int status;
+	int body_size;
+};
+typedef char host_https_sizes_size_check[sizeof(struct host_https_sizes) == 20 ? 1 : -1];
+int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes);
 
 void *host_gl_resolve(const char *name);
 

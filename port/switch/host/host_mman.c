@@ -619,6 +619,59 @@ static void log_heap_use(size_t length)
 		length / 1024, (double)used / 1048576.0, (double)total / 1048576.0);
 }
 
+/* The memory the process has and has used, for the log: what a cache outside
+the Xbox window (the host's own memory) would have to fit in. The process's
+own view (svcGetInfo: its total, which its heap and mappings come out of,
+and what of it is used), and the application pool's (its resource limit,
+which the console's other application memory counts against too): how much
+is in use, the most there has been, and the ceiling. `when` says at what
+point of the run. */
+/* (libnx's heap, which takes all the application's memory there is at the
+start: everything the process maps or allocates comes out of it, so what is
+free is told by the C library's allocator, not the system) */
+extern char *fake_heap_start;
+extern char *fake_heap_end;
+
+void host_memory_report(const char *when)
+{
+	u64 used = 0, total = 0;
+	Handle limit = INVALID_HANDLE;
+	struct mallinfo heap = mallinfo();
+	size_t heap_size = (size_t)(fake_heap_end - fake_heap_start);
+	size_t untouched = heap_size > heap.arena ? heap_size - heap.arena : 0;
+
+	host_logf(HOST_LOG_INFO, "memory (%s): the heap has %.1f MB in use, %.1f MB free (%.1f MB free in what it has "
+		"handed out, %.1f MB never handed out), of %.1f MB", when, (double)heap.uordblks / 1048576.0,
+		(double)(heap.fordblks + untouched) / 1048576.0, (double)heap.fordblks / 1048576.0,
+		(double)untouched / 1048576.0, (double)heap_size / 1048576.0);
+
+	svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+	svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+	host_logf(HOST_LOG_INFO, "memory (%s): the process uses %.1f MB of %.1f MB, %.1f MB free", when,
+		(double)used / 1048576.0, (double)total / 1048576.0,
+		total > used ? (double)(total - used) / 1048576.0 : 0.0);
+	{
+		u64 handle = 0;
+
+		if (R_SUCCEEDED(svcGetInfo(&handle, InfoType_ResourceLimit, INVALID_HANDLE, 0)))
+			limit = (Handle)handle;
+	}
+	if (limit != INVALID_HANDLE)
+	{
+		s64 current = 0, ceiling = 0, peak = 0;
+
+		if (R_SUCCEEDED(svcGetResourceLimitCurrentValue(&current, limit, LimitableResource_Memory)) &&
+			R_SUCCEEDED(svcGetResourceLimitLimitValue(&ceiling, limit, LimitableResource_Memory)))
+		{
+			svcGetResourceLimitPeakValue(&peak, limit, LimitableResource_Memory);
+			host_logf(HOST_LOG_INFO, "memory (%s): the application pool has %.1f MB in use (%.1f MB at most so far) "
+				"of %.1f MB, %.1f MB free", when, (double)current / 1048576.0, (double)peak / 1048576.0,
+				(double)ceiling / 1048576.0, ceiling > current ? (double)(ceiling - current) / 1048576.0 : 0.0);
+		}
+		svcCloseHandle(limit);
+	}
+}
+
 /* ---------- the public calls */
 
 /* Splits a mapping into up to three - the part before the requested range,

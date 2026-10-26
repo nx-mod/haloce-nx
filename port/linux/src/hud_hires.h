@@ -47,12 +47,32 @@ struct hud_hires_embedded
 	/* drawn for a Custom Edition map's stock bitmap of its name too, whose
 	layout is its own (port/assets/hud/custom_edition.json) */
 	int custom_edition;
+	int ce_only;
+	/* Stock CE first mip after hardware conversion; resource maps may be modified. */
+	unsigned int ce_width, ce_height, ce_size, ce_crc;
 	const unsigned int *png;
 	unsigned int png_size;
+	/* where its picture's buttons are right, for a port's own button art drawn twice
+	(tools/button_assets.py platform): HUD_HIRES_CONTEXT_* bits; 0 everywhere */
+	unsigned int contexts;
 };
+
+/* the Switch's menus with the right face button as A (controls.nintendo_menu_buttons), its menus without, a game */
+#define HUD_HIRES_CONTEXT_MENUS_SWAPPED 1u
+#define HUD_HIRES_CONTEXT_MENUS 2u
+#define HUD_HIRES_CONTEXT_GAME 4u
 
 extern const struct hud_hires_embedded hud_hires_embedded[];
 extern const unsigned int hud_hires_embedded_count;
+
+struct hud_hires_ce_stock
+{
+	const char *tag;
+	int bitmap;
+	unsigned int width, height, size, crc;
+};
+extern const struct hud_hires_ce_stock hud_hires_ce_stock[];
+extern const unsigned int hud_hires_ce_stock_count;
 
 /* At the frame boundary, identify cached bitmaps affected by committed HUD
  * or title setting changes. Pixel/CRC validation still occurs on upload. */
@@ -103,6 +123,10 @@ unsigned long hud_hires_placeholder_serial(void);
 /* whether its red holds exact segment thresholds, read unfiltered (d3d8_gl.c,
 nv2a_psh.c: point_threshold) */
 int hud_hires_override_point_threshold(long asset);
+/* Android's Vulkan renderer: a map's sheets handed to its host to decode (port/android/guest/xbox_textures_vk.c), and
+those not drawn let go; nothing in the OpenGL ES renderer's image (weak defaults, hud_hires.c) */
+void textures_hud_prepare(const long *assets, long count);
+void textures_hud_forget(void);
 
 #if defined(HALO_SWITCH) || defined(HALO_ANDROID) || defined(HALO_PS5)
 /* the deko3d and Vulkan renderers': an 8-bit RGBA PNG's pixels (malloc'd, red first,

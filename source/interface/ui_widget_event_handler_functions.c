@@ -4889,6 +4889,8 @@ static boolean player_profile_change_controller_settings(
 		case _button_preset_green_thumb:
 		case _button_preset_bumper_jumper:
 		case _button_preset_reclaimer:
+		case _button_preset_fishsticks:
+		case _button_preset_recon:
 			profile->controller_settings.button_preset = (byte)option_spinner->data3C.selected_index;
 			return TRUE;
 		default: error(2, "unknown button config option selected"); return TRUE;

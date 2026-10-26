@@ -421,6 +421,7 @@ void host_vk_anti_alias_command(const struct vk_command_anti_alias *command)
 	info.layerCount = 1;
 	info.colorAttachmentCount = 1;
 	info.pColorAttachments = &color;
+	host_vk_profile_rendering_begin(cmd, "anti-aliasing");
 	host_vk_cmd_begin_rendering(cmd, &info);
 	viewport.x = (float)x0;
 	viewport.y = (float)y0;
@@ -448,4 +449,5 @@ void host_vk_anti_alias_command(const struct vk_command_anti_alias *command)
 	vkCmdPushConstants(cmd, post.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), constants);
 	vkCmdDraw(cmd, 3, 1, 0, 0);
 	host_vk_cmd_end_rendering(cmd);
+	host_vk_profile_rendering_end(cmd);
 }

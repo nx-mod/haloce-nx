@@ -1816,11 +1816,106 @@ static void light_get_bounding_sphere(
 	return;
 }
 
+/* port: display.dynamic_light_limit, the most dynamic lights (muzzle
+flashes, plasma bolts, explosions) whose light the level is drawn again for
+in a frame (0: as the Xbox, every one rendered), and
+display.specular_light_limit, the most of them that add their specular
+highlights too. The lights kept are the largest as seen from the camera
+(radius over distance); the first-person weapon's are always lit, and are
+the first of the specular ones. Each light redraws the level's surfaces it
+reaches: in Chill Out with 64 players, a frame's 6 lights spent 11.3 ms of
+the Switch's GPU on their specular passes (about 2 ms each, the near ones
+covering most of the screen with the level's big triangles) and 3.7 on their
+diffuse ones. The objects' lighting, which the rasterizer is given every
+light for, is not changed. */
+static boolean port_dynamic_light_kept[MAXIMUM_RENDERED_LIGHTS];
+static boolean port_dynamic_light_specular[MAXIMUM_RENDERED_LIGHTS];
+
+static void port_dynamic_lights_choose(
+	void)
+{
+	extern long config_integer(const char *name);
+	extern void platform_log(const char *format, ...);
+	static long chosen_frame = NONE;
+	static long counted_frames, counted_dynamic, counted_dropped, counted_unshone, counted_first_person, counted_most;
+	real sizes[MAXIMUM_RENDERED_LIGHTS];
+	short order[MAXIMUM_RENDERED_LIGHTS];
+	long limit, specular_limit;
+	short light_index, count = 0, rank;
+	long frame_first_person = 0;
+
+	if (chosen_frame == render.frame_index)
+		return;
+	chosen_frame = render.frame_index;
+	limit = config_integer("display.dynamic_light_limit");
+	specular_limit = config_integer("display.specular_light_limit");
+	for (light_index = 0; light_index < lights_globals.scene_point_light_count; light_index++)
+	{
+		struct light_datum *light = light_get(lights_globals.scene_point_lights[light_index]);
+		real_point3d center;
+		real radius;
+
+		port_dynamic_light_kept[light_index] = TRUE;
+		port_dynamic_light_specular[light_index] = TRUE;
+		if (!TEST_FLAG(light->flags, _point_light_dynamic_bit) || light->rasterizer_light_index == NONE)
+			continue;
+		/* (ranked, the first-person weapon's first) */
+		if (TEST_FLAG(light->flags, _point_light_attached_to_first_person_weapon_bit))
+		{
+			sizes[light_index] = REAL_MAX;
+			frame_first_person++;
+		}
+		else
+		{
+			light_compute_bounding_sphere(lights_globals.scene_point_lights[light_index], FALSE, FALSE, FALSE,
+				&center, &radius);
+			sizes[light_index] = radius / MAX(distance3d(&render.camera.position, &center), 0.01f);
+		}
+		for (rank = count; rank > 0 && sizes[order[rank - 1]] < sizes[light_index]; rank--)
+			order[rank] = order[rank - 1];
+		order[rank] = light_index;
+		count++;
+	}
+	for (rank = 0; rank < count; rank++)
+	{
+		short index = order[rank];
+		boolean first_person = sizes[index] == REAL_MAX;
+
+		if (limit > 0 && rank >= limit && !first_person)
+		{
+			port_dynamic_light_kept[index] = FALSE;
+			counted_dropped++;
+		}
+		if ((specular_limit > 0 && rank >= specular_limit) || !port_dynamic_light_kept[index])
+		{
+			if (port_dynamic_light_kept[index])
+				counted_unshone++;
+			port_dynamic_light_specular[index] = FALSE;
+		}
+	}
+	/* (counted: every 300 frames the log says how many there were) */
+	counted_frames++;
+	counted_dynamic += count;
+	counted_first_person += frame_first_person;
+	counted_most = MAX(counted_most, count);
+	if (counted_frames >= 300)
+	{
+		platform_log("lights: %.1f dynamic lights a frame (%ld the most), %.1f of them the first-person weapon's; %.1f let "
+			"go by display.dynamic_light_limit (%ld), %.1f more lit without their specular by "
+			"display.specular_light_limit (%ld)", (double)counted_dynamic / counted_frames, counted_most,
+			(double)counted_first_person / counted_frames, (double)counted_dropped / counted_frames, limit,
+			(double)counted_unshone / counted_frames, specular_limit);
+		counted_frames = counted_dynamic = counted_dropped = counted_unshone = counted_first_person = counted_most = 0;
+	}
+}
+
 void lights_render_diffuse(
 	void)
 {
 	short cluster_indices[MAXIMUM_CLUSTERS_PER_LIGHT];
 	short light_index;
+
+	port_dynamic_lights_choose();
 
 	rasterizer_environment_diffuse_lights_begin();
 	if (should_render_lights())
@@ -1833,7 +1928,8 @@ void lights_render_diffuse(
 				lights_globals.scene_point_lights[light_index]);
 
 			if (TEST_FLAG(light->flags, _point_light_dynamic_bit)
-				&& light->rasterizer_light_index != NONE)
+				&& light->rasterizer_light_index != NONE
+				&& port_dynamic_light_kept[light_index])
 			{
 				boolean skip_clusters = TEST_FLAG(light->flags,
 						_point_light_attached_to_first_person_weapon_bit)
@@ -1877,6 +1973,7 @@ void lights_render_specular(
 	short cluster_indices[MAXIMUM_CLUSTERS_PER_LIGHT];
 	short light_index;
 
+	port_dynamic_lights_choose();
 	rasterizer_environment_specular_lights_begin();
 	if (should_render_lights())
 	{
@@ -1889,6 +1986,7 @@ void lights_render_specular(
 
 			if (TEST_FLAG(light->flags, _point_light_dynamic_bit)
 				&& light->rasterizer_light_index != NONE
+				&& port_dynamic_light_specular[light_index]
 				&& !TEST_FLAG(light_definition_get(light->definition_index)->flags,
 					_light_definition_no_specular_bit))
 			{

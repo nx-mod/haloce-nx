@@ -36,9 +36,14 @@ The game updates itself from this repository's releases, asking first.
 - deko3d renderer at 720 lines by default, with dynamic resolution
 - 60 fps; shaders compiled on two threads, shared shader keys downloaded so a
   new install has them, and a map's load waits for its shaders
-- online play with OpenCE (network version 32): server browser, internet games
-  through UPnP, hosting up to 48 players, joining a game in progress
-- co-op campaign over the network
+- online play with OpenCE (network version 39): a server browser with the
+  dedicated servers first, internet games through UPnP, an invite link shown
+  as a QR code for a phone, up to 128 players, joining a game in progress
+- co-op campaign over the network, and bots in multiplayer
+- Custom Edition maps in `custom_maps/`, sent by the host to players who lack
+  them
+- the console's own menu buttons: A confirms, B goes back; no button
+  combination quits a match
 - the disc's movies (intro, menus, credits, cutscene sound)
 - gyro aiming, controllers for players 1–4 and handheld
 - 4x anisotropic filtering
@@ -93,5 +98,7 @@ Requirements and design: [port/switch/README.md](port/switch/README.md).
   releases and updates.
 - **[devkitPro](https://devkitpro.org)**, **[FFmpeg](https://ffmpeg.org)**,
   **[musl](https://musl.libc.org)**.
+- **[Kenney](https://kenney.nl/)**'s [Input Prompts](https://kenney.nl/assets/input-prompts)
+  (CC0): the controller buttons' pictures.
 
 Not affiliated with Microsoft or Bungie.

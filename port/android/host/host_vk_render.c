@@ -146,7 +146,11 @@ VkCommandBuffer host_vk_frame_command(void)
 		HOST_VK_CHECK(vkResetCommandPool(B.device, frame->pool, 0));
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		if (HOST_VK_CHECK(vkBeginCommandBuffer(frame->command, &begin)))
+		{
 			frame->recording = 1;
+			host_vk_visibility_frame_begin((unsigned)(frame - B.frames), frame->command);
+			host_vk_profile_frame_begin((unsigned)(frame - B.frames), frame->command);
+		}
 	}
 	return frame->command;
 }
@@ -160,6 +164,7 @@ static void frame_submit(uint32_t wait_image)
 
 	if (!frame->recording)
 		return;
+	host_vk_profile_frame_end((unsigned)(frame - B.frames), frame->command, wait_image != UINT32_MAX);
 	frame->recording = 0;
 	if (!HOST_VK_CHECK(vkEndCommandBuffer(frame->command)))
 		return;
@@ -360,6 +365,9 @@ struct host_vk_target *host_vk_target_get(const struct vk_surface *surface)
 	info.samples = VK_SAMPLE_COUNT_1_BIT;
 	info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	info.usage = depth ? depth_usage : color_usage;
+	/* (drawn multisampled into this image itself, VK_EXT_multisampled_render_to_single_sampled) */
+	if (B.msrtss_counts)
+		info.flags = VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT;
 	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	if (!HOST_VK_CHECK(vkCreateImage(B.device, &info, NULL, &target->image)))
@@ -414,7 +422,23 @@ the target's image as each rendering ends, so that everything else - a draw samp
 anti-aliasing pass, the present - reads the target's image as before. A depth buffer is not resolved: nothing samples a
 depth buffer, and the game clears the screen's at the start of each frame. A multisampled image is cleared when it is
 made (black; depth 1, stencil 0), as the OpenGL ES renderer clears its multisampled renderbuffers: the setting changes
-between frames, and the frame clears the screen's targets before it draws. */
+between frames, and the frame clears the screen's targets before it draws.
+
+Where the device has VK_EXT_multisampled_render_to_single_sampled (a tiled GPU's: Adreno, Mali), a colour target has no
+image of samples: a rendering draws into its own image, the samples living only in the GPU's tile memory, resolved as the
+tile is stored and spread from the pixel again as it is loaded. A rendering's end then stores a pixel of colour rather than
+its samples; what is lost is the samples of an edge drawn before the end, which a later draw in another rendering blends
+onto resolved. A depth buffer keeps its image of samples: resolved, its samples would all hold sample zero's depth, and the
+level's later passes, drawn where the depth is equal to the first's, would miss three in four of them on any slope after a
+break (the textures came and went with the frame's breaks). debug.original_multisample keeps the colour's images too. */
+
+int host_vk_original_multisample;
+
+/* whether the targets are drawn with samples a pixel through the extension, rather than into images of samples */
+static int msrtss_for(uint32_t samples)
+{
+	return samples > 1 && (B.msrtss_counts & samples);
+}
 
 uint32_t host_vk_samples_usable(uint32_t samples)
 {
@@ -479,6 +503,11 @@ static void multisample_retire(struct host_vk_target *target)
 {
 	if (!target->samples)
 		return;
+	if (!target->multisample_image)
+	{
+		target->samples = 0;
+		return;
+	}
 	multisamples_destroy_retired(0);
 	if (retired_multisample_count == RETIRED_MULTISAMPLES)
 	{
@@ -526,6 +555,14 @@ static int multisample_set(struct host_vk_target *target, uint32_t samples)
 	multisample_retire(target);
 	if (!samples)
 		return 1;
+	if (!depth && msrtss_for(samples))
+	{
+		target->samples = samples;
+		host_logf(HOST_LOG_INFO, "vk: %s target %08x, %ux%u, drawn with %u samples a pixel in tile memory",
+			depth ? "depth" : "colour", (unsigned)target->key.data, (unsigned)target->key.pixel_width,
+			(unsigned)target->key.pixel_height, (unsigned)samples);
+		return 1;
+	}
 	info.imageType = VK_IMAGE_TYPE_2D;
 	info.format = depth ? B.depth_format : B.color_format;
 	info.extent.width = target->key.pixel_width;
@@ -606,11 +643,19 @@ fail:
 
 void host_vk_rendering_end(void)
 {
+	/* (a clear waiting for the next rendering, and something else wanting the targets as they are: a rendering of the
+	clear alone) */
+	if (!B.rendering && (B.clear_color_pending || B.clear_depth_pending || B.clear_stencil_pending))
+	{
+		B.counts.clears_waited++;
+		host_vk_rendering_begin();
+	}
 	if (B.rendering)
 	{
 		/* a query may not span the rendering's end */
 		host_vk_visibility_close(B.frames[B.frame].command);
 		host_vk_cmd_end_rendering(B.frames[B.frame].command);
+		host_vk_profile_rendering_end(B.frames[B.frame].command);
 		B.rendering = 0;
 	}
 }
@@ -624,9 +669,12 @@ int host_vk_rendering_begin(void)
 	VkRenderingAttachmentInfo depth = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
 	VkRenderingAttachmentInfo stencil = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
 	VkRenderingInfo info = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+	VkMultisampledRenderToSingleSampledInfoEXT single = { VK_STRUCTURE_TYPE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_INFO_EXT };
 	VkViewport viewport;
 	VkRect2D scissor;
 	uint32_t width = UINT32_MAX, height = UINT32_MAX;
+	/* (the colour's samples in tile memory: a depth buffer's are always in their image) */
+	int in_tiles = B.color && msrtss_for(B.samples);
 
 	if (B.rendering)
 		return 1;
@@ -638,11 +686,17 @@ int host_vk_rendering_begin(void)
 		host_vk_target_transition(command, B.color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		color.imageView = B.color->view;
 		color.imageLayout = B.color->layout;
-		color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		color.loadOp = B.clear_color_pending ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+		color.clearValue.color = B.clear_color;
 		color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		/* multisampled: drawn into its samples, kept for the next rendering, and resolved into the target's image as
 		this one ends */
-		if (B.samples)
+		if (in_tiles)
+		{
+			/* (into the target's image, resolved into it as each tile is stored) */
+			color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+		}
+		else if (B.samples)
 		{
 			multisample_transition(command, B.color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 			color.imageView = B.color->multisample_view;
@@ -661,8 +715,10 @@ int host_vk_rendering_begin(void)
 		host_vk_target_transition(command, B.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 		depth.imageView = B.depth->view;
 		depth.imageLayout = B.depth->layout;
-		depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		depth.loadOp = B.clear_depth_pending ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 		depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depth.clearValue.depthStencil.depth = B.clear_depth;
+		depth.clearValue.depthStencil.stencil = B.clear_stencil;
 		if (B.samples)
 		{
 			multisample_transition(command, B.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -670,6 +726,7 @@ int host_vk_rendering_begin(void)
 			depth.imageLayout = B.depth->multisample_layout;
 		}
 		stencil = depth;
+		stencil.loadOp = B.clear_stencil_pending ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 		info.pDepthAttachment = &depth;
 		info.pStencilAttachment = &stencil;
 		/* the render area is within every attachment */
@@ -681,6 +738,24 @@ int host_vk_rendering_begin(void)
 	info.renderArea.extent.width = width;
 	info.renderArea.extent.height = height;
 	info.layerCount = 1;
+	if (in_tiles)
+	{
+		single.multisampledRenderToSingleSampledEnable = VK_TRUE;
+		single.rasterizationSamples = (VkSampleCountFlagBits)B.samples;
+		info.pNext = &single;
+	}
+	if (B.clear_color_pending || B.clear_depth_pending || B.clear_stencil_pending)
+		B.counts.clears_loaded++;
+	B.clear_color_pending = B.clear_depth_pending = B.clear_stencil_pending = 0;
+	if (host_vk_profile_folder[0])
+	{
+		/* (named by its size and attachments, for the GPU profile's rendering by rendering) */
+		char what[64];
+
+		snprintf(what, sizeof(what), "%ux%u %s%s", (unsigned)width, (unsigned)height,
+			B.color && B.depth ? "colour+depth" : B.color ? "colour" : "depth", in_tiles ? " multisampled in tiles" : B.samples ? " multisampled" : "");
+		host_vk_profile_rendering_begin(command, what);
+	}
 	host_vk_cmd_begin_rendering(command, &info);
 	B.rendering = 1;
 	B.area_width = width;
@@ -819,6 +894,13 @@ static void command_targets(const struct vk_command_targets *command)
 	if (color != B.color || depth != B.depth || samples != B.samples)
 	{
 		host_vk_rendering_end();
+		/* (a colour target a draw has sampled, left: readable now, between renderings, rather than at that draw,
+		which would end the rendering it is in - on a phone's GPU, the screen's, stored and loaded again) */
+		if (B.color && B.color != color && B.color->sampled && B.color->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			host_vk_target_transition(host_vk_frame_command(), B.color, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			B.counts.read_ahead++;
+		}
 		B.color = color;
 		B.depth = depth;
 		B.samples = samples;
@@ -885,6 +967,28 @@ static void command_blit(const struct vk_command_blit *command)
 	destination->bound = ++B.target_clock;
 }
 
+/* whether a clear's rectangle (x, y, width, height) covers the whole of the bound targets' area */
+static int clear_covers(const uint32_t *rectangle)
+{
+	uint32_t width = UINT32_MAX, height = UINT32_MAX;
+
+	if (B.color)
+	{
+		width = B.color->key.pixel_width;
+		height = B.color->key.pixel_height;
+	}
+	if (B.depth)
+	{
+		if (B.depth->key.pixel_width < width)
+			width = B.depth->key.pixel_width;
+		if (B.depth->key.pixel_height < height)
+			height = B.depth->key.pixel_height;
+	}
+	return (int32_t)rectangle[0] <= 0 && (int32_t)rectangle[1] <= 0 &&
+		(int64_t)(int32_t)rectangle[0] + (int32_t)rectangle[2] >= (int64_t)width &&
+		(int64_t)(int32_t)rectangle[1] + (int32_t)rectangle[3] >= (int64_t)height;
+}
+
 static void command_clear(const struct vk_command_clear *command, uint32_t size)
 {
 	uint32_t mask = command->flags & 0xf;
@@ -916,6 +1020,30 @@ static void command_clear(const struct vk_command_clear *command, uint32_t size)
 		mask = 0;
 		if (!depth && !stencil)
 			return;
+	}
+	/* (no rendering open, and one rectangle the whole of the targets: the next rendering's load clears them, as a
+	phone's GPU clears its tiles, instead of loading what the targets held only to clear it - at 2464x1848 with 4x
+	MSAA, some 145 MB of colour and depth samples read each frame for nothing; a clear of some channels only is drawn) */
+	if (!B.rendering && count == 1 && !partial && clear_covers(command->rectangles[0]))
+	{
+		if (whole)
+		{
+			B.clear_color_pending = 1;
+			memcpy(B.clear_color.float32, command->color, sizeof(B.clear_color.float32));
+		}
+		if (depth)
+		{
+			float z = command->depth < 0.0f ? 0.0f : command->depth > 1.0f ? 1.0f : command->depth;
+
+			B.clear_depth_pending = 1;
+			B.clear_depth = z == z ? z : 0.0f;
+		}
+		if (stencil)
+		{
+			B.clear_stencil_pending = 1;
+			B.clear_stencil = command->stencil & 0xff;
+		}
+		return;
 	}
 	if (!count || !host_vk_rendering_begin())
 		return;
@@ -1363,9 +1491,11 @@ static void log_statistics(void)
 	struct host_vk_counts *c = &B.counts;
 
 	host_logf(HOST_LOG_INFO, "vk: %u frames: %u hand-overs; commands: %u targets, %u clears, %u presents; clears: %u drawn, "
-		"%u by vkCmdClearAttachments; %u target changes; %u images; submissions %llu, retired %u; %u swapchain "
+		"%u by vkCmdClearAttachments; %u target changes; %u renderings ended to read a target, %u targets made readable "
+		"as they were left; %u clears made by a rendering's load (%u alone); %u images; submissions %llu, retired %u; %u swapchain "
 		"re-creations; validation errors %u; data: %u records, %u KB a frame, %u ring buffers", c->frames, c->hand_overs,
-		c->targets, c->clears, c->presents, c->clears_drawn, c->clears_attachments, c->target_changes, B.images,
+		c->targets, c->clears, c->presents, c->clears_drawn, c->clears_attachments, c->target_changes, c->sample_splits,
+		c->read_ahead, c->clears_loaded, c->clears_waited, B.images,
 		(unsigned long long)B.submission, retired_locked(), c->recreations, host_vk_validation_errors(), c->data_records,
 		c->data_bytes / 1024 / (c->frames ? c->frames : 1), host_vk_data_buffers());
 	host_logf(HOST_LOG_INFO, "vk: draws in %u frames: %u made; skipped %u for a shader, %u for a pipeline, %u no target, %u data "
@@ -1387,7 +1517,7 @@ static void log_statistics(void)
 	c->draws_made = c->draws_skipped_target = c->draws_skipped_data = c->draws_skipped_other = c->draws_texture_missing = 0;
 	c->textures_skipped = c->texture_bytes = 0;
 	c->frames = c->hand_overs = c->targets = c->clears = c->presents = c->clears_drawn = c->clears_attachments = 0;
-	c->target_changes = 0;
+	c->target_changes = c->sample_splits = c->read_ahead = c->clears_loaded = c->clears_waited = 0;
 	c->data_records = c->data_bytes = 0;
 }
 
@@ -1510,6 +1640,9 @@ static int device_create(void)
 	VkPhysicalDeviceVulkan13Features features13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
 	VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering =
 		{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR };
+	VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT single =
+		{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_FEATURES_EXT };
+	void **chain_end;
 	const char *names[8];
 	uint32_t name_count = 0, index, family_count = 0;
 	VkQueueFamilyProperties *families;
@@ -1603,6 +1736,7 @@ static int device_create(void)
 	{
 		features13.dynamicRendering = VK_TRUE;
 		features.pNext = &features13;
+		chain_end = &features13.pNext;
 	}
 	else
 	{
@@ -1619,6 +1753,7 @@ static int device_create(void)
 		}
 		dynamic_rendering.dynamicRendering = VK_TRUE;
 		features.pNext = &dynamic_rendering;
+		chain_end = &dynamic_rendering.pNext;
 	}
 	/* the optional features the draws use, where the device has them: anisotropic filtering, non-solid fill (wireframe and
 	point fill), precise occlusion queries (visibility tests) and the block-compressed textures (BC1 to BC3) */
@@ -1634,6 +1769,44 @@ static int device_create(void)
 		B.fill_mode_non_solid = available.features.fillModeNonSolid != 0;
 		B.occlusion_query_precise = available.features.occlusionQueryPrecise != 0;
 		B.texture_compression_bc = available.features.textureCompressionBC != 0;
+	}
+	/* multisampling in the GPU's tile memory (VK_EXT_multisampled_render_to_single_sampled), where the device has it
+	for both target formats, and debug.original_multisample does not keep the images of samples: the counts it can */
+	B.msrtss_counts = 0;
+	if (!host_vk_original_multisample && enabled_add(names, &name_count, VK_EXT_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_EXTENSION_NAME))
+	{
+		VkPhysicalDeviceFeatures2 available = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT supported =
+			{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_FEATURES_EXT };
+		const VkPhysicalDeviceLimits *limits = &host_vk.properties.limits;
+		VkImageFormatProperties color_properties, depth_properties;
+		VkSampleCountFlags counts = 0;
+
+		available.pNext = &supported;
+		host_vk.vkGetPhysicalDeviceFeatures2(host_vk.physical, &available);
+		if (supported.multisampledRenderToSingleSampled &&
+			host_vk.vkGetPhysicalDeviceImageFormatProperties(host_vk.physical, B.color_format, VK_IMAGE_TYPE_2D,
+				VK_IMAGE_TILING_OPTIMAL, color_usage, VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT,
+				&color_properties) == VK_SUCCESS &&
+			host_vk.vkGetPhysicalDeviceImageFormatProperties(host_vk.physical, B.depth_format, VK_IMAGE_TYPE_2D,
+				VK_IMAGE_TILING_OPTIMAL, depth_usage, VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT,
+				&depth_properties) == VK_SUCCESS)
+			counts = color_properties.sampleCounts & depth_properties.sampleCounts & limits->framebufferColorSampleCounts &
+				limits->framebufferDepthSampleCounts & limits->framebufferStencilSampleCounts & ~(VkSampleCountFlags)VK_SAMPLE_COUNT_1_BIT;
+		if (counts)
+		{
+			single.multisampledRenderToSingleSampled = VK_TRUE;
+			*chain_end = &single;
+			B.msrtss_counts = counts;
+			host_logf(HOST_LOG_INFO, "vk: colour multisampled in tile memory (depth in images of samples), at sample counts 0x%x", (unsigned)counts);
+		}
+		else
+		{
+			name_count--;
+			host_logf(HOST_LOG_INFO, "vk: %s cannot draw the targets' formats multisampled (feature %u); images of samples "
+				"instead", VK_EXT_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_EXTENSION_NAME,
+				(unsigned)supported.multisampledRenderToSingleSampled);
+		}
 	}
 	for (index = 0; index < name_count; index++)
 		host_logf(HOST_LOG_INFO, "vk: device extension %s", names[index]);
@@ -1718,6 +1891,7 @@ static int device_create(void)
 	B.state = 1;
 	host_vk_services_start();
 	host_vk_visibility_start();
+	host_vk_profile_initialize();
 	if (host_vk_self_test)
 		clears_selftest();
 	host_logf(HOST_LOG_INFO, "vk: device ready: queue family %u, colour targets %s, depth targets %s, blit filter %s, "
@@ -1861,6 +2035,20 @@ void host_vk_submit(uint32_t commands, uint32_t size)
 		case VK_COMMAND_TEST_DRAW:
 			if (header->size >= sizeof(struct vk_command_test_draw))
 				command_test_draw((const struct vk_command_test_draw *)header);
+			break;
+		case VK_COMMAND_MARKER:
+			if (header->size >= sizeof(struct vk_command_marker))
+				host_vk_profile_mark((const struct vk_command_marker *)header);
+			break;
+		case VK_COMMAND_HUD_PREPARE:
+			host_vk_hud_prepare_command((const struct vk_command_hud_prepare *)header, header->size);
+			break;
+		case VK_COMMAND_HUD_FORGET:
+			host_vk_hud_forget_command();
+			break;
+		case VK_COMMAND_HUD_IMAGE:
+			if (header->size >= sizeof(struct vk_command_hud_image))
+				host_vk_hud_image_command((const struct vk_command_hud_image *)header);
 			break;
 		default:
 			if (!said_unknown)

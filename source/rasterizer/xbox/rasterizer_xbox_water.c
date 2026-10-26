@@ -198,6 +198,11 @@ typedef char verify_pixel_shader_definition_size[
 static boolean water_needs_update_flag = FALSE;
 static boolean water_visible_for_window_flag = FALSE;
 
+/* port: the ripples' bump map made at the frame's end, for the next (halo_render_defer_water): the shader of the water
+the frame drew it for, and whether the target holds one made (the first frame's is made as the game makes it) */
+static struct shader *water_deferred_shader = NULL;
+static boolean water_bumpmap_made = FALSE;
+
 /* ---------- public code */
 
 void rasterizer_water_set_visibility_for_frame(
@@ -221,6 +226,23 @@ boolean rasterizer_water_get_visibility_for_window(
 	void)
 {
 	return water_visible_for_window_flag;
+}
+
+void rasterizer_water_build_bumpmap(
+	struct shader *shader);
+
+/* port: the frame's end, its window's last (render.c, "debug and end"): the bump map the frame drew its water with
+from the frame before's, made for the next, where the screen's rendering ends anyway */
+void rasterizer_water_frame_end(
+	void)
+{
+	if (water_deferred_shader)
+	{
+		rasterizer_water_build_bumpmap(water_deferred_shader);
+		water_deferred_shader = NULL;
+	}
+
+	return;
 }
 
 void rasterizer_water_build_bumpmap(
@@ -664,7 +686,15 @@ void rasterizer_water_draw(
 				!TEST_FLAG(water->flags, _shader_transparent_water_draw_before_fog_bit);
 			if (water_needs_update_flag)
 			{
-				rasterizer_water_build_bumpmap(group->shader);
+				/* port: deferred (halo_render_defer_water), the water is drawn with the bump map the frame before made,
+				at its end (rasterizer_water_frame_end): made here, in the middle of the frame, its 128 by 128 target
+				ends the screen's rendering, which a phone's GPU pays for by storing the screen out of its tile memory
+				and loading it back (343 Guilty Spark's swamp, every frame). The ripples move a frame later */
+				if (halo_render_defer_water() && water_bumpmap_made)
+					water_deferred_shader = group->shader;
+				else
+					rasterizer_water_build_bumpmap(group->shader);
+				water_bumpmap_made = TRUE;
 				water_needs_update_flag = FALSE;
 			}
 

@@ -1,11 +1,12 @@
-/* bots.h: computer players for local multiplayer games (port/linux/game/bots.c)
+/* bots.h: computer players for local and system link multiplayer games (port/linux/game/bots.c)
 
-A bot is a player of a local (split screen) game whose controls come from
-code instead of a controller: it is in the lobby, the scores and the game's
+A bot is a player of a local (split screen) or system link game whose
+controls come from code on the host instead of a controller (the clients
+drive it with the input the host relays them, as they drive its players): it is in the lobby, the scores and the game's
 rules as any player is, spawns, respawns and scores. Each bot is the one
 player of a machine of its own at the top of the machine indices
-(BOTS_FIRST_MACHINE up), which no real machine takes: a split screen game has
-only its own machine. The bots have no view and no controller: nothing is
+(BOTS_FIRST_MACHINE up), which no real machine takes: the host gives the
+machines that join slots below them (network_game_server_add_new_client). The bots have no view and no controller: nothing is
 drawn for them. */
 #ifndef HALO_BOTS_H
 #define HALO_BOTS_H
@@ -13,8 +14,9 @@ drawn for them. */
 struct player_action;
 struct network_player;
 
-/* the most bots in one game (with one player, the Xbox's 16) */
-#define BOTS_MAXIMUM 15
+/* the most bots in one game: with one player, 64 (the benchmark's games: benchmark.c), the last bot's machine the
+last a network_player's char machine index holds (127) */
+#define BOTS_MAXIMUM 63
 /* the first bot's machine index (the last machine indices of the session) */
 #define BOTS_FIRST_MACHINE (HALO_PORT_MAXIMUM_NETWORK_MACHINES - BOTS_MAXIMUM)
 
@@ -28,11 +30,16 @@ enum
 
 /* the settings (bots.count, bots.skill, bots.teams) */
 long bots_wanted_count(void);
+/* the count wanted in place of bots.count's (the benchmark's games: benchmark.c), or bots.count's again (-1) */
+void bots_set_count_override(long count);
 short bots_skill(void);
 short bots_teams(void);
 
 /* a machine is a bot's */
 int bots_machine_is_bot(long machine_index);
+/* whether this machine hosts a game bots may play in: local (split screen), system link, or a private internet game
+(not listed in the server browser) */
+int bots_game_allowed(void);
 /* the network player for bot number `bot_index` (0 up): its machine,
 controller, name and no team or colour yet */
 void bots_network_player(long bot_index, struct network_player *player);

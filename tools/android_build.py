@@ -335,7 +335,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
                          objdump: str, builtins_cc: str, environment: str, platform_defines: List[str],
                          extra_runtime: Optional[List[Path]] = None, extra_imports: Optional[List[Path]] = None,
                          updater_cflags: str = "", desktop_gl: bool = False, relocatable: bool = False,
-                         vulkan: bool = False) -> Dict[str, Path]:
+                         vulkan: bool = False, extra_sources: Optional[List[Path]] = None) -> Dict[str, Path]:
     """The guest image (build/halo_guest.elf) and the host's import table, for
     the builds that run the game as ILP32 code of the architecture arch
     (tools/guest_arch.py): Android, and the desktop guest builds
@@ -347,7 +347,9 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     toolchain's (android, gnu), which the assembler's target ends with;
     platform_defines are the platform's code paths (ANDROID_DEFINES, or a
     desktop's). extra_runtime are more guest runtime sources, and
-    extra_imports more lists of the host functions they import;
+    extra_imports more lists of the host functions they import; extra_sources
+    are more of the platform layer's sources, with its flags (the PS5's QR
+    code encoder, port/third_party/qrcodegen);
     updater_cflags are the desktop self-updater's defines
     (port/linux/src/updater.c), for a guest that has it. desktop_gl gives the
     guest desktop OpenGL's entry points (from gl_headers' GL/glcorearb.h) in
@@ -360,6 +362,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     the OpenGL renderer's."""
     extra_runtime = extra_runtime or []
     extra_imports = extra_imports or []
+    extra_sources = extra_sources or []
     asm_target = arch.assembler_target(environment)
     musl_dir = third_party / f"musl-{MUSL_VERSION}"
     sdl_dir = third_party / "SDL3"
@@ -608,6 +611,8 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     # (port/third_party/monocypher; p2p_crypto.c)
     for name in ("monocypher.c", "monocypher-ed25519.c"):
         objects.append(guest_object(MONOCYPHER_DIR / name, platform_cflags))
+    for source in extra_sources:
+        objects.append(guest_object(source, platform_cflags))
     # the port's zlib
     for name in ZLIB_SOURCES:
         # (not the processor's features that the guest's assembly step is
@@ -861,7 +866,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     host_cflags = " ".join([
         "-O2", "-g", "-fPIC", "-Wall", "-Wno-unused-function", "-D_GNU_SOURCE",
         f"-I{PORT_DIR}/include", f"-I{PORT_DIR}/host", f"-I{SDL_DIR}/include", f"-I{LINUX_DIR}/src",
-        f"-I{TOML_DIR}", f"-I{GLSLANG_DIR}", f"-I{BUILD / 'host'}",
+        f"-I{TOML_DIR}", f"-I{GLSLANG_DIR}", f"-I{BUILD / 'host'}", f"-I{ZLIB_DIR}",
         # the folder of the SPIR-V cache is named for the compiler (host_vk_shaders.c)
         f"-DHOST_VK_GLSLANG_TAG='\"{GLSLANG_TAG}\"'",
     ])
@@ -898,12 +903,25 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         host_objects.append(obj)
     # internet play's DTLS with browsers (posix_dtls.c, with
     # port/third_party/mbedtls), as the other posix_*.c in the host
-    mbedtls_cflags = " ".join([host_cflags, f"-I{MBEDTLS_DIR / 'include'}", f"-I{MBEDTLS_DIR / 'library'}"])
-    for source in [LINUX_DIR / "src" / "posix_dtls.c", *sorted((MBEDTLS_DIR / "library").glob("*.c"))]:
+    # (with its locks: internet play's thread and the server browser's master
+    # servers' both use it, as on Linux)
+    mbedtls_cflags = " ".join([host_cflags, f"-I{MBEDTLS_DIR / 'include'}", f"-I{MBEDTLS_DIR / 'library'}",
+                               "-DMBEDTLS_THREADING_C", "-DMBEDTLS_THREADING_PTHREAD"])
+    # (and the server browser's requests to the master servers: posix_update.c's,
+    # host_https.c)
+    for source in [LINUX_DIR / "src" / "posix_dtls.c", LINUX_DIR / "src" / "posix_update.c",
+                   *sorted((MBEDTLS_DIR / "library").glob("*.c"))]:
         obj = host_obj_dir / ("mbedtls_" + source.name + ".o" if source.parent.parent == MBEDTLS_DIR
                               else source.name + ".o")
         n.build(outputs=obj, rule="android_host_cc", inputs=source,
-                variables={"cflags": mbedtls_cflags + (" -w" if source.name != "posix_dtls.c" else "")})
+                variables={"cflags": mbedtls_cflags + (" -w" if source.parent.parent == MBEDTLS_DIR else "")})
+        host_objects.append(obj)
+    # the port's zlib, its names z_ (zlib_prefixed.h), for the Vulkan renderer's high-res HUD sheets the host decodes
+    # (host_vk_hud.c), as the guest has its own
+    for name in ZLIB_SOURCES:
+        obj = host_obj_dir / ("zlib_" + name + ".o")
+        n.build(outputs=obj, rule="android_host_cc", inputs=ZLIB_DIR / name,
+                variables={"cflags": " ".join([host_cflags, *ZLIB_DEFINES, "-w"])})
         host_objects.append(obj)
     table_obj = host_obj_dir / "host_import_table.c.o"
     n.build(outputs=table_obj, rule="android_host_cc", inputs=host_table_c, variables={"cflags": host_cflags})

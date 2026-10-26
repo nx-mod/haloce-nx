@@ -1,0 +1,164 @@
+{
+ "overrides": [
+  {
+   "name": "a_butn__0",
+   "png": "a_butn__0.png",
+   "contexts": 6
+  },
+  {
+   "name": "a_butn__0",
+   "png": "a_butn__0.menus.png",
+   "contexts": 1
+  },
+  {
+   "name": "b_butn__0",
+   "png": "b_butn__0.png",
+   "contexts": 6
+  },
+  {
+   "name": "b_butn__0",
+   "png": "b_butn__0.menus.png",
+   "contexts": 1
+  },
+  {
+   "name": "x_butn__0",
+   "png": "x_butn__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "y_butn__0",
+   "png": "y_butn__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "a_butn_sm__0",
+   "png": "a_butn_sm__0.png",
+   "contexts": 6
+  },
+  {
+   "name": "a_butn_sm__0",
+   "png": "a_butn_sm__0.menus.png",
+   "contexts": 1
+  },
+  {
+   "name": "b_butn_sm__0",
+   "png": "b_butn_sm__0.png",
+   "contexts": 6
+  },
+  {
+   "name": "b_butn_sm__0",
+   "png": "b_butn_sm__0.menus.png",
+   "contexts": 1
+  },
+  {
+   "name": "hud_msg_icons_sm__0",
+   "png": "hud_msg_icons_sm__0.png",
+   "contexts": 6
+  },
+  {
+   "name": "hud_msg_icons_sm__0",
+   "png": "hud_msg_icons_sm__0.menus.png",
+   "contexts": 1
+  },
+  {
+   "name": "black_butn__0",
+   "png": "black_butn__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "white_butn__0",
+   "png": "white_butn__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_a__0",
+   "png": "classic_a__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_b__0",
+   "png": "classic_b__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_x__0",
+   "png": "classic_x__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_y__0",
+   "png": "classic_y__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_black__0",
+   "png": "classic_black__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "classic_white__0",
+   "png": "classic_white__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "gem_a__0",
+   "png": "gem_a__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "gem_b__0",
+   "png": "gem_b__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "gem_x__0",
+   "png": "gem_x__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "gem_y__0",
+   "png": "gem_y__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "trigger_left__0",
+   "png": "trigger_left__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "trigger_right__0",
+   "png": "trigger_right__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick_left__0",
+   "png": "thumbstick_left__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick_right__0",
+   "png": "thumbstick_right__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick-halfway_left__0",
+   "png": "thumbstick-halfway_left__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick-halfway_right__0",
+   "png": "thumbstick-halfway_right__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick-full_left__0",
+   "png": "thumbstick-full_left__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "thumbstick-full_right__0",
+   "png": "thumbstick-full_right__0.png",
+   "contexts": 0
+  }
+ ]
+}

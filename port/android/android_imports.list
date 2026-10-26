@@ -9,3 +9,6 @@ host_touch_rumble
 host_touch_scene
 host_touch_bindings
 host_touch_gyro_mode
+# the server browser's requests to the master servers (port/android/host/host_https.c;
+# port/linux/src/master_list.c)
+host_https_get

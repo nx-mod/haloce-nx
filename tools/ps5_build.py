@@ -52,6 +52,7 @@ from typing import Any, Dict, List, Optional
 
 from .android_build import GLSLANG_DIR as ANDROID_GLSLANG_DIR
 from .android_build import GLSLANG_TAG, GLSLANG_URL, MUSL_URL, MUSL_VERSION, fetch_third_party, generate_guest_image
+from .android_build import ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES
 from .guest_arch import X32
 from .linux_build import MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, miniupnpc_sources, updater_defines
 from .ninja_syntax import Writer, escape
@@ -92,12 +93,16 @@ LINUX_HOST_DIR = LINUX_DIR / "host"
 TOMLC17_DIR = Path("port/third_party/tomlc17")
 # the Android host library's files the PS5's host uses as they are
 # (port/ps5/PS5.md, phase 2); the rest are replaced by port/ps5/host's
-SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thread.c", "host_watch_hash.c")
+# (and the server browser's requests to the master servers, host_https.c, on
+# posix_update.c's HTTPS as Android's)
+SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thread.c", "host_watch_hash.c",
+                     "host_https.c")
 # and the Vulkan renderer's host half (port/ps5/PS5.md, phase 4), less
 # host_vk_driver.c (port/ps5/host/host_vk_driver_ps5.c is the console's) and
 # the probe, host_vk_probe.c
 SHARED_RENDERER_FILES = ("host_vk.c", "host_vk_data.c", "host_vk_draw.c", "host_vk_post.c", "host_vk_present.c",
-                         "host_vk_render.c", "host_vk_shaders.c", "host_vk_texture.c", "host_vk_visibility.c")
+                         "host_vk_hud.c", "host_vk_profile.c", "host_vk_render.c", "host_vk_shaders.c", "host_vk_texture.c",
+                         "host_vk_visibility.c")
 # posix.h's helpers (port/linux/src) the game imports, as the Linux host
 # compiles them (port/ps5/PS5.md, phases 2 and 5), and the Linux updater's
 # HTTPS download, which the title's updater fetches with (phase 8:
@@ -395,8 +400,12 @@ RELEASE_LICENSES = (
     ("repo", "port/third_party/stb/LICENSE", "licenses/stb-LICENSE.txt", None, "stb_truetype"),
     ("repo", "port/third_party/stb_vorbis/LICENSE", "licenses/stb_vorbis-LICENSE.txt", None, "stb_vorbis"),
     ("repo", "port/third_party/smaa/LICENSE", "licenses/smaa-LICENSE.txt", None, "SMAA"),
+    ("repo", "port/third_party/qrcodegen/LICENSE", "licenses/qrcodegen-LICENSE.txt", None,
+     "QR Code generator (Project Nayuki), Direct Link's QR code"),
     ("repo", "port/assets/fonts/Overpass-OFL.txt", "licenses/Overpass-OFL.txt", None, "Overpass"),
     ("repo", "port/assets/icons/lucide/LICENSE", "licenses/lucide-LICENSE.txt", None, "Lucide's icons"),
+    ("repo", "port/assets/buttons/platforms/Kenney-LICENSE.txt", "licenses/Kenney-LICENSE.txt", None,
+     "Kenney's Input Prompts, the controller buttons' pictures"),
 )
 # the player's README, at the release's top beside the title's folder
 RELEASE_README = PORT_DIR / "release" / "README.txt"
@@ -546,7 +555,9 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
         environment="gnu", platform_defines=["-DHALO_MOVABLE_WINDOW=1", "-DHALO_PS5=1"],
         extra_runtime=[LINUX_HOST_DIR / "guest_desktop.c"], extra_imports=[LINUX_HOST_DIR / "host_imports.list", ANDROID_DIR / "host_imports_vk.list",
                                                          PORT_DIR / "host_imports.list"],
-        updater_cflags=guest_updater_cflags, desktop_gl=True, vulkan=True)
+        updater_cflags=guest_updater_cflags, desktop_gl=True, vulkan=True,
+        # (Direct Link's link page's QR code, as the Switch's: port/linux/src/link_page.c)
+        extra_sources=[Path("port/third_party/qrcodegen/qrcodegen.c")])
 
     # ---------- the toolchain
 
@@ -661,6 +672,8 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
         # calls in the shared files bind to SDL2's of the same names)
         f"-isystem {mesa / 'include'}", *sdl2_flags, f"-isystem {root / THIRD_PARTY / 'SDL3' / 'include'}",
         f"-I{glslang_source}",
+        # (the port's zlib, its names z_: the high-res HUD's sheets, host_vk_hud.c)
+        f"-I{root / ZLIB_DIR}",
     ])
     miniupnpc_cflags = " ".join([f"-I{root / MINIUPNPC_DIR / 'include'}", f"-I{root / MINIUPNPC_DIR / 'src'}",
                                  *MINIUPNPC_DEFINES, "-DNO_GETADDRINFO", "-Dgethostbyname=ps5_upnp_gethostbyname",
@@ -730,6 +743,12 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
     # if_nametoindex, if_indextoname, getnameinfo and gai_strerror, which no
     # module a title loads exports, answered by host_net_ps5.c; Mbed TLS with the PS5's configuration added
     # (mbedtls_config_ps5.h: the console's random numbers)
+    # the port's zlib, for the high-res HUD's sheets the renderer's host half decodes (host_vk_hud.c), as Android's host
+    for name in ZLIB_SOURCES:
+        obj = obj_dir / "zlib" / (name + ".o")
+        n.build(outputs=obj, rule="ps5_host_cc", inputs=root / ZLIB_DIR / name,
+                variables={"cflags": " ".join([host_cflags, *ZLIB_DEFINES, "-w"])})
+        objects.append(obj)
     for source in miniupnpc_sources():
         obj = obj_dir / "miniupnpc" / (source.name + ".o")
         n.build(outputs=obj, rule="ps5_host_cc", inputs=root / source,

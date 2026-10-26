@@ -2806,6 +2806,7 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h"
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
+#include "server_director.h" /* port: port/linux/game/server_director.c */
 #include "objects/damage.h"
 #include "objects/object_lights.h"
 #include "objects/scenery.h"
@@ -15539,6 +15540,14 @@ static boolean hs_compile_and_evaluate_command(
 	if (profile_console_command(expression))
 		return TRUE;
 #endif
+	/* port: a dedicated server's commands (sv_*, say, kick, ban...), with the
+	role the line came with (port/linux/game/server_commands.c) */
+	{
+		boolean server_result;
+
+		if (server_command_try(expression, &server_result))
+			return server_result;
+	}
 	/* port: the co-op host's bringto, which brings every player to the host
 	(players.c; a client is told it is the host's) */
 	if (hs_host_player_command(expression, "bringto"))
@@ -15562,6 +15571,41 @@ static boolean hs_compile_and_evaluate_command(
 				length--;
 			name[length] = 0;
 			return network_votekick_player_named(name);
+		}
+	}
+	/* port: the bots of a local (split screen) Slayer game in progress, one at
+	a time (network_game_server_port_bot_add, _drop): add_bot and drop_bot in
+	a game without teams, the _red and _blue ones in a team game */
+	{
+		static struct
+		{
+			char const *word;
+			boolean add;
+			long team_index;
+		} const bot_commands[] =
+		{
+			{ "add_bot", TRUE, NONE }, { "add_bot_red", TRUE, 0 }, { "add_bot_blue", TRUE, 1 },
+			{ "drop_bot", FALSE, NONE }, { "drop_bot_red", FALSE, 0 }, { "drop_bot_blue", FALSE, 1 },
+		};
+		short command;
+
+		for (command = 0; command < (short)NUMBEROF(bot_commands); command++)
+		{
+			if (hs_host_player_command(expression, bot_commands[command].word))
+			{
+				char said[128];
+				boolean done = bot_commands[command].add ?
+					network_game_server_port_bot_add(bot_commands[command].team_index, said, (long)sizeof(said)) :
+					network_game_server_port_bot_drop(bot_commands[command].team_index, said, (long)sizeof(said));
+
+				if (done)
+					console_printf(FALSE, "%s", said);
+				else
+					console_warning("%s: %s", bot_commands[command].word, said);
+				/* (and in debug.txt, where the overlay's result.txt sends one to look) */
+				error(_error_silent, "%s: %s", bot_commands[command].word, said);
+				return done;
+			}
 		}
 	}
 	/* port: profile_reset_campaign, which clears the first player's

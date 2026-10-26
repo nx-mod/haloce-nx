@@ -40,6 +40,12 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 	void);
 void rasterizer_lens_flares_draw(
 	void);
+/* port: the frame's end, its window's last: the sun's glow deferred to it made (rasterizer_xbox_lights.c) */
+void rasterizer_sun_glow_frame_end(
+	void);
+/* port: and the water's ripples' bump map deferred to it (rasterizer_xbox_water.c) */
+void rasterizer_water_frame_end(
+	void);
 void rasterizer_sun_glow_draw(
 	struct rasterizer_lens_flare_submit_parameters const *flare);
 

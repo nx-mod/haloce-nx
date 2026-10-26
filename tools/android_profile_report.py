@@ -4,6 +4,16 @@
     adb pull /sdcard/Android/data/com.halo.decomp/files/profile.bin
     tools/android_profile_report.py profile.bin [--logcat log.txt] [--elf build/android/halo_guest.elf]
 
+or a profiled run's folder (debug.profile_run: Download/halo_profiles/DDMMYYYY_HHMMSS on the phone, sent as it is):
+
+    tools/android_profile_report.py 23102026_201500/
+
+which holds the profile, the run's log (halo.log, read for where the game image was loaded) and run.txt (whose
+renderer chooses the image, halo_guest_vk.elf under Vulkan); gpu.txt in it is the GPU's time by part of the frame,
+to read as it is. The image must be the build's that made the profile: --apk takes it out of that build's APK (a
+release's, from its zip), where it is whole; without the build's linker map (halo_guest_vk.elf.map, beside a local
+build's image), guest code is all counted as 'game', its functions still named.
+
 Per guest thread, the share of its samples in:
 
   game      guest code outside the renderer
@@ -13,13 +23,16 @@ Per guest thread, the share of its samples in:
   other     everything else (SDL's audio thread, network, the system's libraries) and the time a thread
             spends blocked in a system call (a sample taken right after an svc instruction: idle in the kernel)
 
-and its CPU time per second (schedstat). With a logcat file that holds the renderer's
-"frame N:" lines (debug.gpu_stats), the frames per second, and so the milliseconds of CPU per
-frame of each thread.
+and its CPU time per second (schedstat). The frames per second, and so the milliseconds of CPU per frame of each
+thread, from the frames the profile kept (the Vulkan renderer's presents), or from a logcat file that holds the
+renderer's "frame N:" lines (debug.gpu_stats). The slowest frames are listed with where the threads were during each.
 """
 
 import argparse
+import bisect
 import os
+import tempfile
+import zipfile
 import re
 import struct
 import subprocess
@@ -34,6 +47,7 @@ GUEST_END = GUEST_BASE + 0x03000000
 GUEST_SHIFT = 0
 SAMPLE = struct.Struct("<IIQQ8Q")  # tid, reserved, pc, lr, 8 frames
 CPU = struct.Struct("<IIQ")
+FRAME = struct.Struct("<QII")
 NAME = struct.Struct("<II16s")
 HEADER = struct.Struct("<8sIIII")
 
@@ -56,7 +70,7 @@ def read_profile(path):
     offset = HEADER.size
     maps_text = data[offset:offset + maps_size].decode(errors="replace")
     offset += maps_size
-    samples, cpu, names = [], [], {}
+    samples, cpu, names, frames = [], [], {}, []
     block_index = 0
     while offset + 8 <= len(data):
         kind, count = struct.unpack_from("<II", data, offset)
@@ -66,7 +80,8 @@ def read_profile(path):
             for _ in range(count):
                 if offset + size > len(data):
                     break
-                samples.append(SAMPLE.unpack_from(data, offset) + (block_index,))
+                # (its number in the run, which a frame's end names: its last sample's)
+                samples.append(SAMPLE.unpack_from(data, offset) + (len(samples), block_index))
                 offset += size
             block_index += 1
         elif kind == 2:
@@ -82,9 +97,16 @@ def read_profile(path):
                 tid, _, raw = NAME.unpack_from(data, offset)
                 names[tid] = raw.split(b"\0")[0].decode(errors="replace")
                 offset += NAME.size
+        elif kind == 4:
+            for _ in range(count):
+                if offset + FRAME.size > len(data):
+                    break
+                ended, microseconds, _ = FRAME.unpack_from(data, offset)
+                frames.append((ended, microseconds))
+                offset += FRAME.size
         else:
             break
-    return hz, maps_text, samples, cpu, names
+    return hz, maps_text, samples, cpu, names, frames
 
 
 def parse_maps(text):
@@ -105,7 +127,7 @@ def symbolize(addresses, elf):
     result = {}
     if not addresses:
         return result
-    tools = ["llvm-symbolizer", "llvm-symbolizer-18", "llvm-symbolizer-19"]
+    tools = ["llvm-symbolizer", "llvm-symbolizer-22", "llvm-symbolizer-18", "llvm-symbolizer-19"]
     ndk = os.environ.get("ANDROID_NDK_HOME")
     if ndk:  # the NDK's own, which every Android build here has
         tools += [str(p) for p in Path(ndk).glob("toolchains/llvm/prebuilt/*/bin/llvm-symbolizer")]
@@ -121,12 +143,41 @@ def symbolize(addresses, elf):
         print("llvm-symbolizer not found: guest samples are all counted as 'game'", file=sys.stderr)
         return result
     blocks = process.stdout.strip().split("\n\n")
+    nearest = None
     for address, block in zip(addresses, blocks):
         lines = block.strip().splitlines()
         function = lines[0] if lines else "?"
         location = lines[1] if len(lines) > 1 else "?"
+        # (the image's symbols have no size, so the symbolizer seldom places an address in one: the nearest symbol
+        # at or below it, which is the function for code laid out one function after another)
+        if function in ("??", "?"):
+            if nearest is None:
+                nearest = symbol_table(tool, elf)
+            index = bisect.bisect_right(nearest[0], address) - 1
+            if index >= 0:
+                function = nearest[1][index]
         result[address] = (function, location.rsplit(":", 2)[0].split("/")[-1])
     return result
+
+
+def symbol_table(symbolizer, elf):
+    """(addresses, names) of the image's code symbols, sorted, from llvm-nm beside the symbolizer that worked."""
+    nm = str(Path(symbolizer).with_name(Path(symbolizer).name.replace("llvm-symbolizer", "llvm-nm")))
+    addresses, names = [], []
+    for tool in (nm, "llvm-nm", "llvm-nm-22", "llvm-nm-18", "nm"):
+        try:
+            output = subprocess.run([tool, "-n", "--defined-only", elf], capture_output=True, text=True,
+                                    check=True).stdout
+            break
+        except (OSError, subprocess.CalledProcessError):
+            output = ""
+    for line in output.splitlines():
+        parts = line.split()
+        # (code only: a data symbol or a literal's label is never a function)
+        if len(parts) == 3 and parts[1] in "TtNn" and not parts[2].startswith("."):
+            addresses.append(int(parts[0], 16))
+            names.append(parts[2])
+    return addresses, names
 
 
 def parse_linker_map(path):
@@ -280,13 +331,35 @@ def logcat_image_base(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("profile")
-    parser.add_argument("--elf", default="build/android/halo_guest.elf")
+    parser.add_argument("profile", help="profile.bin, or a profiled run's folder (debug.profile_run)")
+    parser.add_argument("--elf", help="the game image (default: build/android/halo_guest_vk.elf, or halo_guest.elf "
+                        "for a run on GL ES)")
     parser.add_argument("--logcat", help="logcat output with the renderer's frame lines, for frames per second")
     parser.add_argument("--fps", type=float, help="frames per second, if known")
     parser.add_argument("--from", dest="first", type=int, default=0, help="only from this second of the run (a multiple of 10)")
     parser.add_argument("--to", dest="last", type=int, default=10**9, help="only up to this second of the run")
+    parser.add_argument("--apk", help="the APK of the build that made the profile: the game image is taken from it")
+    parser.add_argument("--slow", type=int, default=8, help="how many of the slowest frames over 33 ms to list (0: none)")
     args = parser.parse_args()
+
+    folder = Path(args.profile) if Path(args.profile).is_dir() else None
+    if folder:
+        args.profile = str(folder / "profile.bin")
+        if not args.logcat and (folder / "halo.log").is_file():
+            args.logcat = str(folder / "halo.log")
+        run = (folder / "run.txt").read_text(errors="replace") if (folder / "run.txt").is_file() else ""
+        for line in run.splitlines()[:4]:
+            print(line, file=sys.stderr)
+        if not args.elf:
+            args.elf = "build/android/halo_guest.elf" if "renderer: GL ES" in run else "build/android/halo_guest_vk.elf"
+    if args.apk:
+        # (the image the renderer ran: the folder's run.txt says which, else Vulkan's)
+        wanted = Path(args.elf).name if args.elf else "halo_guest_vk.elf"
+        unpacked = tempfile.mkdtemp(prefix="halo_profile_")
+        with zipfile.ZipFile(args.apk) as apk:
+            args.elf = apk.extract(f"assets/{wanted}", unpacked)
+    if not args.elf:
+        args.elf = "build/android/halo_guest_vk.elf"
 
     global GUEST_BASE, GUEST_END, GUEST_SHIFT
     linked, linked_end = elf_extent(args.elf)
@@ -298,7 +371,8 @@ def main():
     elif not args.logcat:
         print(f"no --logcat: the guest image is taken to be where it was linked ({linked:08x})", file=sys.stderr)
 
-    hz, maps_text, samples, cpu, names = read_profile(args.profile)
+    hz, maps_text, samples, cpu, names, frames = read_profile(args.profile)
+    every_sample = samples
     samples = [x for x in samples if args.first <= x[-1] * 10 < args.last]
     cpu = [c for c in cpu if args.first <= c[1] <= args.last]
     maps = parse_maps(maps_text)
@@ -309,12 +383,16 @@ def main():
     # (named where the image was linked)
     named = symbolize([pc - GUEST_SHIFT for pc in guest], args.elf)
     symbols = {pc: named[pc - GUEST_SHIFT] for pc in guest if pc - GUEST_SHIFT in named}
-    fps = args.fps or (logcat_fps(args.logcat, args.first, args.last) if args.logcat else None)
+    fps = args.fps
+    if not fps and len(frames) > 1:
+        fps = 1e6 * len(frames) / max(1, sum(microseconds for _, microseconds in frames))
+    if not fps and args.logcat:
+        fps = logcat_fps(args.logcat, args.first, args.last)
 
     per_thread = defaultdict(Counter)
     top = defaultdict(Counter)
     for tid, in_syscall, pc, lr, *_rest in samples:
-        kind = "other" if in_syscall else classify(pc, (lr, *_rest[:-1]), maps, sections)
+        kind = "other" if in_syscall else classify(pc, (lr, *_rest[:-2]), maps, sections)
         per_thread[tid][kind] += 1
         if in_syscall:
             top[tid]["(in a system call: blocked)"] += 1
@@ -352,6 +430,47 @@ def main():
         print(f"{names.get(tid, '?')} ({tid}): most sampled")
         for what, count in top[tid].most_common(8):
             print(f"  {100.0 * count / total:5.1f}%  {what}")
+
+    if frames and args.slow:
+        slow_frames(frames, every_sample, names, maps, args)
+
+
+def slow_frames(frames, samples, names, maps, args):
+    """The slowest frames, each with where the threads were while it was made: the samples taken between the end of
+    the frame before it and its own (each frame keeps how many samples had been taken by its end)."""
+    lengths = sorted(microseconds for _, microseconds in frames)
+    print()
+    print(f"{len(frames)} frames: {lengths[len(lengths) // 2] / 1000:.1f} ms the median, "
+          f"{lengths[int(len(lengths) * 0.99)] / 1000:.1f} ms the 99th percentile, {lengths[-1] / 1000:.1f} ms the longest; "
+          f"{sum(1 for x in lengths if x > 33333)} over 33 ms")
+    order = [index for index in sorted(range(1, len(frames)), key=lambda index: -frames[index][1])
+             if frames[index][1] > 33333][:args.slow]
+    by_number = {sample[-2]: sample for sample in samples}
+    wanted = set()
+    for index in order:
+        wanted.update(range(frames[index - 1][0], frames[index][0]))
+    guest = sorted({by_number[n][2] for n in wanted if n in by_number and GUEST_BASE <= by_number[n][2] < GUEST_END})
+    named = symbolize([pc - GUEST_SHIFT for pc in guest], args.elf)
+    for index in sorted(order):
+        start, end = frames[index - 1][0], frames[index][0]
+        print(f"frame {index}: {frames[index][1] / 1000:.1f} ms, {end - start} samples")
+        where = defaultdict(Counter)
+        for number in range(start, end):
+            sample = by_number.get(number)
+            if not sample:
+                continue
+            tid, in_syscall, pc = sample[0], sample[1], sample[2]
+            if in_syscall:
+                what = "(in a system call: blocked)"
+            elif GUEST_BASE <= pc < GUEST_END:
+                what = named.get(pc - GUEST_SHIFT, ("?", "?"))[0]
+            else:
+                what = next((path.split("/")[-1] or "[anon]" for low, high, path in maps if low <= pc < high), "?")
+            where[tid][what] += 1
+        for tid in sorted(where, key=lambda t: -sum(where[t].values()))[:3]:
+            total = sum(where[tid].values())
+            top = ", ".join(f"{what} {100 * count // total}%" for what, count in where[tid].most_common(4))
+            print(f"  {names.get(tid, '?')} ({tid}): {top}")
 
 
 if __name__ == "__main__":

@@ -47,6 +47,9 @@ build: renders the redraws as buttons.json places them into
     tools/embed_assets.py).
 check: compares each PNG, reduced to its bitmap's size, with the map's
     bitmap and writes side-by-side images into --out.
+platform --platform switch|ps5: renders the port's own art (Kenney's Input
+    Prompts) in place of each PNG, into port/assets/buttons/platforms/<port>
+    with its list, buttons.json (embed_assets.py --platform embeds them).
 
 Needs rsvg-convert, Pillow, NumPy and SciPy.
 """
@@ -447,17 +450,142 @@ def check(arguments) -> None:
             sheet.save(output / f"{name}.png")
 
 
+# ---------- a port's own art (port/assets/buttons/platforms/<port>)
+#
+# Kenney's Input Prompts (platforms/<port>/kenney, CC0: platforms/Kenney-LICENSE.txt) drawn in place of the common
+# PNGs: each in the box the common PNG's art takes (a sprite's, in its cell, for the message icons), so that it sits
+# where the game draws the common one. The game's buttons are the Xbox's by where they sit (SDL's south, east, west
+# and north: xinput_sdl.c), so each port draws the button in that place: on the PS5 the cross for A, on the Switch
+# the B (the bottom button) for A. The Switch's menus can take its right button (marked A) as A
+# (controls.nintendo_menu_buttons), so its menus' A and B pictures come twice: as they are with that on, and by
+# place. Each entry says where its letters are right, as bits (embed_assets.py; hud_hires.c: contexts): 1 the menus
+# with the swap on, 2 the menus with it off, 4 a game; 0 everywhere.
+
+PLATFORMS = ASSETS / "platforms"
+CONTEXT_MENUS_SWAPPED, CONTEXT_MENUS, CONTEXT_GAME = 1, 2, 4
+
+# each Xbox button's picture on the port, by where it sits (the game's view of it everywhere but the swapped menus);
+# the sticks' pictures are their rest's and their press's
+PLATFORM_ART = {
+    "switch": {"a": "switch_button_b", "b": "switch_button_a", "x": "switch_button_y", "y": "switch_button_x",
+               "black": "switch_button_r", "white": "switch_button_l",
+               "trigger_left": "switch_button_zl", "trigger_right": "switch_button_zr",
+               "stick_left": "switch_stick_l", "stick_right": "switch_stick_r",
+               "stick_left_press": "switch_stick_l_press", "stick_right_press": "switch_stick_r_press"},
+    "ps5": {"a": "playstation_button_cross", "b": "playstation_button_circle", "x": "playstation_button_square",
+            "y": "playstation_button_triangle", "black": "playstation_trigger_r1", "white": "playstation_trigger_l1",
+            "trigger_left": "playstation_trigger_l2", "trigger_right": "playstation_trigger_r2",
+            "stick_left": "playstation_stick_l", "stick_right": "playstation_stick_r",
+            "stick_left_press": "playstation_stick_l_press", "stick_right_press": "playstation_stick_r_press"},
+}
+# (the Switch's menus with the swap on: A and B by their letters)
+SWAPPED_MENU_ART = {"switch": {"a": "switch_button_a", "b": "switch_button_b"}}
+# the textures the menus draw (the others are a game's HUD prompts)
+MENU_TEXTURES = {"a_butn__0", "b_butn__0", "x_butn__0", "y_butn__0", "a_butn_sm__0", "b_butn_sm__0",
+                 "black_butn__0", "white_butn__0", "hud_msg_icons_sm__0"}
+
+
+def platform_button(name: str) -> str:
+    """The Xbox button (or control) a common texture is of: a_butn_sm__0 is a, classic_black__0 black,
+    thumbstick-full_left__0 stick_left_press."""
+    stem = name[:-len("__0")]
+    if stem.startswith("thumbstick"):
+        state, side = stem[len("thumbstick"):].split("_")
+        return f"stick_{side}" + ("_press" if state == "-full" else "")
+    if stem.startswith("trigger_"):
+        return stem
+    for prefix in ("classic_", "gem_"):
+        if stem.startswith(prefix):
+            return stem[len(prefix):]
+    return stem.split("_")[0]
+
+
+def kenney_face(platform: str, art: str, size: tuple) -> Image.Image:
+    """Kenney's picture, cropped to its shape and as large as fits size (keeping its proportions)."""
+    svg = PLATFORMS / platform / "kenney" / f"{art}.svg"
+    root = ElementTree.parse(svg).getroot()
+    view = [float(n) for n in (root.get("viewBox") or f"0 0 {root.get('width')} {root.get('height')}").split()]
+    zoom = max(4.0, 2 * max(size[0] / view[2], size[1] / view[3]))
+    face = Image.fromarray(render_svg(svg, zoom), "RGBA")
+    face = face.crop(face.getchannel("A").getbbox())
+    factor = min(size[0] / face.width, size[1] / face.height)
+    return face.resize((max(1, round(face.width * factor)), max(1, round(face.height * factor))),
+                       Image.Resampling.LANCZOS)
+
+
+def placed_face(image: Image.Image, face: Image.Image, box: tuple) -> None:
+    """face pasted in the middle of box (left, top, right, bottom)."""
+    left, top, right, bottom = box
+    image.alpha_composite(face, (left + (right - left - face.width) // 2, top + (bottom - top - face.height) // 2))
+
+
+def platform_texture(platform: str, entry: dict, art: dict) -> np.ndarray:
+    """A common texture redrawn with the port's art (art: Xbox button to Kenney's picture)."""
+    common = Image.open(ASSETS / f"{entry['name']}.png").convert("RGBA")
+    image = Image.new("RGBA", common.size)
+    scale = entry["scale"]
+    if "sprites" in entry:
+        # (the message icons: each button's stencil in the box its sprite's art takes, white, its letter cut out;
+        # grey the same as alpha, as the sheet's)
+        for sprite in entry["sprites"]:
+            left, top, right, bottom = [n * scale for n in sprite["cell"]]
+            cell = common.crop((left, top, right, bottom)).getchannel("A").getbbox()
+            if cell is None:
+                continue
+            box = (left + cell[0], top + cell[1], left + cell[2], top + cell[3])
+            button = Path(sprite["svg"]).stem.split("_")[0]
+            placed_face(image, kenney_face(platform, art[button], (box[2] - box[0], box[3] - box[1])), box)
+        pixels = np.asarray(image).copy()
+        pixels[..., :3] = pixels[..., 3:4]
+        return pixels
+    box = common.getchannel("A").getbbox()
+    placed_face(image, kenney_face(platform, art[platform_button(entry["name"])], (box[2] - box[0], box[3] - box[1])),
+                box)
+    pixels = np.asarray(image).copy()
+    if "control_cell" in entry:
+        # (premultiplied, as gameplay_control's: the HUD's ONE / INVSRCALPHA blend)
+        pixels[..., :3] = (pixels[..., :3].astype(np.uint16) * pixels[..., 3:4] + 127) // 255
+        return pixels
+    return bleed(pixels)
+
+
+def platform(arguments) -> None:
+    """Renders the port's art into platforms/<port>/*.png and lists it in platforms/<port>/buttons.json."""
+    name = arguments.platform
+    folder = PLATFORMS / name
+    entries = json.loads(LIST.read_text())["assets"]
+    overrides = []
+    for stale in folder.glob("*.png"):
+        stale.unlink()
+    for entry in entries:
+        variants = [(f"{entry['name']}.png", 0, PLATFORM_ART[name])]
+        swapped = SWAPPED_MENU_ART.get(name, {})
+        if entry["name"] in MENU_TEXTURES and swapped and (
+                platform_button(entry["name"]) in swapped or "sprites" in entry):
+            # (by place in a game and the menus without the swap; by letter in the menus with it)
+            variants = [(f"{entry['name']}.png", CONTEXT_MENUS | CONTEXT_GAME, PLATFORM_ART[name]),
+                        (f"{entry['name']}.menus.png", CONTEXT_MENUS_SWAPPED, {**PLATFORM_ART[name], **swapped})]
+        for png, contexts, art in variants:
+            image = platform_texture(name, entry, art)
+            Image.fromarray(image, "RGBA").save(folder / png, optimize=True)
+            overrides.append({"name": entry["name"], "png": png, "contexts": contexts})
+            print(f"{name}/{png}: {image.shape[1]}x{image.shape[0]}" + (f", contexts {contexts}" if contexts else ""))
+    (folder / "buttons.json").write_text(json.dumps({"overrides": overrides}, indent=1) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("layout")
     command.add_argument("--map", required=True)
     commands.add_parser("build")
+    command = commands.add_parser("platform")
+    command.add_argument("--platform", required=True, choices=sorted(PLATFORM_ART))
     command = commands.add_parser("check")
     command.add_argument("--map", required=True)
     command.add_argument("--out", required=True)
     arguments = parser.parse_args()
-    {"layout": layout, "build": build, "check": check}[arguments.command](arguments)
+    {"layout": layout, "build": build, "check": check, "platform": platform}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

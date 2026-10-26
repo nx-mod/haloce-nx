@@ -172,6 +172,11 @@ void particles_stop_on_first_person_weapon(
 	short local_player_index);
 real particle_get_radius(
 	long particle_index);
+/* port: where a particle not attached to an object is drawn this frame
+(particles.c: it moves once a tick, and is drawn between its ticks) */
+void particle_render_position(
+	long particle_index,
+	real_point3d *position);
 boolean valid_real_argb_color(
 	real_argb_color const *color);
 void particles_disconnect_from_structure_bsp(

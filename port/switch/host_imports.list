@@ -27,6 +27,12 @@ host_storage_commit
 host_clock_cpu
 host_dk_output_height
 host_dk_gpu_frame_us
+# mod textures' bytes kept in the host's memory, outside the Xbox window
+# (port/switch/host/host_texture_cache.c, port/linux/game/mod_bitmaps.c): a
+# 64-bit key in one X register, buffer a guest address
+host_texture_cache_get
+host_texture_cache_put
+host_texture_cache_clear
 # the high-res HUD's sheets, decoded by the host (port/switch/host/host_dk_hud.c):
 # png and tag are guest addresses
 host_dk_hud_ready

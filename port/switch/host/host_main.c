@@ -1563,10 +1563,17 @@ int main(int argc, char *argv[])
 	 * 127.0.0.1:5150, with the signalling brokers' connections open),
 	 * sb_efficiency 8 alone 22, and this 48 and more. The game's own
 	 * buffers stay held to 256 KB (host_net.c), so the larger maximum only
-	 * makes the budget larger. */
+	 * makes the budget larger.
+	 *
+	 * And with 8 sessions of the bsd service, not 3: a call holds one for as
+	 * long as it takes, and the signalling thread's poll and the other
+	 * threads' waiting calls held them all, so that the game thread's two
+	 * receives a frame waited for one - about 0.5 ms each, 4 to 9% of its
+	 * time in a 64-player game. */
 	{
 		SocketInitConfig sockets = *socketGetDefaultInitConfig();
 
+		sockets.num_bsd_sessions = 8;
 		sockets.sb_efficiency = 8;
 		sockets.tcp_tx_buf_max_size = 0x80000;
 		sockets.tcp_rx_buf_max_size = 0x80000;

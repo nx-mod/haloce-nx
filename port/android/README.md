@@ -236,8 +236,9 @@ These settings are only for Android:
 | `input.touch_controls` | The touch controls in a game. `"auto"` (the default): shown on a touchscreen while no controller is connected. `"on"`: also shown with a controller. `"off"`: never shown. A device without a touchscreen never shows them. The menus take taps in any case. |
 | `display.screen_width` | The number of columns of the 480-line picture. `0` (the default): the shape of the display (1068 on a 20:9 phone). `640`: the 4:3 shape of the Xbox. |
 | `debug.sample_seconds` | Refer to "Find problems". |
-| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Refer to "Limits". |
+| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Under OpenGL ES, geometry is streamed in either mode. Refer to "Limits". |
 | `debug.profile_hz` | Refer to "Find problems". |
+| `debug.profile_run` | `true`: each start records a profile of the run into its own folder, `Download/halo_profiles/DDMMYYYY_HHMMSS` (the day and time it started), to send as it is. Refer to "Find problems". `false` (the default): none. Takes effect the next time the game starts. |
 | `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
 | `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. `"auto"`: Turnip on an Adreno, which the app downloads (refer to "Turn on Turnip"). Otherwise the file name of a driver archive in the data folder. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK) or `"auto"` (TURNIP). |
 | `debug.vk_probe` | Refer to "Find problems". |
@@ -720,6 +721,23 @@ assembly of the port is necessary:
 - The symbol aliases in `guest/libc/src_include/features.h`. The Darwin
   target does not accept alias attributes.
 
+## Geometry uploads
+
+Android streams vertex and index data from the current CPU bytes instead
+of reusing the persistent geometry mirror or its cached index extents.
+This is automatic; no console command or configuration change is needed.
+Affected players reported that bypassing the cache resolved stretched or
+missing geometry, with some also reporting better performance. The exact
+cache failure mechanism remains unconfirmed.
+
+The Android-only guard in `mirror_range` uses the existing streaming
+fallback. Streamed upload methods, frame fences, shaders, texture caching
+and CPU write tracking are unchanged. Desktop and web retain their cache.
+Xbox and Custom Edition maps keep their existing loaders and resource
+paths. `tools/test_android_mirror_uploads.py` checks the bypass with large
+and reused ranges, frame-counter rollover and desktop/web cache controls;
+it does not substitute for device gameplay validation.
+
 ## Find problems
 
 - Enter `adb logcat -s halo` to see the log of the port and the errors of
@@ -747,6 +765,31 @@ assembly of the port is necessary:
   driver and everything else, and the milliseconds of CPU for each frame.
   `--from` and `--to` select seconds of the run. Set `gpu_stats = true` too,
   for the frames per second.
+- Set `profile_run = true` in `[debug]` of `config.toml` to profile a
+  player's run without adb. Each start then makes a folder,
+  `Download/halo_profiles/DDMMYYYY_HHMMSS`, that a file manager or a USB
+  cable reaches, and the game writes into it:
+  - `profile.bin`: the samples of `profile_hz` (500 a second if it is `0`),
+    and the length of each frame shown;
+  - `gpu.txt`: under Vulkan, every 300 frames, the GPU's time for each
+    rendering, by what it draws into (its size, colour and depth) and by
+    the part of the frame it began in (the sky, the objects, the HUD...),
+    the time between renderings (copies and barriers), the renderings a
+    frame and the time between presents. A phone's GPU gives every
+    timestamp inside a rendering the same time, so the parts within one
+    are not told apart;
+  - `halo.log`: the log of the run, as logcat has it;
+  - `run.txt` and `config.toml`: the build, the phone, its GPU and driver,
+    and the settings.
+
+  Android 9 and 10 ask once for access to the storage; without it, the
+  folder is `files/halo_profiles/` in the data folder. The player sends
+  the folder, and `tools/android_profile_report.py <folder>` prints the
+  same report as for `profile.bin`, with the slowest frames and where each
+  thread was during each. It needs the game image of the same build:
+  `--apk` takes it from that build's APK (a release's, from its zip), or
+  `--elf` names it (`halo_guest_vk.elf`, or `halo_guest.elf` for OpenGL ES). The
+  profile costs some speed: compare runs with it on.
 - Set `vk_probe = "all"` in `[debug]` of `config.toml` to run the Vulkan
   probe (port/android/VULKAN.md, phase 0) instead of the game. The value
   can be a list of `caps`, `memory`, `compile`, `pipelines`, `draw` and `present`.
@@ -787,11 +830,11 @@ assembly of the port is necessary:
   operate. The Xbox memory uses 4 KB pages.
 - The x86 Android emulator runs the app through its ARM translation. The
   translation cannot deliver the page faults that the renderer uses to
-  notice changed textures and vertices. On the emulator the app compares
+  notice changed textures. On the emulator the app compares
   page contents once a frame instead ("write tracking: page hashes" in the
-  log). This is slower, and a write shows one frame later, so moving
-  geometry can glitch briefly. `debug.memory_watch = false` does the same
-  on a device. The translation also has no scalar conversion from floating
+  log). This is slower, and texture changes may appear one frame later.
+  `debug.memory_watch = false` does the same on a device. The translation
+  also has no scalar conversion from floating
   point to an integer in a SIMD register (`fcvtzs s0, s1`, an illegal
   instruction there), so `tools/android_asm_convert.py` writes each as the
   vector form, which leaves the register and the exception flags the same.

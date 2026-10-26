@@ -171,6 +171,17 @@ static struct host_vk_ring *ring_ready(void)
 	return frame->ring;
 }
 
+unsigned char *host_vk_data_place(VkDeviceSize size, VkBuffer *buffer, VkDeviceSize *offset)
+{
+	struct host_vk_ring *ring = ring_ready();
+	struct ring_buffer *place = ring ? ring_place(ring, size, offset) : NULL;
+
+	if (!place)
+		return NULL;
+	*buffer = place->buffer;
+	return place->mapped + *offset;
+}
+
 void host_vk_data_frame_end(void)
 {
 	B.frames[B.frame].ring_valid = 0;

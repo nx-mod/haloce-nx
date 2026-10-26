@@ -545,6 +545,16 @@ static void frame_statistics(void)
 		host_logf(HOST_LOG_INFO, "frame times: %u under 15 ms, %u 15-18, %u 18-22, %u 22-28, %u 28-35, %u over 35",
 			frame_buckets[0], frame_buckets[1], frame_buckets[2], frame_buckets[3], frame_buckets[4], frame_buckets[5]);
 		memset(frame_buckets, 0, sizeof(frame_buckets));
+		/* (and every sixth time, 30 s, the memory: host_memory_report) */
+		{
+			static unsigned reports;
+
+			if (++reports % 6 == 0)
+			{
+				host_memory_report("in play");
+				host_texture_cache_report();
+			}
+		}
 		{
 			u64 busy = thread_ticks();
 			u64 wall = armGetSystemTick();
@@ -603,17 +613,6 @@ int host_sdl_gl_swap_window(uint32_t window)
 
 /* ---------- events */
 
-/* the gamepad buttons held, for the exit combination (hotkey and start,
-as the firmware's other ports) */
-static uint32_t buttons_held;
-
-static int exit_combination(void)
-{
-	uint32_t hotkey = (1u << SDL_CONTROLLER_BUTTON_GUIDE) | (1u << SDL_CONTROLLER_BUTTON_BACK);
-
-	return (buttons_held & hotkey) && (buttons_held & (1u << SDL_CONTROLLER_BUTTON_START));
-}
-
 static int translate(const SDL_Event *event, struct host_event *result)
 {
 	memset(result, 0, sizeof(*result));
@@ -641,21 +640,10 @@ static int translate(const SDL_Event *event, struct host_event *result)
 		result->kind = _host_event_gamepad_removed;
 		result->which = (uint32_t)event->cdevice.which;
 		return 1;
+	/* (the buttons are read from the gamepad's state, not its events; there is no button combination that quits:
+	Start and Back together once closed the game at once, mid-match) */
 	case SDL_CONTROLLERBUTTONDOWN:
 	case SDL_CONTROLLERBUTTONUP:
-		if (event->cbutton.button < 32)
-		{
-			if (event->type == SDL_CONTROLLERBUTTONDOWN)
-				buttons_held |= 1u << event->cbutton.button;
-			else
-				buttons_held &= ~(1u << event->cbutton.button);
-		}
-		if (event->type == SDL_CONTROLLERBUTTONDOWN && exit_combination())
-		{
-			host_logf(HOST_LOG_INFO, "exit combination pressed");
-			result->kind = _host_event_quit;
-			return 1;
-		}
 		return 0;
 	case SDL_WINDOWEVENT:
 		if (event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)

@@ -100,54 +100,53 @@ The gameplay prompts are the one family the player chooses between.
 
 ## Art for one port only
 
-> **Not built yet.** Today every port embeds the same PNGs. This is how it
-> should work; the steps marked *(to build)* are the work to do first.
-
-A port's art is a folder of overrides beside the common art:
+A port's art is a folder of overrides beside the common art. The Switch and
+the PS5 have one each, drawn from [Kenney](https://kenney.nl/)'s Input
+Prompts (CC0, `platforms/Kenney-LICENSE.txt`, which their releases carry):
 
 ```
 port/assets/buttons/
-    svg/a_butn.svg            common sources
-    a_butn__0.png             common PNGs
+    a_butn__0.png             common PNGs (Android and the desktop builds)
+    platforms/Kenney-LICENSE.txt
     platforms/switch/
-        svg/a_butn.svg        the Switch's sources, where it differs
-        a_butn__0.png         the Switch's PNGs, the same names
+        kenney/*.svg          Kenney's pictures the port uses
+        a_butn__0.png         the port's PNGs, the same names
+        a_butn__0.menus.png   (a second picture: see "The Switch" below)
+        buttons.json          each PNG, the entry it stands for and its contexts
+    platforms/ps5/            the same
 ```
 
 - **Same entries, other pixels.** A port's PNG stands for the same entry in
-  `buttons.json`, with the same tag, size and CRC. Only the pixels differ.
-  So the game's code is the same for every port, and nothing needs
-  `#ifdef`. A name the port has no PNG for uses the common one.
-- **Rendering.** *(to build)* `tools/button_assets.py build --platform switch`
-  renders each entry from `platforms/switch/svg/<svg>` (or
-  `platforms/switch/source/<png>`) when that file exists, into
-  `platforms/switch/<name>.png`. It skips entries the port does not override.
-- **Embedding.** *(to build)* `hud_assets_build(n, prefix, output)` already
-  knows the port (`"switch"`, `"android"`, `"linux"`, `"windows"`). It
-  should pass it to the rule (`embed_assets.py --platform switch $out`), and
-  `textures()` should read `platforms/<platform>/<name>.png` where it exists.
-  `hud_asset_inputs()` should list those files too, so that changing one
-  rebuilds the port. `tools/switch_build.py` already passes `"switch"`.
-- **Defaults.** Usually a port overrides the classic style's PNGs rather
-  than adding a style, so its prompts look its own by default. If it does
-  add a style and wants it as the default, the config table
-  (`port/linux/src/port_config.c`) gives the Switch a setting of its own
-  with an entry under `#ifdef HALO_SWITCH` (the Switch counts as
-  `_platform_android` in the table's platform bits), as `display.vk_driver`
-  is kept off it with `#ifndef HALO_SWITCH`.
+  `buttons.json`, with the same tag, size and CRC. Only the pixels differ,
+  so the game's code is the same for every port. A name the port has no PNG
+  for uses the common one.
+- **Rendering.** `tools/button_assets.py platform --platform switch` draws
+  each entry's Kenney picture (`PLATFORM_ART` in the script) in the box the
+  common PNG's art takes, or each sprite's for the message icons, and
+  writes the PNGs and `platforms/switch/buttons.json`.
+- **By place.** The game's buttons are the Xbox's by where they sit (SDL's
+  south, east, west and north: `xinput_sdl.c`), so each port draws the
+  button in that place: the PS5's cross for A, circle for B, square for X,
+  triangle for Y, R1 and L1 for Black and White, L2 and R2 for the
+  triggers; the Switch's B (the bottom button) for A, A for B, Y for X, X for
+  Y, R and L, ZL and ZR.
+- **Embedding.** `hud_assets_build` passes a port that has a folder to
+  `embed_assets.py --platform <port>`, which embeds its PNGs in place of
+  the common ones, each with its contexts (`hud_hires.h`: where its
+  buttons are right; 0, everywhere).
 
 ### The Switch
 
-- **What the letters mean.** The game's A, B, X and Y are SDL's controller
-  buttons. On the Switch, SDL names a button by its label, so the game's "A"
-  is the button marked A, on the right. If that holds, Switch art keeps the
-  same letters and changes only the look: round, flat faces in the console's
-  colours. Confirm it on the console (press the button marked A on a menu:
-  it should select) before drawing anything that depends on it.
-- **Black and White** have no Switch button. Their prompts (Xbox controller
-  only) can keep the common art, or be drawn as the buttons the port puts
-  those actions on.
-- **To override:** `a_butn`, `b_butn`, `x_butn`, `y_butn` (and their `_sm`),
-  the message icon sheet (from the same SVGs' `oval` and `letter`), and
-  `classic_a` … `classic_y` for the HUD. The gems, Dark Gems, sticks and
-  triggers can keep the common art.
+- **The menus' A and B.** The Switch's own menus choose with the right
+  button (marked A) and go back with the bottom one (marked B), and so do
+  the game's menus while `controls.nintendo_menu_buttons` is on (the
+  default; `xinput_sdl.c` swaps the two while a menu is up). A game's
+  controls keep the buttons by place. So the pictures the menus draw for A
+  and B (`a_butn`, `b_butn`, their `_sm`, and the message icons in the main
+  menu's text) come twice: `*.menus.png` by letter, for the menus with the
+  swap on (context 1), and the others by place, for the menus without it
+  and for a game (contexts 2 and 4). The game takes the one that is right
+  as each map loads (`hud_hires_tags.c`), so a change of the setting shows
+  in the pictures at the next map.
+- **Black and White** have no Switch button: they are R and L, where the
+  port puts them (the shoulders).

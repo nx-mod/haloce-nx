@@ -212,6 +212,27 @@ enum
 	VARIANT_VEHICLE_SET_CUSTOM = 0xFF
 };
 
+/* port: OpenCE's gametypes (port/linux/game/game_modes.c): a mode's rules
+over its game engine's (Slayer's), and Hardcore's over any */
+enum
+{
+	_game_mode_none = 0,
+	_game_mode_swat,
+	_game_mode_infection,
+	_game_mode_gun_game,
+	NUMBER_OF_GAME_MODES
+};
+
+enum
+{
+	/* Gun Game's weapons: the strongest first, the weakest first, or in an
+	order the host draws for each game */
+	_gun_game_order_strongest_first = 0,
+	_gun_game_order_weakest_first,
+	_gun_game_order_random,
+	NUMBER_OF_GUN_GAME_ORDERS
+};
+
 /* (the starting equipment, generic or the map's, is the variant's own:
 _game_variant_generic_starting_equipment_bit) */
 struct game_variant_options
@@ -236,9 +257,30 @@ struct game_variant_options
 	/* no weapons spawn on the map (its grenades and powerups do): for
 	a loadout of none, melee only */
 	boolean no_map_weapons;
+	/* port: OpenCE's gametypes (game_modes.c): the mode (_game_mode_*), and
+	Hardcore's rules (no motion sensor, no aim assist, a kill restores the
+	killer's health and shields) */
+	byte mode;
+	boolean hardcore;
+	/* Infection: the zombies chosen at the start, their speed and their
+	skull's melee damage (percent), their respawn time and the countdown
+	before the first are chosen (seconds), and whether they have shields */
+	byte infection_initial_zombies;
+	byte infection_zombie_speed;
+	byte infection_skull_damage;
+	byte infection_respawn_time;
+	byte infection_countdown;
+	boolean infection_zombie_shields;
+	/* Gun Game: the weapons' order (_gun_game_order_*), and whether a melee
+	kill takes the victim back a weapon */
+	byte gun_game_order;
+	boolean gun_game_melee_demotes;
+	byte reserved[6];
 };
 
-typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x1C ? 1 : -1];
+typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x2C ? 1 : -1];
+/* (builds before OpenCE's gametypes saved and sent only the first 0x1C bytes) */
+#define GAME_VARIANT_OPTIONS_V1_SIZE 0x1C
 
 struct game_engine
 {
@@ -369,6 +411,10 @@ void game_variant_options_default(
 	struct game_variant_options *options);
 void game_engine_playlist_initialize(
 	void);
+/* port: a loadout weapon's (_loadout_weapon_*) definition, NONE if the map
+has none */
+long game_engine_loadout_weapon_definition(
+	byte weapon);
 
 long game_globals_get_weapon(
 	struct game_globals *game_globals,
@@ -710,5 +756,21 @@ extern struct game_engine *game_engine;
 real game_engine_get_damage_multiplier(
 	long damaging_player_index,
 	long damaged_player_index);
+
+/* port: (game_engine_ctf.c) a team's flag as the bots see it: where it is, who carries it, whether it is home,
+and where home is; FALSE for a team with no flag this game */
+boolean game_engine_ctf_flag_state(long team_index, real_point3d *position, long *carrier_player_index,
+	boolean *at_home, real_point3d *home);
+/* port: whether touching one's own flag away from home returns it */
+boolean game_engine_ctf_touch_returns(void);
+/* port: whether a capture needs the capturer's own flag at home */
+boolean game_engine_ctf_home_to_score(void);
+
+/* port: (game_engine_king.c) the hill as the bots see it: its points, its height, its middle and its number;
+FALSE while there is none */
+boolean game_engine_king_hill(real_point3d *points, long maximum, long *point_count, real *bottom, real *top,
+	real_point3d *center, long *hill_id);
+/* port: whether a point is on the hill, as a player's middle is counted */
+boolean game_engine_king_point_on_hill(real_point3d const *position);
 
 #endif // __GAME_ENGINE_H

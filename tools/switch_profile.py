@@ -133,6 +133,10 @@ def main():
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--folded", type=Path, help="also write collapsed stacks here")
     parser.add_argument("--spikes", action="store_true", help="the slow frames' files (spike_NNN.txt), each alone")
+    parser.add_argument("--images", type=Path, default=BUILD,
+                        help="the folder of the images the console ran (halo_guest.elf, and halo.elf for the host's "
+                             "names): build/switch by default; a release's unzipped folder for a player's profile "
+                             "(without its halo.elf, which a release does not carry, the host's frames are addresses)")
     args = parser.parse_args()
 
     prefix = "spike" if args.spikes else "profile"
@@ -154,11 +158,11 @@ def main():
 
 
 def report(args, profiles):
-    image = BUILD / profiles[0]["image"]
-    host_elf = BUILD / "halo.elf"
+    image = args.images / profiles[0]["image"]
+    host_elf = args.images / "halo.elf"
     guest_ranges = load_ranges(image)
     anchor_name, anchor_runtime = profiles[0]["anchor"]
-    anchor_link = symbol_address(host_elf, anchor_name)
+    anchor_link = symbol_address(host_elf, anchor_name) if host_elf.exists() else None
     host_shift = anchor_runtime - anchor_link if anchor_link is not None else None
     if any(profile["anchor"] != profiles[0]["anchor"] or profile["image"] != profiles[0]["image"]
            for profile in profiles):

@@ -114,7 +114,10 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/harness tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py
+          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/harness tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
+          # the dedicated server: --version, and --server without maps refused (exit code 2); its cases with
+          # clients need the retail maps, and are skipped
+          python -m pytest -q tools/test_dedicated_server.py
           python tools/test_light_storage.py
 
       - name: Compile cache
@@ -787,7 +790,23 @@ jobs:
             esac
             (cd "$build" && zip $level -qr "$GITHUB_WORKSPACE/release/$name.zip" .)
           done
+          python3 tools/ci_build.py sums release
           ls -l release
+
+      # SHA256SUMS signed with the release key's seed (the RELEASE_SIGNING_KEY
+      # secret, 64 hex digits), and the signature checked against
+      # deploy/release-key.pub before anything is published: a secret that is
+      # not the key of the public key in the repository stops the release
+      - name: Sign the sums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::warning::no RELEASE_SIGNING_KEY secret: the release's SHA256SUMS is not signed"
+            exit 0
+          fi
+          sh tools/release_sign.sh sign release/SHA256SUMS
+          sh tools/release_sign.sh verify release/SHA256SUMS
 
       - name: Publish
         id: publish

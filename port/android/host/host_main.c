@@ -23,6 +23,17 @@ choose between the two game images (halo_guest.elf, drawing with OpenGL ES,
 and halo_guest_vk.elf, with Vulkan: port/android/VULKAN.md), and
 debug.vk_validation for the Vulkan renderer. The log is logcat's, tag
 "halo".
+
+debug.profile_run records a profile of each run into a folder of its own,
+which the launcher makes (Download/halo_profiles/DDMMYYYY_HHMMSS, with the
+build and the phone in run.txt: LauncherActivity.java) and names in
+profile_folder.txt; without it, one is made in the data folder's
+halo_profiles. The log goes there too (halo.log: the host's lines and the
+game's, host_syscall.c), this run's part of the game's debug.txt (copied as
+it grows, from where it ended when the run began: the file keeps every
+run's), and the CPU profiler
+(profile.bin: host_debug.c, at debug.profile_hz, 500 if that is 0) and the
+Vulkan renderer's GPU times (gpu.txt: host_vk_profile.c) write there.
 */
 
 #include "host.h"
@@ -36,8 +47,13 @@ debug.vk_validation for the Vulkan renderer. The log is logcat's, tag
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <sys/system_properties.h>
+#include <sys/uio.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ---------- the log: logcat */
@@ -47,6 +63,195 @@ int host_renderer_vulkan;
 static void log_to_logcat(int priority, const char *line)
 {
 	__android_log_write(priority, "halo", line);
+}
+
+/* ---------- a profiled run's folder (debug.profile_run) */
+
+static char profile_folder[512];
+/* its halo.log, written as logcat is (write: the sink may be called from a signal handler, host_debug.c) */
+static int profile_log = -1;
+static struct timespec profile_started;
+
+static void log_to_logcat_and_profile(int priority, const char *line)
+{
+	static const char levels[] = "??VDIWEF";
+	struct timespec now;
+	char prefix[32];
+	double seconds;
+	struct iovec parts[3];
+
+	__android_log_write(priority, "halo", line);
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	seconds = (double)(now.tv_sec - profile_started.tv_sec) + (double)(now.tv_nsec - profile_started.tv_nsec) / 1e9;
+	snprintf(prefix, sizeof(prefix), "%8.2f %c ", seconds, priority >= 0 && priority < 8 ? levels[priority] : '?');
+	parts[0].iov_base = prefix;
+	parts[0].iov_len = strlen(prefix);
+	parts[1].iov_base = (void *)line;
+	parts[1].iov_len = strlen(line);
+	parts[2].iov_base = (void *)"\n";
+	parts[2].iov_len = 1;
+	writev(profile_log, parts, 3);
+}
+
+/* every folder along path made */
+static void make_folders(const char *path)
+{
+	char partial[512];
+	size_t index;
+
+	snprintf(partial, sizeof(partial), "%s", path);
+	for (index = 1; partial[index]; index++)
+	{
+		if (partial[index] == '/')
+		{
+			partial[index] = 0;
+			mkdir(partial, 0775);
+			partial[index] = '/';
+		}
+	}
+	mkdir(partial, 0775);
+}
+
+static int folder_writable(const char *path)
+{
+	struct stat information;
+
+	return stat(path, &information) == 0 && S_ISDIR(information.st_mode) && access(path, W_OK) == 0;
+}
+
+/* this run's part of the game's debug.txt (the data folder's, which every run adds to): what it adds past where it
+ended as the run began, copied into the profile folder's debug.txt every DEBUG_COPY_SECONDS, so that a run that is
+killed loses no more than that */
+#define DEBUG_COPY_SECONDS 2
+
+static char debug_source[600], debug_copy[600];
+static long debug_copied;
+
+static void debug_copy_new(void)
+{
+	FILE *source = fopen(debug_source, "rb");
+	FILE *copy;
+	char buffer[16384];
+	long size;
+	size_t got;
+
+	if (!source)
+		return;
+	fseek(source, 0, SEEK_END);
+	size = ftell(source);
+	/* (a file begun again: from its start) */
+	if (size < debug_copied)
+		debug_copied = 0;
+	if (size == debug_copied)
+	{
+		fclose(source);
+		return;
+	}
+	copy = fopen(debug_copy, "ab");
+	if (copy)
+	{
+		fseek(source, debug_copied, SEEK_SET);
+		while (debug_copied < size && (got = fread(buffer, 1, sizeof(buffer), source)) > 0)
+		{
+			fwrite(buffer, 1, got, copy);
+			debug_copied += (long)got;
+		}
+		fclose(copy);
+	}
+	fclose(source);
+}
+
+static void *debug_copier(void *unused)
+{
+	(void)unused;
+	for (;;)
+	{
+		sleep(DEBUG_COPY_SECONDS);
+		debug_copy_new();
+	}
+	return NULL;
+}
+
+static void debug_copy_begin(const char *data_root_path)
+{
+	struct stat information;
+	pthread_t thread;
+
+	snprintf(debug_source, sizeof(debug_source), "%s/debug.txt", data_root_path);
+	snprintf(debug_copy, sizeof(debug_copy), "%s/debug.txt", profile_folder);
+	debug_copied = stat(debug_source, &information) == 0 ? (long)information.st_size : 0;
+	if (pthread_create(&thread, NULL, debug_copier, NULL) == 0)
+		pthread_detach(thread);
+}
+
+/* the run's profile folder, its log, and what the profilers need: the launcher's folder, or one in the data folder */
+static void profile_run_begin(const char *data_root_path, int *profile_hz)
+{
+	char path[600];
+	FILE *named;
+
+	clock_gettime(CLOCK_MONOTONIC, &profile_started);
+	snprintf(path, sizeof(path), "%s/profile_folder.txt", data_root_path);
+	named = fopen(path, "r");
+	if (named)
+	{
+		if (fgets(profile_folder, sizeof(profile_folder), named))
+			profile_folder[strcspn(profile_folder, "\r\n")] = 0;
+		fclose(named);
+	}
+	if (!profile_folder[0] || !folder_writable(profile_folder))
+	{
+		time_t now = time(NULL);
+		struct tm local;
+		char stamp[32];
+
+		if (profile_folder[0])
+			host_logf(HOST_LOG_WARN, "profile: cannot write to %s (%s); the profile goes in the data folder",
+				profile_folder, strerror(errno));
+		localtime_r(&now, &local);
+		strftime(stamp, sizeof(stamp), "%d%m%Y_%H%M%S", &local);
+		snprintf(profile_folder, sizeof(profile_folder), "%s/halo_profiles/%s", data_root_path, stamp);
+		make_folders(profile_folder);
+		if (!folder_writable(profile_folder))
+		{
+			host_logf(HOST_LOG_ERROR, "profile: cannot make %s; no profile", profile_folder);
+			profile_folder[0] = 0;
+			return;
+		}
+	}
+	snprintf(path, sizeof(path), "%s/halo.log", profile_folder);
+	profile_log = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0664);
+	if (profile_log >= 0)
+		host_log_set_sink(log_to_logcat_and_profile);
+	snprintf(host_vk_profile_folder, sizeof(host_vk_profile_folder), "%s", profile_folder);
+	debug_copy_begin(data_root_path);
+	if (*profile_hz <= 0)
+		*profile_hz = 500;
+	host_logf(HOST_LOG_INFO, "profile: this run's profile goes to %s (debug.profile_run)", profile_folder);
+}
+
+/* what the run's renderer is, added to the launcher's run.txt */
+static void profile_run_describe(const char *renderer_line)
+{
+	char path[600], value[PROP_VALUE_MAX];
+	FILE *file;
+
+	if (!profile_folder[0])
+		return;
+	snprintf(path, sizeof(path), "%s/run.txt", profile_folder);
+	file = fopen(path, "a");
+	if (!file)
+		return;
+	fprintf(file, "renderer: %s\n", renderer_line);
+	value[0] = 0;
+	__system_property_get("ro.soc.model", value);
+	if (value[0])
+		fprintf(file, "soc: %s\n", value);
+	value[0] = 0;
+	__system_property_get("ro.hardware", value);
+	if (value[0])
+		fprintf(file, "hardware: %s\n", value);
+	fclose(file);
 }
 
 /* ---------- paths */
@@ -140,6 +345,9 @@ void host_gesture_insets(int *insets)
 struct host_settings
 {
 	int profile_hz;
+	int profile_run; /* debug.profile_run */
+	int gpu_split_parts; /* debug.gpu_split_parts */
+	int original_multisample; /* debug.original_multisample */
 	char vk_probe[128]; /* empty: the game runs */
 	char vk_driver[256]; /* display.vk_driver: empty (the default) for the phone's own driver, "auto", or an archive */
 	char renderer[32]; /* display.renderer: "vulkan" (the default, also when empty) or "gl" */
@@ -170,6 +378,9 @@ static void config_read(const char *path, struct host_settings *settings)
 		toml_datum_t statistics = toml_seek(result.toptab, "debug.gpu_stats");
 		toml_datum_t marker = toml_seek(result.toptab, "debug.vk_present_marker");
 		toml_datum_t self_test = toml_seek(result.toptab, "debug.vk_self_test");
+		toml_datum_t profile_run = toml_seek(result.toptab, "debug.profile_run");
+		toml_datum_t split = toml_seek(result.toptab, "debug.gpu_split_parts");
+		toml_datum_t multisample = toml_seek(result.toptab, "debug.original_multisample");
 
 		if (hz.type == TOML_INT64 && hz.u.int64 > 0)
 			settings->profile_hz = hz.u.int64 > 10000 ? 10000 : (int)hz.u.int64;
@@ -183,6 +394,9 @@ static void config_read(const char *path, struct host_settings *settings)
 		settings->gpu_stats = statistics.type == TOML_BOOLEAN && statistics.u.boolean;
 		settings->vk_present_marker = marker.type == TOML_BOOLEAN && marker.u.boolean;
 		settings->vk_self_test = self_test.type == TOML_BOOLEAN && self_test.u.boolean;
+		settings->profile_run = profile_run.type == TOML_BOOLEAN && profile_run.u.boolean;
+		settings->gpu_split_parts = split.type == TOML_BOOLEAN && split.u.boolean;
+		settings->original_multisample = multisample.type == TOML_BOOLEAN && multisample.u.boolean;
 	}
 	toml_free(result);
 }
@@ -257,6 +471,13 @@ static void *game_main(void *unused)
 	snprintf(path, sizeof(path), "%s/config.toml", data_root);
 
 	config_read(path, &settings);
+	if (settings.profile_run)
+		profile_run_begin(data_root, &settings.profile_hz);
+	host_vk_profile_split = settings.profile_run && settings.gpu_split_parts;
+	host_vk_original_multisample = settings.original_multisample;
+	/* (the benchmark's results go there too: port/linux/game/benchmark.c) */
+	if (profile_folder[0])
+		host_environment_set(&environment, "HALO_PROFILE_FOLDER", profile_folder);
 	/* (before the image's imports are resolved: the GL ES image's calls are
 	counted on the way, host_gl.c) */
 	host_gl_statistics = settings.gpu_stats;
@@ -357,6 +578,7 @@ static void *game_main(void *unused)
 
 		host_renderer_vulkan = host_vk_startup(settings.vk_driver, settings.vk_validation, line, sizeof(line));
 		host_logf(HOST_LOG_INFO, "renderer: %s", line);
+		profile_run_describe(line);
 	}
 	else
 	{
@@ -365,6 +587,7 @@ static void *game_main(void *unused)
 			host_logf(HOST_LOG_WARN, "renderer: GL ES (Vulkan was asked for: %s)", vulkan_refused);
 		else
 			host_logf(HOST_LOG_INFO, "renderer: GL ES");
+		profile_run_describe("GL ES (no GPU times: gpu.txt is the Vulkan renderer's)");
 	}
 	if (host_renderer_vulkan)
 	{
@@ -399,7 +622,7 @@ static void *game_main(void *unused)
 	}
 	/* (the sampler and the write tracking: host_common.c) */
 	host_apply_debug_settings(path, native_bridge_active() ? "ARM translation" : NULL);
-	host_debug_start_profiler(settings.profile_hz, data_root);
+	host_debug_start_profiler(settings.profile_hz, profile_folder[0] ? profile_folder : data_root);
 	host_vk_present_marker = settings.vk_present_marker;
 	host_vk_self_test = settings.vk_self_test;
 	boot = host_make_boot(&environment, "halo");

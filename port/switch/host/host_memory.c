@@ -259,6 +259,14 @@ one. 0 to 0 when nothing is held. */
 static uint64_t window_hold_base, window_hold_end;
 static VirtmemReservation *window_hold;
 
+/* Custom Edition's tag cache range (HALO_GUEST_CUSTOM_EDITION_BASE), held
+from the start of main as the image's is (host_memory_hold_image_range), for
+the whole run: it lies just past the image, where the console's mappings
+below 4 GB go next, and a thread's stack (0x11000 or 0x21000 bytes, a host
+thread's) landed in it on some runs before it was reserved, and Custom
+Edition maps could not run. 0 to 0 when nothing is held. */
+static uint64_t custom_edition_hold_base, custom_edition_hold_end;
+
 static int range_claimed(uint64_t address, uint64_t size)
 {
 	int index;
@@ -266,6 +274,8 @@ static int range_claimed(uint64_t address, uint64_t size)
 	if (address < image_hold_end && image_hold_base < address + size)
 		return 1;
 	if (address < window_hold_end && window_hold_base < address + size)
+		return 1;
+	if (address < custom_edition_hold_end && custom_edition_hold_base < address + size)
 		return 1;
 	for (index = 0; index < reservation_count; index++)
 	{
@@ -348,6 +358,17 @@ void host_memory_hold_image_range(void)
 	if (!hold)
 		host_logf(HOST_LOG_ERROR, "libnx would not hold the guest image's range at %08x; a thread's stack may "
 			"land in it", HALO_GUEST_IMAGE_BASE);
+
+	/* (and Custom Edition's tag cache's, for the whole run) */
+	custom_edition_hold_base = HALO_GUEST_CUSTOM_EDITION_BASE;
+	custom_edition_hold_end = HALO_GUEST_CUSTOM_EDITION_END;
+	virtmemLock();
+	hold = virtmemAddReservation((void *)(uintptr_t)HALO_GUEST_CUSTOM_EDITION_BASE,
+		HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE);
+	virtmemUnlock();
+	if (!hold)
+		host_logf(HOST_LOG_ERROR, "libnx would not hold Custom Edition's tag cache range at %08x; a thread's stack "
+			"may land in it", HALO_GUEST_CUSTOM_EDITION_BASE);
 }
 
 void host_memory_hold_window_range(void)
@@ -505,6 +526,8 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 				move = start;
 				if (image_hold_base <= move && move < image_hold_end)
 					move = image_hold_end;
+				if (custom_edition_hold_base <= move && move < custom_edition_hold_end)
+					move = custom_edition_hold_end;
 				for (int index = 0; index < reservation_count; index++)
 				{
 					if (reservations[index].base <= move &&
@@ -804,6 +827,8 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	window took it once, at 0x40000000: the guest's request for it then
 	landed inside the window, and lumoria_a.map's tag data was loaded over
 	the game state (game.c's "!game_globals->active"). */
+	/* (its hold stands for it from here: libnx keeps both reservations) */
+	custom_edition_hold_base = custom_edition_hold_end = 0;
 	if (reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE, 0) != 0)
 	{
 		host_logf(HOST_LOG_WARN, "Custom Edition's tag cache range %08x-%08x is taken: its maps cannot run",
@@ -845,6 +870,7 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 		(unsigned int)(window_size / (1024 * 1024)),
 		(unsigned long long)window_base, (unsigned long long)window_end,
 		(unsigned long long)image_base, (unsigned long long)image_end);
+	host_memory_report("the window placed");
 	return 0;
 }
 

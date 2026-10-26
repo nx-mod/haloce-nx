@@ -66,8 +66,17 @@ a bitmap made is kept until the map goes, as anything may still hold it.
 #include "mods.h"
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef HALO_SWITCH
+/* the host's cache of textures' bytes, outside the Xbox window (port/switch/host/host_texture_cache.c) */
+int host_texture_cache_get(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_put(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_clear(void);
+void memory_watch_prepare_write(void *address, unsigned long size);
+#endif
 
 /* the platform layer's (port/linux/src) */
 void halo_custom_edition_texels_channels(void const *texels, unsigned char channel_order);
@@ -1198,6 +1207,11 @@ void mod_bitmaps_tags_unloaded(
 {
 	struct mod_bitmap *made = mod_bitmaps_globals.bitmaps;
 
+#ifdef HALO_SWITCH
+	/* (the host's copies of the map's mod bitmaps go with them) */
+	host_texture_cache_clear();
+#endif
+
 	while (made)
 	{
 		struct mod_bitmap *next = made->next;
@@ -1223,13 +1237,37 @@ boolean mod_bitmaps_contain(
 	return bitmap_of(bitmap) != NULL;
 }
 
+/* a bitmap's pixels from its file: on the Switch, from the host's cache if
+it has them, and kept there once read (the texture cache takes a mod's
+bitmaps back from it, not from the card), by the file as the mods were last
+found, and where in it */
+static boolean mod_bitmaps_pixels_read(
+	struct mod_bitmap const *made,
+	unsigned long offset,
+	void *buffer,
+	unsigned long size)
+{
+#ifdef HALO_SWITCH
+	unsigned long long key = ((unsigned long long)(port_mods_scans() & 0x7FFF) << 48) ^
+		((unsigned long long)(made->file & 0xFFFF) << 32) ^ (unsigned long long)offset;
+
+	memory_watch_prepare_write(buffer, size);
+	if (host_texture_cache_get(key, (uint32_t)(uintptr_t)buffer, (uint32_t)size))
+		return TRUE;
+	if (!port_mods_file_read(made->file, offset, buffer, size))
+		return FALSE;
+	host_texture_cache_put(key, (uint32_t)(uintptr_t)buffer, (uint32_t)size);
+	return TRUE;
+#else
+	return port_mods_file_read(made->file, offset, buffer, size);
+#endif
+}
+
 boolean mod_bitmaps_read(
 	struct bitmap_data *bitmap,
 	void *buffer)
 {
 	struct mod_bitmap *made = bitmap_of(bitmap);
-	unsigned long size;
-	unsigned long stamp[2];
 
 	if (!made)
 	{
@@ -1239,11 +1277,14 @@ boolean mod_bitmaps_read(
 			halo_custom_edition_texels_channels(buffer, _custom_edition_channels_xbox);
 		return FALSE;
 	}
-	/* (a file changed since it was read is read again by mods_reload: until
-	then its bitmaps are black) */
-	if (!port_mods_file_stamp(made->file, &size, stamp) || size != made->file_size ||
-		stamp[0] != made->stamp[0] || stamp[1] != made->stamp[1] ||
-		!port_mods_file_read(made->file, made->pixel_data_offset + (unsigned long)bitmap->pixels_offset, buffer,
+	/* (the file as it was when the bitmap was made, at the map's load: it is
+	not looked at again for a change at each read - a bitmap is read each time
+	the texture cache takes it back, and with a mod of 991 uncompressed
+	textures each look, a request to the Switch's file system in the middle
+	of a frame, was 1.8% of its game thread. A file changed since is read
+	again by mods_reload; one cut short meanwhile fails to read, and draws
+	black) */
+	if (!mod_bitmaps_pixels_read(made, made->pixel_data_offset + (unsigned long)bitmap->pixels_offset, buffer,
 			(unsigned long)bitmap->pixels_size))
 	{
 		if (!mod_bitmaps_globals.read_failure_reported)

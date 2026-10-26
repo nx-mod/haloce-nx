@@ -401,8 +401,29 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 			descriptors[total].revents = 0;
 		}
 	}
-	result = poll(descriptors, (nfds_t)total, infinite ? -1 :
-		(int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds));
+	{
+		int wait = infinite ? -1 : (int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds);
+		struct timespec started, now;
+
+		clock_gettime(CLOCK_MONOTONIC, &started);
+		for (;;)
+		{
+			result = poll(descriptors, (nfds_t)total, wait);
+			if (result >= 0 || errno != EINTR)
+				break;
+			/* (a signal the game never asked for - the Android profiler's samples, 500 a second: host_debug.c -
+			is no error of the sockets', as select's caller would take it, the game ending; the wait goes on for
+			what is left of it) */
+			if (wait > 0)
+			{
+				long long waited;
+
+				clock_gettime(CLOCK_MONOTONIC, &now);
+				waited = (long long)(now.tv_sec - started.tv_sec) * 1000 + (now.tv_nsec - started.tv_nsec) / 1000000;
+				wait = waited >= milliseconds ? 0 : (int)(milliseconds - waited);
+			}
+		}
+	}
 	for (index = 0; index < total && result > 0; index++)
 	{
 		/* (as select fails on a descriptor that is not open) */

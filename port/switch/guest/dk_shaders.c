@@ -76,8 +76,6 @@ this file sees none of the game's headers */
 union real_argb_color;
 void terminal_status_printf(union real_argb_color const *color, char const *format, ...);
 extern const union real_argb_color *global_real_argb_yellow;
-/* the Xbox memory window's size, as the host found room for it (platform.h) */
-extern unsigned long platform_contiguous_size;
 
 /* d3d8_dk.c: the vertex programs the game has made. The ids are the order
 the game makes them in, the same in both images (phase 4's dump relies on
@@ -134,7 +132,9 @@ size whatever it holds. The vertex key's own bytes are the program hash
 then the packed mask, in that order - not the struct's, which has four
 bytes of padding at its end that would otherwise have to be promised zero
 by every caller */
-#define DK_KEY_DATA_SIZE ((unsigned long)sizeof(struct nv2a_pixel_shader_key))
+#define DK_KEY_DATA_SIZE 256UL
+/* (the pixel key's fields past them - ce_meter_channels, which deko3d never sets - are left 0 in a key read back) */
+typedef char dk_key_data_within_pixel_key[sizeof(struct nv2a_pixel_shader_key) >= DK_KEY_DATA_SIZE ? 1 : -1];
 #define DK_VERTEX_KEY_BYTES 12UL
 
 struct dk_key_record
@@ -226,7 +226,7 @@ typedef char dk_pixel_key_per_pixel_lighting_after_hashed[
 	offsetof(struct nv2a_pixel_shader_key, per_pixel_lighting) == DK_PIXEL_KEY_HASHED_BYTES ? 1 : -1];
 typedef char dk_pixel_key_alpha_test_samples_where_hashed[
 	offsetof(struct nv2a_pixel_shader_key, alpha_test_samples) == 254 ? 1 : -1];
-typedef char dk_pixel_key_size_as_hashed[sizeof(struct nv2a_pixel_shader_key) == 256 ? 1 : -1];
+typedef char dk_pixel_key_size_as_hashed[offsetof(struct nv2a_pixel_shader_key, ce_meter_channels) == DK_KEY_DATA_SIZE ? 1 : -1];
 
 /* the debug options that change the pixel shaders' GLSL (nv2a_psh_dk.c):
 mixed into their hash when any is set, so a debug run compiles its own
@@ -289,7 +289,7 @@ static uint64_t key_hash(uint32_t stage, const void *data)
 /* how many bytes of a record a stage's key takes */
 static unsigned long key_data_size(uint32_t stage)
 {
-	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : sizeof(struct nv2a_pixel_shader_key);
+	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE;
 }
 
 /* ---------- the key store */
@@ -982,25 +982,6 @@ static void status_frame(void)
 	if (++frames < DK_STATUS_EVERY_FRAMES)
 		return;
 	frames = 0;
-	/* a memory window smaller than the largest, once at the start, before
-	the shaders' messages: the host holds the range a 512 MB window takes
-	(port/switch/host/host_memory.c), and what still keeps one out was put
-	there before the program ran, elsewhere each start; Custom Edition maps
-	want the room */
-	{
-		static BOOL window_said;
-
-		if (!window_said)
-		{
-			window_said = TRUE;
-			if (platform_contiguous_size < 512UL * 1024 * 1024)
-			{
-				terminal_status_printf(global_real_argb_yellow,
-					"Restart to get a 512 MB memory window for Custom Edition maps.");
-				return;
-			}
-		}
-	}
 	pending = host_dk_shader_pending();
 	if (pending >= DK_STATUS_MINIMUM || (shown && pending))
 	{

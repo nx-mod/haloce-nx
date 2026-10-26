@@ -277,7 +277,7 @@ int host_https_clock_offset(long long *seconds)
 /* one GET of path on host: the status, the redirect's target if there is
 one, and on 200 the body to body(). -1 if it could not be asked. */
 static int request(const char *host, const char *path, host_https_body body, void *context, char *location,
-	size_t location_size, char *error, size_t error_size)
+	size_t location_size, char *headers, size_t headers_size, char *error, size_t error_size)
 {
 	SslContext ssl_context;
 	SslConnection connection;
@@ -290,6 +290,8 @@ static int request(const char *host, const char *path, host_https_body body, voi
 
 	if (location_size)
 		location[0] = 0;
+	if (headers_size)
+		headers[0] = 0;
 	descriptor = connect_to(host, error, error_size);
 	if (descriptor < 0)
 		return -1;
@@ -400,6 +402,10 @@ static int request(const char *host, const char *path, host_https_body body, voi
 		}
 		if (location_size)
 			header_value(buffer, end, "Location", location, location_size);
+		/* (the headers whole, for a caller that reads its own: the master
+		servers' signature) */
+		if (headers_size)
+			snprintf(headers, headers_size, "%.*s", (int)(end + 2 - buffer), buffer);
 		if (header_value(buffer, end, "Content-Length", value, sizeof(value)))
 			content_length = strtoll(value, NULL, 10);
 		if (status != 200 || !body)
@@ -471,8 +477,9 @@ static int split_url(const char *url, char *host, size_t host_size, const char *
 	return 1;
 }
 
-int host_https_get(const char *url, int follow_redirects, host_https_body body, void *context, char *location,
-	size_t location_size, char *error, size_t error_size)
+/* host_https_fetch's, with the last answer's headers too (none: NULL, 0) */
+static int fetch(const char *url, int follow_redirects, host_https_body body, void *context, char *location,
+	size_t location_size, char *headers, size_t headers_size, char *error, size_t error_size)
 {
 	char host[MAXIMUM_HOST + 1];
 	char *target = malloc(HOST_HTTPS_MAXIMUM_URL);
@@ -494,7 +501,8 @@ int host_https_get(const char *url, int follow_redirects, host_https_body body, 
 			status = fail(error, error_size, "Not an https link: %.80s", target);
 			break;
 		}
-		status = request(host, path, body, context, next, HOST_HTTPS_MAXIMUM_URL, error, error_size);
+		status = request(host, path, body, context, next, HOST_HTTPS_MAXIMUM_URL, headers, headers_size, error,
+			error_size);
 		if (status < 0 || status < 300 || status >= 400 || !next[0])
 			break;
 		if (!follow_redirects)
@@ -521,4 +529,51 @@ int host_https_get(const char *url, int follow_redirects, host_https_body body, 
 	free(target);
 	free(next);
 	return status;
+}
+
+int host_https_fetch(const char *url, int follow_redirects, host_https_body body, void *context, char *location,
+	size_t location_size, char *error, size_t error_size)
+{
+	return fetch(url, follow_redirects, body, context, location, location_size, NULL, 0, error, error_size);
+}
+
+/* ---------- the guest's (port/linux/src/master_list.c, as Android's
+port/android/host/host_https.c has it) */
+
+struct collected
+{
+	char *body;
+	int capacity;
+	int size;
+};
+
+/* (the body kept, up to its capacity: the rest is let go) */
+static int collect(void *context, const void *data, size_t size, long long total)
+{
+	struct collected *collected = context;
+	size_t room = (size_t)(collected->capacity - collected->size);
+
+	(void)total;
+	if (size > room)
+		size = room;
+	memcpy(collected->body + collected->size, data, size);
+	collected->size += (int)size;
+	return 1;
+}
+
+int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes)
+{
+	struct collected collected = { body, sizes->body_capacity > 0 ? sizes->body_capacity : 0, 0 };
+	int answer;
+
+	sizes->status = 0;
+	sizes->body_size = 0;
+	answer = fetch(url, 1, collect, &collected, NULL, 0, headers,
+		sizes->headers_size > 0 ? (size_t)sizes->headers_size : 0, error,
+		sizes->error_size > 0 ? (size_t)sizes->error_size : 0);
+	if (answer < 0)
+		return 0;
+	sizes->status = answer;
+	sizes->body_size = collected.size;
+	return 1;
 }

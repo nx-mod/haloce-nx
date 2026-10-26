@@ -51,6 +51,7 @@ this build's order; forgotten together when the map goes
 (port/linux/src/xbox_textures.c) */
 void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order);
 void halo_custom_edition_texels_forget(void);
+void halo_custom_edition_hud_meter(int active);
 /* whether a Halo Custom Edition map's multiplayer vehicles are chosen by
 their placements' spawn flags, as in retail Halo, and whether a vehicle
 placement is placed in the running game
@@ -88,6 +89,15 @@ void halo_screen_anti_alias(short x0, short y0, short x1, short y1);
 the Switch's renderer keeps it in its record of the commands it ran, for
 the log after a GPU fault (port/switch/host/host_dk.c); nothing elsewhere */
 void halo_render_marker(char const *name);
+/* whether the sun's glow is drawn from the glow the frame before made at its end, rather than from a copy of the
+screen made in the middle of the frame (source/rasterizer/xbox/rasterizer_xbox_lights.c): Android's Vulkan renderer,
+whose phones' GPUs pay for that copy by storing the screen out of their tile memory and loading it back
+(debug.original_sun_glow turns it off); not elsewhere */
+int halo_render_defer_sun_glow(void);
+/* the same for the water's ripples' bump map (source/rasterizer/xbox/rasterizer_xbox_water.c): the water drawn with
+the one the frame before made at its end, rather than one made in the middle of the frame, its 128 by 128 target
+ending the screen's rendering; Android's Vulkan renderer (debug.original_water turns it off), not elsewhere */
+int halo_render_defer_water(void);
 /* the draws that follow drawn only where texture coordinate 0's u and v are
 in [low, high], or (clip FALSE) everywhere: a shadow cast on the level
 (source/rasterizer/xbox/rasterizer_xbox_shadows.c), which changes nothing
@@ -116,6 +126,23 @@ unsigned char halo_screen_fast_blur(void);
 /* display.hdr's tone mapping of a window's 3D view, before its
 anti-aliasing (source/render/render.c) */
 void halo_screen_tone_map(short x0, short y0, short x1, short y1);
+/* network.client_timeout_seconds, in milliseconds (port/linux/src/port_config.c) */
+unsigned long network_client_timeout_milliseconds(void);
+/* a dedicated server (halo --server: port/linux/src/server_mode.c,
+port/linux/game/server_director.c; docs/dedicated_server.md): whether this
+run is one; its start, before the game's (shell_xbox.c); its frames' pace
+(main.c); the game's fatal error ended with (main.c); and the console's
+output, which it logs and captures for its commands' replies (terminal.c) */
+int halo_server_mode(void);
+void server_mode_start(void);
+void server_mode_pace_frame(void);
+void server_fatal(char const *text);
+void server_console_output(const char *text);
+/* ... whether debug.txt's lines go to the standard error too
+(server.log_debug_echo: errors.c) */
+int halo_server_debug_echo(void);
+/* ... the level its rotation plays next, NULL if none (game_engine.c) */
+char const *server_director_first_level(void);
 /* the mouse in the menus (source/interface/ui_widget.c) */
 #include "halo_ui_pointer.h"
 /* TRUE when B steps out of a custom-map folder or the Map screen's

@@ -773,6 +773,14 @@ static void lruv_cache_verify(
 	match_assert("c:\\halo\\SOURCE\\memory\\lruv_cache.c", 755, cache->signature==LRUV_CACHE_SIGNATURE);
 	data_verify(cache->blocks);
 
+#ifdef HALO_RELEASE
+	/* port: the walk over every block of the cache is a check only (it reads
+	them, and asserts): a release build leaves it out, as the retail game's
+	did. It ran at every block made, touched and let go - a decal cache's,
+	at each bullet's mark, was 6% of the Switch's game thread in a
+	64-player firefight. */
+	verify_blocks = FALSE;
+#endif
 	if (verify_blocks)
 	{
 		block_index = cache->first_block_index;

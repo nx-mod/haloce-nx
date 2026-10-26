@@ -29,6 +29,7 @@ instance is 1.0-level and the extension stands in for it */
 	X(vkGetPhysicalDeviceFeatures2) X(vkGetPhysicalDeviceProperties2) X(vkGetDeviceProcAddr) \
 	HOST_VK_SURFACE_FUNCTIONS(X) X(vkDestroySurfaceKHR) X(vkCreateDevice) \
 	X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceFormatProperties) \
+	X(vkGetPhysicalDeviceImageFormatProperties) \
 	X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) \
 	X(vkGetPhysicalDeviceSurfaceFormatsKHR)
 #ifdef HALO_PS5
@@ -96,7 +97,7 @@ as a Vulkan function */
 	X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) \
 	X(vkCreateSampler) X(vkDestroySampler) X(vkCmdCopyBufferToImage) X(vkCmdCopyImage) \
 	X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdBeginQuery) X(vkCmdEndQuery) \
-	X(vkCmdCopyQueryPoolResults)
+	X(vkCmdCopyQueryPoolResults) X(vkCmdWriteTimestamp) X(vkGetQueryPoolResults)
 
 #define X(name) extern PFN_##name name __attribute__((visibility("hidden")));
 HOST_VK_DEVICE_FUNCTIONS(X)
@@ -128,6 +129,10 @@ struct host_vk_target
 	VkDeviceMemory multisample_memory;
 	VkImageView multisample_view;
 	VkImageLayout multisample_layout;
+	/* a draw has sampled it: made readable as soon as it is no longer drawn into (command_targets), so that the
+	rendering of the next draw that samples it need not end to make it so - an object's shadow map, cast onto the
+	level in the screen's rendering */
+	int sampled;
 	struct host_vk_target *next_in_bucket;
 };
 
@@ -172,6 +177,9 @@ struct host_vk_backend
 	VkFilter blit_filter;
 	/* the optional device features that were enabled */
 	int sampler_anisotropy, fill_mode_non_solid, occlusion_query_precise, texture_compression_bc;
+	/* VK_EXT_multisampled_render_to_single_sampled: a multisampled rendering draws into the targets' own images, its samples
+	kept in the GPU's tile memory and resolved as they are stored (the sample counts it can, 0 when it is off) */
+	VkSampleCountFlags msrtss_counts;
 	VkFormatFeatureFlags swapchain_features;
 
 	struct host_vk_frame frames[HOST_VK_FRAMES];
@@ -187,6 +195,13 @@ struct host_vk_backend
 	uint64_t target_clock;
 	struct host_vk_target *last_color, *last_depth; /* the pair a command last named, for the statistics */
 	int rendering; /* a rendering is open on them */
+	/* a clear of the whole of the bound targets not made yet: the next rendering on them begins with it (its attachments'
+	load: VK_ATTACHMENT_LOAD_OP_CLEAR), rather than loading what they held and then clearing it (host_vk_render.c's
+	command_clear); its colour, depth and stencil, and which of them */
+	int clear_color_pending, clear_depth_pending, clear_stencil_pending;
+	VkClearColorValue clear_color;
+	float clear_depth;
+	uint32_t clear_stencil;
 	uint32_t area_width, area_height; /* its render area */
 
 	struct host_vk_swapchain chain;
@@ -210,6 +225,12 @@ struct host_vk_backend
 	struct host_vk_counts
 	{
 		unsigned frames, hand_overs, targets, clears, presents, clears_drawn, clears_attachments, target_changes;
+		/* renderings ended to make a target readable for a draw (host_vk_draw.c), and targets made readable as
+		they were left instead (command_targets) */
+		unsigned sample_splits, read_ahead;
+		/* whole-target clears made by a rendering's load, and those that had to be made alone (the targets wanted
+		before a draw: command_clear) */
+		unsigned clears_loaded, clears_waited;
 		unsigned recreations;
 		unsigned data_records, data_bytes;
 		unsigned draws_ready, draws_skipped_shader, draws_skipped_pipeline;
@@ -243,6 +264,35 @@ struct host_vk_image *host_vk_image_get(uint32_t id);
 unsigned host_vk_texture_images(void);
 unsigned host_vk_texture_megabytes(void);
 
+/* host_vk_profile.c: the GPU's time by rendering, while a profile is recorded (debug.profile_run: the folder gpu.txt
+goes in, set before the device is made; empty, off). Each is nothing while it is off. */
+extern char host_vk_profile_folder[512];
+/* debug.gpu_split_parts: a rendering ended at each of the game's parts, to time each on its own (host_main.c) */
+extern int host_vk_profile_split;
+/* debug.original_multisample: multisampled targets get images of their samples beside their own, as before
+VK_EXT_multisampled_render_to_single_sampled (host_main.c) */
+extern int host_vk_original_multisample;
+void host_vk_profile_initialize(void);
+/* the slot's command buffer just begun (its fence passed): its last frame read, its queries reset */
+void host_vk_profile_frame_begin(unsigned slot, VkCommandBuffer command);
+void host_vk_profile_mark(const struct vk_command_marker *command);
+/* just before a rendering begins (outside it: what it draws into, "1042x480 colour+depth"), and just after it ends */
+void host_vk_profile_rendering_begin(VkCommandBuffer command, const char *what);
+void host_vk_profile_rendering_end(VkCommandBuffer command);
+/* the slot's command buffer about to end; presented: it is a frame shown */
+void host_vk_profile_frame_end(unsigned slot, VkCommandBuffer command, int presented);
+
+/* host_vk_hud.c: the high-res HUD's sheets, decoded by the host */
+void host_vk_hud_prepare_command(const struct vk_command_hud_prepare *command, uint32_t size);
+void host_vk_hud_forget_command(void);
+void host_vk_hud_image_command(const struct vk_command_hud_image *command);
+/* (host_vk_texture.c) a 2D BGRA image of id made with all its levels, from host memory (the largest first, one after
+another); 0 if it could not be */
+int host_vk_texture_from_levels(uint32_t id, unsigned width, unsigned height, unsigned levels, const unsigned char *texels);
+/* (host_vk_data.c) size bytes placed in the frame's upload ring, for a copy the frame makes: where they are to be written,
+and the buffer and offset the GPU reads them from; NULL if none can be made */
+unsigned char *host_vk_data_place(VkDeviceSize size, VkBuffer *buffer, VkDeviceSize *offset);
+
 /* host_vk_visibility.c (phase 6): the visibility tests, as occlusion queries */
 void host_vk_visibility_start(void);
 void host_vk_visibility_begin(void);
@@ -255,6 +305,8 @@ void host_vk_visibility_close(VkCommandBuffer command);
 void host_vk_visibility_frame_end(VkCommandBuffer command);
 /* the frame slot's fence has passed: its tests' counts become the slots' latest */
 void host_vk_visibility_retired(unsigned slot);
+/* the frame slot's command buffer just begun: its tests' queries reset, outside any rendering */
+void host_vk_visibility_frame_begin(unsigned slot, VkCommandBuffer command);
 
 /* host_vk_draw.c (phase 6): the mip composites */
 void host_vk_composite_command(const struct vk_command_composite *command);

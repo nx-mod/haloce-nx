@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- voice chat's microphone (asked for only when voice chat first talks) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- debug.profile_run's folder in Download (LauncherActivity), on Android 9 and 10 only: from 11 on, the app makes
+         its own files there without it. Asked for only when a profile is recorded -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <!-- installing a new version of the game (Updater) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -26,6 +29,7 @@
          system would take them and the game would never see them -->
     <application
         android:name=".HaloApplication"
+        android:requestLegacyExternalStorage="true"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"

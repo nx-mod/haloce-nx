@@ -31,6 +31,13 @@ void host_logf(int priority, const char *format, ...) __attribute__((format(prin
 #define HOST_LOG_FATAL 7
 /* guest services also used inside the host (host_main.c) */
 void host_exit(int code) __attribute__((noreturn));
+/* the memory the process and the application pool have and use, for the log (host_mman.c) */
+void host_memory_report(const char *when);
+/* mod textures' bytes kept in the host's memory (host_texture_cache.c): by a key, 1 and the bytes copied if kept */
+int host_texture_cache_get(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_put(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_clear(void);
+void host_texture_cache_report(void);
 /* puts back the clocks host_sdl2.c raised for the game */
 void host_restore_clocks(void);
 int host_errno(void);
@@ -394,8 +401,23 @@ typedef int (*host_https_body)(void *context, const void *data, size_t size, lon
 /* GET url (https://...). A 200's body goes to body, in pieces; redirects are
 followed if follow_redirects, and the last Location seen is copied to location
 either way. Returns the last status, or -1 with error said. */
-int host_https_get(const char *url, int follow_redirects, host_https_body body, void *context, char *location,
+int host_https_fetch(const char *url, int follow_redirects, host_https_body body, void *context, char *location,
 	size_t location_size, char *error, size_t error_size);
+/* the guest's GET (port/linux/src/master_list.c's, the master servers'): its
+status, its headers and its body cut to body_capacity, as Android's
+port/android/host/host_https.c; 1 if an answer came. The sizes are the
+guest's struct (port/android/guest/runtime/guest_host.h) */
+struct host_https_sizes
+{
+	int headers_size;
+	int body_capacity;
+	int error_size;
+	/* the answer: its status, and how much of the body came */
+	int status;
+	int body_size;
+};
+typedef char host_https_sizes_size_check[sizeof(struct host_https_sizes) == 20 ? 1 : -1];
+int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes);
 /* how many seconds the clock of the servers asked is ahead of this
 console's (behind if negative), from the last answer; 0 if none has come */
 int host_https_clock_offset(long long *seconds);

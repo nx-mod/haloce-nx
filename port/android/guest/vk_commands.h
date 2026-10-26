@@ -41,6 +41,10 @@ enum
 	VK_COMMAND_VISIBILITY_END,
 	VK_COMMAND_ANTI_ALIAS,
 	VK_COMMAND_BLIT,
+	VK_COMMAND_MARKER,
+	VK_COMMAND_HUD_PREPARE,
+	VK_COMMAND_HUD_FORGET,
+	VK_COMMAND_HUD_IMAGE,
 };
 
 /* a surface's kind, as the host makes its image */
@@ -120,6 +124,55 @@ struct vk_command_blit
 	uint32_t from[4];
 	uint32_t to[4];
 };
+
+/* the part of the frame the game draws from here on (halo_render_marker: "sky", "objects", "hud"...), for the GPU's time
+by part (host_vk_profile.c); sent only while a profile is recorded (debug.profile_run) */
+#define VK_MARKER_NAME_SIZE 32
+
+struct vk_command_marker
+{
+	struct vk_command_header header;
+	char name[VK_MARKER_NAME_SIZE];
+};
+
+/* the high-res HUD's sheets, decoded by the host (port/android/host/host_vk_hud.c) with their mip levels, into the host's
+memory: made on the game thread at the first frame to draw it, a sheet held that frame (248 ms, the PNG inflated), and
+the guest's heap has no room to hold a map's sheets ahead. A map's sheets to decode now, in this order (what was
+decoded and not drawn for the map before is let go first: VK_COMMAND_HUD_FORGET) */
+struct vk_hud_sheet
+{
+	uint32_t asset;
+	/* guest addresses: the PNG, and the bitmap's tag name (for the log) */
+	uint32_t png;
+	uint32_t png_size;
+	uint32_t tag;
+};
+
+struct vk_command_hud_prepare
+{
+	struct vk_command_header header;
+	uint32_t count;
+	struct vk_hud_sheet sheets[];
+};
+
+struct vk_command_hud_forget
+{
+	struct vk_command_header header;
+};
+
+/* image id made from the sheet's decoded levels (a 2D BGRA image with all of them), which the host lets go: sent once
+host_vk_hud_ready says they are */
+struct vk_command_hud_image
+{
+	struct vk_command_header header;
+	uint32_t id;
+	/* (the sheet again, should the host have let it go since: decoded then) */
+	struct vk_hud_sheet sheet;
+};
+
+/* the host's (host_imports_vk.list): 1 the sheet decoded, and an image of it may be asked for; 0 not yet (queued if it
+was not); -1 never. png and tag are the sheet's, as struct vk_hud_sheet's */
+int host_vk_hud_ready(unsigned int asset, unsigned int png, unsigned int png_size, unsigned int tag);
 
 /* shows the back buffer, letterboxed to the display */
 struct vk_command_present
