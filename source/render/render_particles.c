@@ -30,6 +30,7 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 /* ---------- constants */
 
@@ -80,6 +81,12 @@ boolean local_player_is_first_person(
 		director_get_perspective(local_player_index) ==
 		_director_perspective_first_person;
 
+	/* port: a replay's playback has no local player: its view is first
+	person through the watched player's eyes (their weapon's particles
+	those of the arms drawn: first_person_weapons.c), and the player is
+	not looked up (port/linux/game/network_replay_playback.c) */
+	if (network_replay_playing())
+		return local_player_index == 0 && network_replay_viewing_eyes();
 	if (!result)
 	{
 		long player_index = local_player_get_player_index(local_player_index);
@@ -254,11 +261,17 @@ void render_particles(
 					(short)particle->definition_index;
 				rendered_particle->cluster_index =
 					particle->location.cluster_index;
+				/* port: a charge stuck to the viewmodel is drawn with it.
+				One that also shows on the body was left on the world's
+				view, and the near plane cut it down. */
 				rendered_particle->attached_to_first_person_weapon =
 					owned_by_local_player &&
+					(TEST_FLAG(
+						particle->flags,
+						_particle_datum_dont_draw_third_person_bit) ||
 					TEST_FLAG(
 						particle->flags,
-						_particle_datum_dont_draw_third_person_bit);
+						_particle_datum_attached_to_local_player_bit));
 			}
 		}
 

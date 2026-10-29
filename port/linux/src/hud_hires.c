@@ -122,16 +122,33 @@ int hud_hires_ce_stock_matches(long index, unsigned long address, long width, lo
 }
 
 /* whether the asset's picture is right where it is drawn now: in a game (gameplay), or in the menus, whose buttons
-the Switch can swap (controls.nintendo_menu_buttons; xinput_sdl.c) */
+the Switch can swap (controls.nintendo_menu_buttons; xinput_sdl.c); and, where the port has art of its own, whether
+it is the art chosen: the port's, or with display.xbox_buttons the Xbox's */
 int hud_hires_asset_applies(long asset, int gameplay)
 {
 	unsigned int contexts;
+	unsigned int art;
 	unsigned int now = HUD_HIRES_CONTEXT_GAME;
 
 	if (asset < 0 || asset >= hud_hires_asset_count())
 		return 0;
 	contexts = hud_hires_embedded[asset].contexts;
 	if (!contexts)
+		return 1;
+	art = contexts & (HUD_HIRES_CONTEXT_PLATFORM_ART | HUD_HIRES_CONTEXT_XBOX_ART);
+	if (art)
+	{
+#if defined(HALO_SWITCH) || defined(HALO_PS5)
+		unsigned int chosen = config_boolean("display.xbox_buttons") ? HUD_HIRES_CONTEXT_XBOX_ART :
+			HUD_HIRES_CONTEXT_PLATFORM_ART;
+#else
+		unsigned int chosen = HUD_HIRES_CONTEXT_XBOX_ART;
+#endif
+
+		if (!(art & chosen))
+			return 0;
+	}
+	if (!(contexts & HUD_HIRES_CONTEXT_PLACES))
 		return 1;
 	if (!gameplay)
 	{

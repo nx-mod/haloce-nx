@@ -9,6 +9,9 @@ host_touch_rumble
 host_touch_scene
 host_touch_bindings
 host_touch_gyro_mode
+host_touch_menu_fingers
+# the Theater's EXPORT REPLAYS (port/android/host/host_main.c; port/linux/game/menu_functions.c)
+host_android_export_replays
 # the server browser's requests to the master servers (port/android/host/host_https.c;
 # port/linux/src/master_list.c)
 host_https_get

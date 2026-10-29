@@ -341,6 +341,45 @@ void host_gesture_insets(int *insets)
 	}
 }
 
+/* ---------- the Theater's EXPORT REPLAYS */
+
+/* asks the activity to copy the replays in folder to a folder the player
+chooses (HaloActivity.exportReplays: the system's folder picker, then the
+copy on a thread of its own), found on the activity's class as
+host_gesture_insets' method is */
+void host_android_export_replays(const char *folder)
+{
+	JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+	jobject activity = (jobject)SDL_GetAndroidActivity();
+
+	if (!env || !activity || !folder)
+	{
+		host_logf(HOST_LOG_WARN, "export replays: no activity");
+		return;
+	}
+	{
+		jclass activity_class = (*env)->GetObjectClass(env, activity);
+		jmethodID method = activity_class ?
+			(*env)->GetMethodID(env, activity_class, "exportReplays", "(Ljava/lang/String;)V") : NULL;
+		jstring path = method ? (*env)->NewStringUTF(env, folder) : NULL;
+
+		if (path)
+			(*env)->CallVoidMethod(env, activity, method, path);
+		if ((*env)->ExceptionCheck(env))
+		{
+			(*env)->ExceptionClear(env);
+			host_logf(HOST_LOG_WARN, "export replays: the activity's exportReplays failed");
+		}
+		else
+			host_logf(HOST_LOG_INFO, "export replays: %s", folder);
+		if (path)
+			(*env)->DeleteLocalRef(env, path);
+		if (activity_class)
+			(*env)->DeleteLocalRef(env, activity_class);
+	}
+	(*env)->DeleteLocalRef(env, activity);
+}
+
 /* the settings of [debug] that this file reads, from config.toml */
 struct host_settings
 {

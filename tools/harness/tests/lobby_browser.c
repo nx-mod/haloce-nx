@@ -134,7 +134,7 @@ int main(int argc, char **argv)
 		choices.maps = P2P_LOBBY_MAPS_YES;
 		shown = p2p_lobby_filter(games, count, &choices, map_state);
 		CHECK(shown == 6, "YES: every map");
-	} else CASE("servers_default") {
+	} else CASE("servers_order") {
 		static const char *const expected[] = { "Bravo dedicated", "Echo dedicated empty", "delta full",
 			"alpha player", "Charlie empty" };
 
@@ -183,12 +183,12 @@ int main(int argc, char **argv)
 
 		CHECK(p2p_lobby_sort_parse("players", &reverse) == P2P_LOBBY_SORT_PLAYERS && !reverse, "players");
 		CHECK(p2p_lobby_sort_parse("-map", &reverse) == P2P_LOBBY_SORT_MAP && reverse, "-map: reversed");
-		CHECK(p2p_lobby_sort_parse("nonsense", &reverse) == P2P_LOBBY_SORT_SERVERS && !reverse, "unknown: servers");
-		CHECK(p2p_lobby_sort_parse("-", &reverse) == P2P_LOBBY_SORT_SERVERS && !reverse, "a lone -: servers");
+		CHECK(p2p_lobby_sort_parse("nonsense", &reverse) == P2P_LOBBY_SORT_PLAYERS && !reverse, "unknown: players");
+		CHECK(p2p_lobby_sort_parse("-", &reverse) == P2P_LOBBY_SORT_PLAYERS && !reverse, "a lone -: players");
 		p2p_lobby_sort_text(P2P_LOBBY_SORT_TYPE, 1, text, sizeof(text));
 		CHECK(!strcmp(text, "-type"), "written back");
 		p2p_lobby_sort_text(99, 0, text, sizeof(text));
-		CHECK(!strcmp(text, "servers"), "an unknown order written as servers");
+		CHECK(!strcmp(text, "players"), "an unknown order written as players");
 	} else return 2;
 	return 0;
 }

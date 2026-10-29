@@ -651,6 +651,7 @@ boolean game_load(
 }
 
 void network_distributed_new_game(void);
+void network_replay_stop(void);
 void network_objects_placed(void);
 
 void game_initialize_for_new_map(
@@ -968,6 +969,8 @@ void game_precache_new_map(
 void game_dispose_from_old_map(
 	void)
 {
+	/* port: a replay being recorded ends with its map (port/linux/game/network_replay.c) */
+	network_replay_stop();
 	/* port: the Switch GPU may still be reading this map (port/switch/host/host_dk.c) */
 #ifdef HALO_SWITCH
 	halo_switch_renderer_idle();

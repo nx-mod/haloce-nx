@@ -369,6 +369,7 @@ symbols in this file:
 #include "interface/marketing_and_strategic_business_development.h"
 #include "interface/player_ui.h"
 #include "interface/terminal.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 #include "saved games/player_profile.h"
 #include "saved games/game_state.h"
 #include "sound/sound_manager.h"
@@ -684,8 +685,6 @@ typedef char screenshot_and_framerate_globals_size_assert[
 
 void network_test_update(boolean main_menu_loaded, real seconds);
 void benchmark_update(boolean main_menu_loaded);
-/* port: commands from an overlay, through a file (port/linux/game/overlay_commands.c) */
-void overlay_commands_update(void);
 /* port: the Switch's link page (port/linux/src/link_page.c) */
 void link_page_update(void);
 #include "server_director.h" /* port: port/linux/game/server_director.c */
@@ -3317,8 +3316,10 @@ void main_loop_of_death(
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
-		overlay_commands_update();
+		overlay_menu_update();
 		link_page_update();
+		/* port: the Theater's replay page (port/linux/game/network_replay_page.c) */
+		network_replay_page_update();
 		process_ui_widgets();
 		main_pregame_render();
 		main_rasterizer_throttle();
@@ -3342,6 +3343,9 @@ static void main_game_render(
 
 	lock_global_random_seed();
 	collision_log_continue_period(TRUE);
+	/* port: a replay's playback's view, made once for the frame, before the
+	sound listens from it (port/linux/game/network_replay_playback.c) */
+	network_replay_playback_frame();
 	sound_render();
 	force_single_screen = game_engine_force_single_screen();
 	last_local_player_index = NONE;
@@ -3383,9 +3387,22 @@ static void main_game_render(
 				}
 			}
 
-			window->local_player_index = last_local_player_index;
-			observer = observer_get_camera(window->local_player_index);
-			observer = render_interpolation_camera(window->local_player_index, observer);
+			/* port: a replay's playback has no local player: the window is
+			local player 0's, as film playback's is above, so that it is drawn
+			as a player's, with the playback's own view of the player watched
+			(port/linux/game/network_replay_playback.c) */
+			if (window_index == 0 && network_replay_playing() && network_replay_camera())
+			{
+				last_local_player_index = 0;
+				window->local_player_index = 0;
+				observer = network_replay_camera();
+			}
+			else
+			{
+				window->local_player_index = last_local_player_index;
+				observer = observer_get_camera(window->local_player_index);
+				observer = render_interpolation_camera(window->local_player_index, observer);
+			}
 		}
 		else
 		{
@@ -3592,8 +3609,10 @@ static boolean main_loop_iteration(
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
-		overlay_commands_update();
+		overlay_menu_update();
 		link_page_update();
+		/* port: the Theater's replay page (port/linux/game/network_replay_page.c) */
+		network_replay_page_update();
 		profile_scope_exit(main_platform_events_section)
 
 		if (!shell_application_is_paused())
@@ -3722,6 +3741,10 @@ static boolean main_loop_iteration(
 						render_frame = main_globals.main_menu_scenario_loaded ||
 							(main_globals.halt_time_scale && game_time_get()>0);
 					render_frame &= !game_engine_running() || game_time_get()>=3;
+					/* port: none while a replay's skip ahead plays fast, the
+					screen held at its dimmed frame
+					(port/linux/game/network_replay_playback.c) */
+					render_frame &= !network_replay_frozen();
 
 					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);

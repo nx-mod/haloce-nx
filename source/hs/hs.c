@@ -15602,7 +15602,7 @@ static boolean hs_compile_and_evaluate_command(
 					console_printf(FALSE, "%s", said);
 				else
 					console_warning("%s: %s", bot_commands[command].word, said);
-				/* (and in debug.txt, where the overlay's result.txt sends one to look) */
+				/* (and in debug.txt) */
 				error(_error_silent, "%s: %s", bot_commands[command].word, said);
 				return done;
 			}

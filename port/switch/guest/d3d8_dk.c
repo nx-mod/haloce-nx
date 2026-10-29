@@ -1609,6 +1609,14 @@ waiting there would stop the CPU until the GPU caught up. A count is in
 the host's pixels, made the game's (visibility_area): the screen's targets
 can be drawn bigger (display.resolution_limit). */
 
+/* the host's slot of the game's: 1 up, as the host has none 0 (dk_commands.h).
+The game's first lens flare of a frame tests in its slot 0: made slot 1, as it
+was, the first two flares were given the second's count */
+static unsigned long visibility_slot(DWORD index)
+{
+	return index % (DK_VISIBILITY_SLOTS - 1) + 1;
+}
+
 static BOOL visibility_pending[DK_VISIBILITY_SLOTS];
 /* the host's pixels to a game pixel where each test drew: its count is
 divided by it, the game dividing by its own test's area (lens flares) */
@@ -1629,9 +1637,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	if (!device.visibility_test_active)
 		return S_OK;
 	device.visibility_test_active = FALSE;
-	index %= DK_VISIBILITY_SLOTS;
-	if (!index)
-		index = 1;
+	index = visibility_slot(index);
 	command = stream_command(DK_COMMAND_VISIBILITY_END, sizeof(*command));
 	command->index = (uint32_t)index;
 	visibility_pending[index] = TRUE;
@@ -1643,9 +1649,7 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 {
 	if (time_stamp)
 		*time_stamp = 0;
-	index %= DK_VISIBILITY_SLOTS;
-	if (!index)
-		index = 1;
+	index = visibility_slot(index);
 	if (result)
 	{
 		unsigned int count = visibility_pending[index] ? host_dk_visibility((unsigned int)index) : 0;

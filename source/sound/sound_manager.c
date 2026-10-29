@@ -240,6 +240,7 @@ symbols in this file:
 #include "render/render_debug.h"
 #include "scenario/scenario.h"
 #include "tag_files/tag_files.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 #include <math.h>
 #include <stdio.h>
@@ -3875,11 +3876,16 @@ static void refresh_listener(
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)
 	{
+		/* port: a replay's playback listens from its view, local player 0's,
+		who has no player (port/linux/game/network_replay_playback.c) */
+		struct observer_result const *replay_camera = local_player_index == 0 && network_replay_playing() ?
+			network_replay_camera() : NULL;
+
 		listener = listener_get(local_player_index);
 
-		if (local_player_get_player_index(local_player_index) != NONE)
+		if (replay_camera || local_player_get_player_index(local_player_index) != NONE)
 		{
-			struct observer_result const *camera =
+			struct observer_result const *camera = replay_camera ? replay_camera :
 				observer_get_camera(local_player_index);
 			boolean underwater;
 

@@ -145,6 +145,10 @@ enum
 	(reliable, once a game, with its ready: distributed_client_send_build).
 	A host without it drops it as a kind it does not know */
 	_distributed_message_client_build = 92,
+	/* where a client's players' shots leave from when not from their
+	units' cameras (a VR build's hand), to the host, unreliably, every tick
+	while they do (network_damage.c): its line of sight check's */
+	_distributed_message_fire_origins = 93,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -264,6 +268,32 @@ boolean distributed_machine_has_player(long machine_index, short player_index);
 void distributed_count_correction(void);
 /* (the host) the client machines in the game, but for its own; their count */
 short distributed_client_machines(long *machine_indices, short maximum);
+/* ... and the replay recorder's machine (network_replay.c), when one is
+recording: the machines a tick's state goes to */
+short distributed_viewing_machines(long *machine_indices, short maximum);
+/* (the host) the replay recorder's machine, NONE when none */
+long distributed_recorder_machine(void);
+/* (the host) network.full_detail_to_clients, as this tick read it: every
+client sent every player every tick and every damage event */
+boolean distributed_full_detail_to_clients(void);
+/* (a replay's playback) a client's recording's own input of a tick
+(network_replay.h's _network_replay_own_actions), given its player as the
+host's relayed input is */
+void network_distributed_own_actions(byte const *data, long size);
+/* (a replay's playback) the player (an absolute index) whose input such a
+record is, NONE if it cannot be read */
+short network_distributed_own_actions_player(byte const *data, long size);
+/* (a replay's playback) the players' facings a record holds, each found
+(its player, an absolute index; the tick it is of, the host's or for a
+client's own input its own; and its yaw and pitch as the wire has them,
+distributed_angle_unpack's): the relayed actions in a message the client
+read of its host (one in a batch too), or a client's own input's record */
+void network_distributed_replay_facings(byte const *data, long size, boolean own_actions,
+	void (*found)(void *context, short player_index, long tick, short yaw, short pitch), void *context);
+/* (a replay's playback) a keyframe put back: the times kept by this
+machine's clock (the host's last message's) are now's again, not the
+keyframe's */
+void network_distributed_replay_restored(void);
 /* (the host) how long a message takes that client and its answer back, in
 ticks (and its jitter), as its players' input messages tell */
 real distributed_machine_round_trip_ticks(long machine_index);
@@ -441,7 +471,8 @@ again, having failed to make one of them */
 void network_objects_client_asked(long machine_index, boolean again);
 void network_objects_handle_changes(void const *entries, short count);
 void network_objects_handle_synchronized(void);
-void network_objects_handle_states(void const *entries, short count);
+/* (host_time: the message's, the host's tick its states are of) */
+void network_objects_handle_states(void const *entries, short count, long host_time);
 void network_objects_handle_inventories(void const *entries, short count);
 /* (a client) its own player picked up the weapon, to ready once its unit has it */
 void network_objects_client_picked_up_weapon(short local_player_index, long unit_index, long definition_index);
@@ -475,6 +506,12 @@ void network_damage_host_tick(void);
 void network_damage_client_tick(void);
 void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
+void network_damage_handle_fire_origins(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
+/* what says where a local player's shots leave from when that is not their
+unit's camera: the offset from it (world units), FALSE when they leave from
+the camera; NULL (the default) for a build whose shots always do */
+typedef boolean (*network_damage_fire_origin_source)(short local_player_index, real_vector3d *offset);
+void network_damage_set_fire_origin_source(network_damage_fire_origin_source source);
 
 #endif // __NETWORK_DISTRIBUTED_H

@@ -3851,6 +3851,21 @@ struct network_game_server_client_machine *network_game_server_get_client_machin
 	return &server->client_machines[index];
 }
 
+/* port: whether a client machine has the slot (joined, joining or loading
+the game in progress): the replay recorder takes one none has
+(port/linux/game/network_replay.c) */
+boolean network_distributed_server_slot_taken(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game_server_client_machine *machine;
+
+	if (!server || !VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
+		return TRUE;
+	machine = network_game_server_get_client_machine_at_index(server, machine_index);
+	return !machine || machine->machine_index != NONE;
+}
+
 struct network_game_server_client_machine *network_game_server_get_client_machine_at_address(
 	struct network_game_server *server,
 	unsigned long ip_address)

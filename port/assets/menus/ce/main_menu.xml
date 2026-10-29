@@ -60,11 +60,12 @@
 		<on event="down"/>
 		<on event="x" open="main_menu/news/news_screen"/>
 		<child widget="main_menu/main_menu_item_load_camp" x="194" y="247"/>
-		<child widget="main_menu/main_menu_item_multiplayer" x="192" y="283"/>
-		<child widget="main_menu/main_menu_item_profile" x="192" y="319"/>
-		<child widget="main_menu/main_menu_item_settings" x="192" y="355"/>
-		<child widget="main_menu/main_menu_item_mods" x="192" y="391"/>
-		<child widget="main_menu/main_menu_item_quit_game" x="192" y="427" platform="desktop android web"/>
+		<child widget="main_menu/main_menu_item_multiplayer" x="192" y="279"/>
+		<child widget="main_menu/main_menu_item_theater" x="192" y="311"/>
+		<child widget="main_menu/main_menu_item_profile" x="192" y="343"/>
+		<child widget="main_menu/main_menu_item_settings" x="192" y="375"/>
+		<child widget="main_menu/main_menu_item_mods" x="192" y="407"/>
+		<child widget="main_menu/main_menu_item_quit_game" x="192" y="439" platform="desktop android web"/>
 	</widget>
 	<widget name="main_menu/new_campaign_creating_profile" width="640" height="480" flags="pass_unhandled_to_focused_child no_history" auto_close="1">
 		<on event="deleted" run="new campaign decision" open="main_menu/new_campaign_saving_profile"/>

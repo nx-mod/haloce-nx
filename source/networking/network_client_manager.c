@@ -784,6 +784,15 @@ progress, 16 bits of it (0 for a game starting); and whether the first game
 update is to bring the host's time (at every start) */
 long network_game_client_late_join_time;
 static boolean network_game_client_late_join_clock_pending;
+
+/* port: a replay's playback (port/linux/game/network_replay_playback.c): a
+client with no connection to anyone, whose messages are the replay's */
+boolean network_replay_playing(void);
+void network_replay_record_received(void const *message, long size, boolean unreliable);
+boolean network_replay_playback_starting(void);
+void network_replay_playback_started(void);
+boolean network_replay_playback_idle(struct network_game_client *client);
+void network_replay_playback_stop(void);
 /* port: the host said to start while this machine was still downloading the
 map (map sharing): started once the map is there, network_game_client_idle_pregame,
 if the game is still the one put off (its map, and the games played before
@@ -911,6 +920,8 @@ static boolean check_networking_and_generate_error(
 void network_game_client_dispose(
 	struct network_game_client *client)
 {
+	/* port: a replay's playback ends with its client */
+	network_replay_playback_stop();
 	if (client)
 	{
 		if (client->connection)
@@ -1211,6 +1222,9 @@ boolean network_game_client_write(
 	struct transport_address *address,
 	boolean reliable)
 {
+	/* port: a replay's playback has no host to send anything to */
+	if (network_replay_playing())
+		return TRUE;
 	return network_connection_write(
 		connection,
 		message,
@@ -1849,8 +1863,10 @@ boolean network_game_client_remove_player(
 
 			/* port: a dedicated server's own machine never has a player
 			(port/linux/game/server_director.c): it leaves only when a player
-			of its own goes, which none is */
-			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS &&
+			of its own goes, which none is; nor has a replay's playback, which
+			plays on as the game's players leave
+			(port/linux/game/network_replay_playback.c) */
+			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS && !network_replay_playing() &&
 				(!halo_server_mode() || player->machine_index == client->machine_index))
 			{
 				network_game_client_all_local_players_have_quit();
@@ -2152,6 +2168,10 @@ boolean network_game_client_address_matches_server(
 	struct transport_address server_unreliable_address;
 	boolean address_matches;
 
+	/* port: a replay's playback's messages are all the host's, and come
+	from no address (port/linux/game/network_replay_playback.c) */
+	if (network_replay_playing())
+		return TRUE;
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
 		0x2D2,
@@ -2277,6 +2297,34 @@ void network_game_client_reset(
 	csmemset(network_game_client_add_player_requested, 0, sizeof(network_game_client_add_player_requested));
 
 	return;
+}
+
+/* port: a replay's playback (port/linux/game/network_replay_playback.c):
+the global client made one joined to the game the replay recorded, with no
+player of its own (no machine), in the pregame, which starts the game at
+the next idle (network_game_client_idle_pregame) */
+boolean network_game_client_port_replay_begin(
+	struct network_game const *game)
+{
+	struct network_game_client *client = global_network_game_client_get();
+
+	if (!client || !game)
+		return FALSE;
+	network_game_client_reset(client, FALSE);
+	csmemcpy(&client->game, game, sizeof(client->game));
+	client->game.local_data.game_objects_loaded = FALSE;
+	client->machine_index = NONE;
+	client->state = _network_game_client_state_pregame;
+	game_connection_set(_game_connection_network_client);
+	return TRUE;
+}
+
+/* port: whether the client's game is over (its scores shown), for a
+replay's playback's end */
+boolean network_game_client_port_in_postgame(
+	struct network_game_client *client)
+{
+	return client && client->state == _network_game_client_state_postgame;
 }
 
 struct network_game_client *network_game_client_create(
@@ -2632,6 +2680,10 @@ static boolean network_game_client_process_messages(
 		&message_packet_size,
 		&source_address))
 	{
+		/* port: into the replay a client records of what it reads of its host
+		(port/linux/game/network_replay.c) */
+		network_replay_record_received(message_packet, message_packet_size,
+			network_connection_last_read_was_unreliable());
 		if (!(success = network_game_client_handle_message(
 			client,
 			message_packet,
@@ -2936,7 +2988,23 @@ static boolean network_game_client_idle_joining(
 static boolean network_game_client_idle_pregame(
 	struct network_game_client *client)
 {
-	boolean success = check_networking_and_generate_error();
+	boolean success;
+
+	/* port: a replay's playback starts the game it recorded at once
+	(network_game_client_port_replay_begin), its clock from the replay's
+	first tick: no host sends the first game update the clock waits for */
+	if (network_replay_playback_starting())
+	{
+		success = network_game_client_game_has_started(client);
+		if (success)
+		{
+			client->next_update_number = 1;
+			network_game_client_late_join_clock_pending = FALSE;
+			network_replay_playback_started();
+		}
+		return success;
+	}
+	success = check_networking_and_generate_error();
 
 	if (success)
 	{
@@ -3011,6 +3079,10 @@ static boolean network_game_client_idle_ingame(
 	NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_LEVEL_LOADING) */
 	boolean started = network_game_client_server_has_started_game(client);
 
+	/* port: a replay's playback: its messages come from the replay, and no
+	connection has to be alive */
+	if (network_replay_playing())
+		return network_replay_playback_idle(client);
 	if (!network_connection_active(client->connection) ||
 		!network_connection_connected(client->connection))
 	{
@@ -3086,6 +3158,10 @@ static boolean network_game_client_idle_postgame(
 	/* (the scores of the game just over: the network may be down for a
 	moment, as in the game, network_game_client_network_lost) */
 	boolean success = network_game_is_splitscreen_local() || !network_game_client_network_lost();
+
+	/* port: a replay's playback, to the replay's end */
+	if (network_replay_playing())
+		return network_replay_playback_idle(client);
 
 	if (!success)
 	{

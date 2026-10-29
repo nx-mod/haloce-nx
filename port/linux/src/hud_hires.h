@@ -61,6 +61,11 @@ struct hud_hires_embedded
 #define HUD_HIRES_CONTEXT_MENUS_SWAPPED 1u
 #define HUD_HIRES_CONTEXT_MENUS 2u
 #define HUD_HIRES_CONTEXT_GAME 4u
+/* where a port has button art of its own (the Switch's, the PS5's), whose a picture is: the port's, or the Xbox's,
+embedded beside it (display.xbox_buttons chooses); neither, a picture of no port's */
+#define HUD_HIRES_CONTEXT_PLATFORM_ART 8u
+#define HUD_HIRES_CONTEXT_XBOX_ART 16u
+#define HUD_HIRES_CONTEXT_PLACES (HUD_HIRES_CONTEXT_MENUS_SWAPPED | HUD_HIRES_CONTEXT_MENUS | HUD_HIRES_CONTEXT_GAME)
 
 extern const struct hud_hires_embedded hud_hires_embedded[];
 extern const unsigned int hud_hires_embedded_count;

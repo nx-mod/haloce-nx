@@ -49,6 +49,13 @@ void following_camera_deterministic(
 	long unit_index,
 	real_point3d *position,
 	real_vector3d *forward);
+/* port: a seated unit's player's view, from the unit alone (a replay's
+playback: port/linux/game/network_replay_playback.c) */
+void following_camera_unit_view(
+	long unit_index,
+	real_point3d *focus,
+	real_vector3d *forward,
+	real *distance);
 
 /* ---------- globals */
 

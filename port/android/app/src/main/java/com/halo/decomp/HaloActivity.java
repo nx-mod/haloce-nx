@@ -3,12 +3,15 @@ package com.halo.decomp;
 import android.app.AlertDialog;
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Insets;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,10 +21,14 @@ import android.view.WindowManager;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.libsdl.app.SDLActivity;
 
@@ -40,8 +47,12 @@ public class HaloActivity extends SDLActivity {
     private volatile int[] gestureInsets = new int[] { 0, 0, 0, 0 };
     /** the on-screen touch controls, over SDL's surface */
     private TouchControls touchControls;
-    private static final int EXPORT_LAYOUT = 401, IMPORT_LAYOUT = 402;
+    private static final int EXPORT_LAYOUT = 401, IMPORT_LAYOUT = 402, EXPORT_REPLAYS = 403;
     private String pendingLayoutExport;
+    /** the folder of the replays the Theater's EXPORT REPLAYS copies, while the folder picker is open */
+    private String pendingReplaysFolder;
+    /** a replay's file name ends so (port/linux/game/network_replay.c) */
+    private static final String REPLAY_EXTENSION = ".ocreplay";
 
     @Override
     protected String[] getLibraries() {
@@ -51,8 +62,10 @@ public class HaloActivity extends SDLActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (savedInstanceState != null)
+        if (savedInstanceState != null) {
             pendingLayoutExport = savedInstanceState.getString("pending-layout-export");
+            pendingReplaysFolder = savedInstanceState.getString("pending-replays-folder");
+        }
         if (mLayout != null) {
             touchControls = new TouchControls(this);
             mLayout.addView(touchControls, new ViewGroup.LayoutParams(
@@ -98,10 +111,95 @@ public class HaloActivity extends SDLActivity {
     protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
         state.putString("pending-layout-export", pendingLayoutExport);
+        state.putString("pending-replays-folder", pendingReplaysFolder);
+    }
+
+    /**
+     * The Theater's EXPORT REPLAYS (port/linux/game/menu_functions.c, through host_android_export_replays): the
+     * system's folder picker, then each replay in folder that the folder chosen has not by its name copied there.
+     * Called on the game's thread; no storage permission.
+     */
+    public void exportReplays(String folder) {
+        runOnUiThread(() -> {
+            File[] replays = replayFiles(folder);
+            if (replays.length == 0) {
+                Toast.makeText(this, "There are no replays to export yet.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            pendingReplaysFolder = folder;
+            try {
+                startActivityForResult(intent, EXPORT_REPLAYS);
+            } catch (android.content.ActivityNotFoundException e) {
+                pendingReplaysFolder = null;
+                Toast.makeText(this, "This device has no folder picker.", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private static File[] replayFiles(String folder) {
+        File[] files = folder != null ? new File(folder).listFiles(
+            (directory, name) -> name.endsWith(REPLAY_EXTENSION)) : null;
+        return files != null ? files : new File[0];
+    }
+
+    /** the replays copied into the tree's folder, on a thread of their own; a Toast says how many */
+    private void copyReplays(Uri tree, String folder) {
+        ContentResolver resolver = getContentResolver();
+        Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        Set<String> present = new HashSet<>();
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        try (Cursor cursor = resolver.query(children,
+                new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null)) {
+            while (cursor != null && cursor.moveToNext())
+                present.add(cursor.getString(0));
+        } catch (Exception e) {
+            // (then every replay is copied: the provider names a second copy itself)
+        }
+        int copied = 0, skipped = 0;
+        String failed = null;
+        for (File replay : replayFiles(folder)) {
+            if (present.contains(replay.getName())) {
+                skipped++;
+                continue;
+            }
+            try {
+                Uri document = DocumentsContract.createDocument(resolver, parent, "application/octet-stream",
+                    replay.getName());
+                if (document == null)
+                    throw new IOException("the folder refused " + replay.getName());
+                try (InputStream input = new FileInputStream(replay);
+                     OutputStream output = resolver.openOutputStream(document, "w")) {
+                    if (output == null)
+                        throw new IOException(replay.getName() + " cannot be written");
+                    byte[] buffer = new byte[65536];
+                    int size;
+                    while ((size = input.read(buffer)) != -1)
+                        output.write(buffer, 0, size);
+                }
+                copied++;
+            } catch (Exception e) {
+                failed = e.getMessage();
+                break;
+            }
+        }
+        String text = failed != null ? "The export stopped: " + failed
+            : copied + (copied == 1 ? " replay exported" : " replays exported")
+                + (skipped > 0 ? " (" + skipped + " already there)" : "") + ".";
+        runOnUiThread(() -> Toast.makeText(this, text, Toast.LENGTH_LONG).show());
     }
 
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == EXPORT_REPLAYS) {
+            String folder = pendingReplaysFolder;
+            pendingReplaysFolder = null;
+            if (result == RESULT_OK && data != null && data.getData() != null && folder != null) {
+                Uri tree = data.getData();
+                new Thread(() -> copyReplays(tree, folder), "halo-export-replays").start();
+            }
+            return;
+        }
         if (request != EXPORT_LAYOUT && request != IMPORT_LAYOUT) {
             super.onActivityResult(request, result, data);
             return;

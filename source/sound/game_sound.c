@@ -115,6 +115,7 @@ symbols in this file:
 #include "structures/structure_bsp_definitions.h"
 #include "structures/structures.h"
 #include "units/units.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 /* ---------- constants */
 
@@ -937,6 +938,18 @@ static struct
 	real occlusion;
 } obstruction_cache[OBSTRUCTION_CACHE_SLOTS];
 
+/* port: the camera a local player hears from: a replay's playback's view for
+local player 0, who has no player (port/linux/game/network_replay_playback.c),
+else the player's own */
+static struct observer_result const *game_sound_camera(
+	short local_player_index)
+{
+	struct observer_result const *replay_camera = local_player_index == 0 && network_replay_playing() ?
+		network_replay_camera() : NULL;
+
+	return replay_camera ? replay_camera : observer_get_camera(local_player_index);
+}
+
 static long obstruction_cache_slot(
 	short local_player_index,
 	real_point3d const *position)
@@ -952,7 +965,7 @@ void compute_sound_obstruction(
 	struct sound_source *source,
 	real distance)
 {
-	struct observer_result const *camera = observer_get_camera(local_player_index);
+	struct observer_result const *camera = game_sound_camera(local_player_index);
 	long slot = obstruction_cache_slot(local_player_index, &source->location.position);
 	long now = game_time_get();
 
@@ -1066,9 +1079,11 @@ static void compute_combined_pas(
 		local_player_index < MAXIMUM_LOCAL_PLAYERS;
 		local_player_index++)
 	{
-		if (local_player_get_player_index(local_player_index) != NONE)
+		/* port: and a replay's playback's view (game_sound_camera) */
+		if (local_player_get_player_index(local_player_index) != NONE ||
+			(local_player_index == 0 && network_replay_playing() && network_replay_camera()))
 		{
-			struct observer_result const *camera = observer_get_camera(local_player_index);
+			struct observer_result const *camera = game_sound_camera(local_player_index);
 
 			if (camera->location.cluster_index != NONE)
 			{

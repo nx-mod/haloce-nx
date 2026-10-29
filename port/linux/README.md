@@ -200,6 +200,15 @@ the save root is `$XDG_DATA_HOME/halo-linux` (usually
 The game makes the folders when it needs them. Names of files and folders
 are not case-sensitive, as on the Xbox.
 
+On Windows and Linux the save root also has `shader_cache/`: one file for
+each graphics driver (named by a hash of its vendor, renderer and version),
+with the GPU programs the game has linked on it (`display.shader_cache`).
+The first time a material or an effect comes into view the driver links its
+program, which can stop the game for a frame of 30 to 90 ms (more on
+integrated graphics); after that the program is loaded from this file in
+under 2 ms, in that game and the next. The files grow to 64 MB at most (a
+large map's programs take some 2 MB). Delete the folder to clear them.
+
 These files are in the data root:
 
 | File | Contents |
@@ -311,6 +320,35 @@ servers, key bindings) are empty, and the settings they change do not
 change. The screens open, close and move between each other as the PC
 version's. `display.menus = "xbox"` gives the Xbox's menus, which start every
 kind of game.
+
+The main menu adds two items of the port's: Theater, under Multiplayer,
+the replays this machine recorded of the network games it played
+([REPLAY.md](REPLAY.md)), and Mods (refer to
+[docs/mods.md](../../docs/mods.md)). Theater lists the replays, the newest
+first, each with its map, when and its length; A plays the one chosen,
+and the panel says what it is (its game type, server, who recorded it,
+its size). A replay is the game as it was played: A watches the next
+player and X the one before; the d-pad's left and right skip back and on
+10 seconds (to the keyframe before or after); Y goes round three views
+(behind them, which the right stick flies round them, its click turning
+it with them again, and the left stick zooms; through their eyes with
+their arms and weapon, or from behind their vehicle as they saw it; and a
+free camera moved with the sticks and the triggers; a replay a client
+recorded has only its own player's eyes); the right and left
+shoulder buttons (R and L on the Switch, R1 and L1 on the PS5) play it
+faster or slower, to a pause; Back held shows the scores; B hides the
+lines over the screen; Start pauses it, and in the pause menu B leaves and
+Start resumes. Its
+buttons: RECORD turns `network.record_replays` on or off; DELETE deletes
+the one chosen (pressed twice); on Android, EXPORT opens the system's
+folder picker and copies the replays to the folder chosen (those it
+already holds, by name, are left out), as the app's own folder cannot be
+opened by other apps. On the Switch and the PS5 the Theater shows a QR
+code and an address instead: a page on the local network, while the
+Theater is open, that downloads the replays and uploads others
+(`network.link_page` turns it off, with Direct Link's). The folder keeps
+the newest `network.replays_kept`, and a recording shorter than 5 seconds
+is deleted as it ends.
 
 The menus' text is in the language of the Custom Edition whose `loc.map` is
 in `custom_maps` (French, German, Italian, Spanish and so on), as that
@@ -476,6 +514,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | Used when `display.window_size` is empty: the size of the window, as a multiple of 640x480. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
 | `display.max_fps` | `0` | `HALO_MAX_FPS` | With vsync off, the most frames each second. `0`: twice the display's refresh rate. `-1`: no limit, which can hang some Intel graphics (Raptor Lake), resetting the desktop's graphics too. |
+| `display.frames_in_flight` | `3` | `HALO_FRAMES_IN_FLIGHT` | Windows and Linux: the most frames the GPU has queued, 1 to 8. Each frame waits until the GPU has finished the frame this many before it, so that the frames come evenly when the GPU is slower than the game. `0`: the driver decides, which on a slow GPU can give a long frame every few frames. Refer to "Frame rate". |
 | `display.anti_aliasing` | `"off"` | `HALO_ANTI_ALIASING` | The smoothing of jagged edges, which the Xbox did not have. `"off"`: none, as on the Xbox. `"fxaa"` or `"smaa"`: a pass over the 3D view after the game draws it. The HUD and the menus stay sharp. SMAA is the sharper and costs more. `"ssaa2x"`: the game draws at two times the resolution in each direction (at most the GPU's largest texture), and the picture is scaled down. The GPU does four times the work. Not with `display.resolution_scaling = "original"`. `"msaa2x"`, `"msaa4x"` or `"msaa8x"`: each pixel of the 3D view has that many samples (at most the GPU's). On Android, `"smaa"` gives FXAA and `"ssaa2x"` none. A change applies from the next frame. Refer to "Anti-aliasing" in "What operates". |
 | `debug.gpu_flush_draws` | `-1` | `HALO_GPU_FLUSH_DRAWS` | Flush the GPU's pipeline every this many draws. `-1`: every 3 on Intel graphics with Mesa's driver, which can otherwise hang in the game's long runs of small draws and reset the desktop's graphics too. `0`: never. |
 | `display.interpolation` | `true` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
@@ -494,7 +533,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.menu_language` | `"maps"` | `HALO_MENU_LANGUAGE` | The PC menus' language. `"maps"`: the language of the Custom Edition whose `loc.map` is in `custom_maps` (English without one). `"english"`: English. The port's own lines are English. |
 | `display.player_names` | `"all"` | `HALO_PLAYER_NAMES` | In multiplayer, whose names are drawn above their heads: `"all"`, `"allies"`, `"enemies"` or `"none"`. An ally's name is drawn above the triangle the game shows over teammates. An enemy's name shows only within the motion sensor's reach, while the enemy is in sight and not camouflaged, so it never shows where an enemy hides. The gametype's motion tracker setting also applies: no names if it shows no players, only allies' if it shows only friends. |
 | `display.player_name_scale` | `1.0` | `HALO_PLAYER_NAME_SCALE` | How large the players' names are drawn: `1.0` is three quarters of the size of the HUD's text, from `0.25` to `4`. With high-res text, larger names are rasterized at their size, so they stay sharp. |
-| `display.match_timer` | `false` | `HALO_MATCH_TIMER` | `true`: a multiplayer game draws its clock at the bottom right, counting up from the game's first tick, which the items' respawn periods count from too: a weapon is back on the map at every multiple of its period on the clock. Campaign and co-op have none. MATCH TIMER in Video Setup > Graphics. |
+| `display.match_timer` | `false` | `HALO_MATCH_TIMER` | `true`: a multiplayer game draws its clock at the bottom right, counting up from the game's first tick, which the items' respawn periods count from too: a weapon is back on the map at every multiple of its period on the clock. Campaign and co-op have none. MATCH TIMER in Settings > Network Setup > Multiplayer HUD. |
 | `display.text_chat` | `true` | `HALO_TEXT_CHAT` | Show the text chat of network games (Settings > Network Setup > Multiplayer HUD > TEXT CHAT). `false` hides its lines, and its keys and a controller's D-pad Up open nothing. Refer to "Text chat". |
 | `display.chat_style` | `"colors"` | `HALO_CHAT_STYLE` | The text chat's colours (Settings > Network Setup > Multiplayer HUD > CHAT TEXT): `"colors"`, the player's name in their team's colour and the text a pale blue; `"white"`, all of it white, as Custom Edition. |
 | `display.scoreboard_team_layout` | `"teams"` | `HALO_SCOREBOARD_TEAM_LAYOUT` | How the multiplayer scoreboard (hold BACK, or tab) lists a team game's players. `"teams"`: a column for each team, red on the left and blue on the right. `"score"`: all the players in order of score. With more players than fit, the mouse wheel and Page Up / Page Down scroll the scoreboard. |
@@ -502,6 +541,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.scoreboard_background_color` | `"16, 16, 16, 150"` | `HALO_SCOREBOARD_BACKGROUND_COLOR` | The colour of the scoreboard's panel: `"red, green, blue, alpha"`, each from `0` to `255`. Alpha `0` is see-through, `255` is solid. |
 | `display.anisotropic_filtering` | `0` | `HALO_ANISOTROPIC_FILTERING` | Textures seen at a grazing angle (floors, walls, terrain) are sampled along the angle from finer mip levels, so they stay sharp; the Xbox game asks for none. `0` or `1`: as on the Xbox. `2`, `4`, `8` or `16`: at most that many samples (at most the GPU's); `4` keeps most of `16`'s sharpness at less cost on slower GPUs. TEXTURE FILTERING in Video Setup > Graphics. It applies to the textures of the map that have mip levels and are filtered linearly (base, detail, bump and environment maps; lightmaps have no mip levels), not to what the game renders, such as the water's ripples. On Android and the web, only where the GPU has `GL_EXT_texture_filter_anisotropic`. |
 | `display.latency_meter` | `false` | `HALO_LATENCY_METER` | `true`: in a network game, your round trip to the host in milliseconds at the top right of the screen, "Ping 45 ms" with four bars: green below 80 ms, yellow below 150, red from 150. The host shows "Max ping", its slowest player's. A player's machine that has heard nothing from the host for two seconds shows "Connection problem". The round trip includes each machine's wait for its next tick, so a LAN reads 15 to 35 ms. Not shown in the menus, after the game, in a co-op cutscene or when the host plays alone. The scoreboard's pings take the same colours, and show the round trips this machine times itself (the host: each player's; a player: their own), so they agree with the meter. Nothing more is sent. Only in config.toml, not in the menus. |
+| `display.shader_cache` | `true` | `HALO_SHADER_CACHE` | Windows and Linux: keep the GPU programs that the game links in `shader_cache/` in the save root, and load each from there the next time instead of linking it again, which stops the game for a frame on some drivers. `false`: link each program every time. Refer to "Files and folders". |
 | `display.per_pixel_lighting` | `false` | `HALO_PER_PIXEL_LIGHTING` | `false`: the models (characters, weapons, vehicles, scenery) are lit at each vertex and the light is blended between them, as on the Xbox. The light across a curved surface then shows facets, and a point light that passes close lights only the vertices it reaches. `true`: the models are lit at each pixel by the same lights (the ambient light, two distant lights and two point lights), which changes their look. |
 | `display.structure_culling` | `31` | `HALO_STRUCTURE_CULLING` | Which tests skip the triangles of the level (its walls, floors and terrain) that the camera cannot see before they are drawn, as bits added together: `1`, triangles outside the view; `2`, groups of triangles that all face away from the camera; `4`, single triangles that face away; `8`, smaller groups, so that more of them are skipped whole; `16`, the rooms nearest the camera first. Each test is conservative: the picture is the same, with fewer triangles drawn. `0`: the original walk, which draws every triangle of each visible room. The console's `structure_culling <bits>` changes it until the game quits, and `debug_structure_culling true` shows what was skipped (red: outside the view, blue: facing away). |
 | `display.shield_glow` | `false` | `HALO_SHIELD_GLOW` | `true`: as a unit's energy shield flares (hit, charging, falling), it lights what is around it and itself, as a plasma bolt does, in the shield shader's own color (a Spartan's gold, an Elite's blue), rising and falling with the flare seen on the body. An ordinary dynamic light of the game's, drawn with a light definition the map has (`shield_glow.c`). Up to 8 units near the camera. Video Setup's Extra Effects screen sets it. In a network game, the host's `network.shield_effects` decides, unless it is `players` (each player's own). |
@@ -536,7 +576,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.resolution_limit` | `"480"` (Switch), `"2160"` (PS5) | `HALO_RESOLUTION_LIMIT` | Switch and PS5. In Video Setup (Resolution Limit on the Switch, Maximum Resolution on the PS5), or here. The lines the game draws at, no more than the console shows, which the picture is scaled up to. Switch: `"480"` (the game's own), `"720"` or `"1080"`; 1280x720 in handheld, 1920x1080 docked (so `"1080"` draws at 720 in handheld); it also changes when the console is docked or undocked. PS5: `"2160"` (3840x2160), `"1440"` (2560x1440) or `"1080"` (1920x1080), held to the console's video output (a 1080p output draws `"2160"` at 1920x1080). It changes at once. |
 | `performance.cpu_clock` | `"1785"` | `HALO_CPU_CLOCK` | Switch only. In Video Setup, Performance, or here. The CPU's clock: `"1785"` (1.7 GHz, the most Nintendo's own games use), `"1020"` (1 GHz: cooler, and the battery lasts longer) or `"stock"` (left at the rate the console started the game with). It changes at once, and the console's own rates come back when the game exits. |
 | `controls.<action>` | (the table in "Controls") | `HALO_KEY_<ACTION>` | The keys and mouse buttons of an action, up to two, separated by a comma: `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `jump`, `crouch`, `fire`, `throw_grenade`, `melee`, `reload`, `zoom`, `switch_weapon`, `switch_grenade`, `action`, `flashlight`, `scoreboard`, `pause`, `screenshot`, `push_to_talk`, `chat`, `team_chat`. Keys by their names on a US keyboard (`"W"`, `"Space"`, `"Left Ctrl"`, `"F1"`): a key is the one in that place on any keyboard, which Controls Setup shows by its own label (the US name on Android). Buttons: `"Mouse Left"`, `"Mouse Right"`, `"Mouse Middle"`, `"Mouse 4"`, `"Mouse 5"`, `"Wheel"` (either way), `"Wheel Up"`, `"Wheel Down"`. |
-| `game.console_log` | `"important"` | `HALO_CONSOLE_LOG` | What the console shows on the screen. `"important"`: bans, players that the host drops for cheating, the reasons that the game refuses a command, and the asserts that stop the game. `"all"`: all the lines. `"none"`: only the asserts that stop the game. The output of a command always shows. `debug.txt` gets all the lines. |
+| `game.console_log` | `"none"` | `HALO_CONSOLE_LOG` | What the console shows on the screen. `"none"`: only the asserts that stop the game. `"important"`: bans, players that the host drops for cheating, the reasons that the game refuses a command, and the asserts that stop the game. `"all"`: all the lines. The output of a command always shows. `debug.txt` gets all the lines. |
 | `game.language` | `""` | `HALO_LANGUAGE` | The language of the menus: `ja`, `de`, `fr`, `es` or `it`. Empty: English. |
 | `game.enhanced_animations` | `true` | `HALO_ENHANCED_ANIMATIONS` | `true`: the player bipeds' grenade throws keep their legs moving, blended by speed and direction (crouched throws stay crouched, throws in the air use the jump's legs), Warthog and Scorpion riders stay seated to throw and let go of the grips to throw and reload, and a player turns with the aim while throwing, as while meleeing. `false`: the original animations, which freeze the legs during a throw and stand a rider up. Only in config.toml, not in the menus. |
 | `game.ragdoll_players` | `"none"` | `HALO_RAGDOLL_PLAYERS` | How a player's body falls, in a campaign or a multiplayer game. Settings > Gameplay, or here. `"none"`: the original death animations. `"woody"`: as a ragdoll from the moment it dies, instead of a death animation: pushed the way the killing blow came and hardest where it hit, its knees and elbows bending only their own way, its limbs settling on what is under them, and moved again by a blast. `"halo2"`: a ragdoll after Halo 2's (Havok's): the torso heavier than the limbs, the limbs thick enough to rest on edges and kept out of the torso and each other, joints that drag and twist little, and thrown further by blasts. A cinematic keeps its scripted deaths. On a client (and in a game of one machine) the ragdoll moves the body itself; the host of a network game leaves its bodies as the stock game moves and poses them, which is what it sends its clients and what its shots hit, and only draws them as their ragdolls lie. So machines with other settings, or builds without ragdolls at the same network version, play together, each drawing bodies its own way, and a body can lie a little differently on each screen. |
@@ -582,6 +622,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.votekick_minutes` | `5` | `HALO_NET_VOTEKICK_MINUTES` | When you host: the minutes that a player must play on the server before the player can start a vote to kick (`0` to `60`). To vote, a player must play for 2 minutes, or for this time if it is less. |
 | `network.votekick_ban_minutes` | `30` | `HALO_NET_VOTEKICK_BAN_MINUTES` | When you host: the minutes that a player who is kicked by a vote cannot join again (`1` to `1440`). |
 | `network.shield_effects` | `stock` | `HALO_NET_SHIELD_EFFECTS` | Host: the shield effects every player of a network game sees, whatever their own settings, so that none sees what another does not: `stock`, `glow` (`display.shield_glow`), `light_show` (its Light Show intensity), `overshield` (`display.overshield_effect`), `glow_overshield` or `light_show_overshield`; or `players`, not synced: each player sees their own settings' (PLAYERS' OWN). Sent to each client when it is ready and when it changes (`network_shield_effects.c`); a client draws stock until it has it. SHIELD EFFECTS in Server Setup > Player Options writes its choice here. |
+| `network.fire_origins` | `true` | `HALO_NET_FIRE_ORIGINS` | Host: whether a client's reported hit that the shooter's camera had no line of sight to may still count from where the client says its player's shots leave, when that is not the camera (distributed message 93: a VR build's weapon hand, which may be past a corner the camera is behind). The hand must be within 0.4 world units of the camera, no more than 0.05 behind the eye along the line to the target, 0.2 to its side and 0.1 above it, with the line from the eye to it clear; the host logs how many hits counted only that way. `false`: from the camera and vehicles' guns only (`network_damage.c`). |
 | `network.block_mouse_aim_assist` | `false` | `HALO_NET_BLOCK_MOUSE_AIM_ASSIST` | Host: Player Options > Aim Assist, Allowed or Block M+KB. Block overrides optional mouse magnetism while mouse/keyboard aims, including on the host, without changing the saved preference. Controllers and touch retain their existing behavior; bullet autoaim is unchanged. |
 | `network.map_share` | `true` | `HALO_NET_MAP_SHARE` | When you host: send a player who joins without the game's Custom Edition map the map, and the resource maps that it needs and that the player does not have. SHARE MAPS in Server Setup > Map Sharing writes its choice here. Refer to "Map sharing". |
 | `network.map_share_upload` | `1024` | `HALO_NET_MAP_SHARE_UPLOAD` | When you host: the most kilobytes per second that the game sends of maps (`16` to `20480`, 20 MB/s). UPLOAD LIMIT in Server Setup > Map Sharing writes its choice here. |
@@ -592,14 +633,17 @@ the setting for one start of the game. It has priority over the file.
 | `network.brokers_file` | `"brokers.txt"` | `HALO_NET_BROKERS_FILE` | The file of the public MQTT brokers that let the machines of an invite find each other, and that carry the listings of the server browser: next to `config.toml`, unless a full path. One `host:port` on each line, up to 4; `#` starts a comment. |
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
 | `network.client_timeout_seconds` | `15` | `HALO_NET_CLIENT_TIMEOUT_SECONDS` | Hosting: the seconds the host waits for a machine it hears nothing from before it drops it (5 to 300; the stock game waits 15). The same seconds are how long each machine's reliable stream waits for its peer to read before it gives up, and how long a host in a game waits for its own network to come back (an address renewed, a wifi drop) before it ends the game; each machine reads its own setting. A longer wait keeps players whose connection stalls (a browser tab in the background), but a machine that is really gone leaves its players frozen for longer. |
+| `network.record_replays` | `false` | `HALO_NET_RECORD_REPLAYS` | `true` records each network game to `replays/` in the data folder, one `.ocreplay` file a game. A host records all of it: what a client that sees every player is sent (a player's game or a dedicated server's). A client records what its host sends it (the players far from its own, or out of sight, less often; only the events the host sends it) and its own players' input. The main menu's Theater plays them; `tools/replay_stats.py` measures them. It is read when a game starts, so turning it on during a game (the overlay's System folder has Record Replays) records from the next one. Refer to [REPLAY.md](REPLAY.md). |
+| `network.replays_kept` | `30` | `HALO_NET_REPLAYS_KEPT` | How many replays `replays/` keeps: as a recording starts, the oldest past this many are deleted. `0` keeps them all. |
+| `network.full_detail_to_clients` | `false` | `HALO_NET_FULL_DETAIL_TO_CLIENTS` | Hosting: `true` sends every client every player every tick (not those far from its own players, or out of their sight, less often) and every damage event (not only those near its players), as a host's replay recorder is sent, so that a client's replay holds all of the game. A client downloads more, the more players there are. The objects and the AI's units are sent as before. |
 | `network.public_address` | `""` | `HALO_NET_PUBLIC_ADDRESS` | Hosting: the internet address the joiners reach this machine at, `host[:port]` (the port forwarded to `network.tunnel_port`), for a server behind a NAT with one forwarded port. It is offered first, and its name is looked up again every 5 minutes. Empty: what STUN and UPnP find. |
 | `network.listings` | `"both"` | `HALO_NET_LISTINGS` | What the server browser lists. `"both"`: the dedicated servers of the master servers first, then the games players host (from the brokers). `"masters"`: the master servers' only. `"brokers"`: the brokers' only. Refer to "Server browser". |
 | `network.masters_file` | `"masters.txt"` | `HALO_NET_MASTERS_FILE` | The file of the master servers the server browser asks for dedicated servers, next to `config.toml` unless a full path: on each line an `https://` URL and the master's key (`ed25519:<hex>`), 4 at most. A file that names none (missing, or comments alone, as the release's) leaves the official master, built in (`https://master.opencommunityedition.com`). Refer to "Dedicated server". |
-| `network.browser_source` | `"all"` | `HALO_NET_BROWSER_SOURCE` | The server browser's games. `"all"` (ALL GAMES): the dedicated servers first, then the games players host; `"dedicated"`: the dedicated servers of the master servers; `"players"` (P2P GAMES): the games players host. The tab at the top left of the server browser changes it. |
+| `network.browser_source` | `"all"` | `HALO_NET_BROWSER_SOURCE` | The server browser's games. `"all"` (ALL GAMES): the dedicated servers and the games players host; `"dedicated"`: the dedicated servers of the master servers; `"players"` (P2P GAMES): the games players host. The tab at the top left of the server browser changes it. |
 | `network.browser_show_empty`, `network.browser_show_full` | `true` | `HALO_NET_BROWSER_SHOW_EMPTY`, `HALO_NET_BROWSER_SHOW_FULL` | `false`: the server browser does not list the games with no player, the full games. The server browser's Filters screen sets them. |
 | `network.browser_maps` | `"yes"` | `HALO_NET_BROWSER_MAPS` | `"yes"`: the server browser lists the games on maps this computer does not have. `"no"`: it does not. `"downloadable"`: only those of a Custom Edition map that the host shares. |
 | `network.browser_gametype` | `"any"` | `HALO_NET_BROWSER_GAMETYPE` | The server browser lists the games of one kind only: `"any"`, `"ctf"`, `"slayer"`, `"oddball"`, `"king"` or `"race"` (the Filters screen). |
-| `network.browser_sort` | `"servers"` | `HALO_NET_BROWSER_SORT` | The server browser's order. `"servers"`: dedicated servers first, then by players. `"players"`, `"name"`, `"map"`, `"type"` or `"locked"` (games with a password first). A `-` before one reverses it (`"-players"`). A column's title sorts by it, and again the other way. |
+| `network.browser_sort` | `"players"` | `HALO_NET_BROWSER_SORT` | The server browser's order. `"players"`: the games with the most players first. `"servers"`: dedicated servers first, then by players. `"name"`, `"map"`, `"type"` or `"locked"` (games with a password first). A `-` before one reverses it (`"-players"`). A column's title sorts by it, and again the other way. |
 | `server.enabled` | `false` | `HALO_SERVER` | `true`: run as a dedicated server, as `halo --server` does. Refer to "Dedicated server". The `server.*` settings are written to `config.toml` only by a dedicated server. |
 | `server.name` | `"OpenCE Server"` | `HALO_SERVER_NAME` | The game's name in the lobby and the server browser: 15 characters of printable ASCII. |
 | `server.max_players` | `16` | `HALO_SERVER_MAX_PLAYERS` | The most players (2 to 127). |
@@ -737,6 +781,15 @@ turns in the frame that the mouse moves. In a vehicle and in cinematics, the
 view mixes as the other things do. On Android, the view mixes as before.
 
 To get 30 frames each second, set `display.interpolation = false`.
+
+When the GPU is slower than the game, the frames come at the GPU's pace,
+evenly: each frame waits until the GPU has finished the frame three before
+it (`display.frames_in_flight`). Without the wait, a driver queues frames up
+to its own limit and then stops for several at once: on Intel graphics on
+Windows, measured on a large Custom Edition map, a frame of 50 to 60 ms
+every sixth frame, which looks like 15 frames each second where the mean
+is 80. With the wait the same machine drew 108 to 142 frames each second,
+with one frame of more than 33 ms in a minute instead of about 300.
 
 To see the frame rate:
 
@@ -1114,8 +1167,8 @@ master servers, or only the brokers.
   The titles are: server name, map, game, players, the lock (the games
   with a password first) and the dedicated icon (dedicated servers first).
   A second choice of the same title reverses the order, and an arrow on
-  the title shows the direction. The default order is dedicated servers
-  first, then the games with the most players, then by name. The browser
+  the title shows the direction. The default order is the games with the
+  most players first, then by name. The browser
   keeps the order in `network.browser_sort`.
 - FILTERS opens the Filters screen of Custom Edition. It has SHOW EMPTY
   SERVERS, SHOW FULL SERVERS, GAME TYPE (ANY or one game engine) and SHOW

@@ -17,8 +17,9 @@ listed in port/assets/menus/menus.json, and SMAA's shader and lookup
 textures, as port/linux/src/hud_hires.h, text_hires.h, menu_files.h and
 xgpu_post.c declare them. With --platform, a port's own button art
 (port/assets/buttons/platforms/PORT, made by tools/button_assets.py platform)
-is embedded in place of the common PNGs it has: one row each, with the
-contexts its letters are right in (hud_hires.h). The builds generate it
+is embedded beside the common PNGs it has: one row each, with the contexts
+its letters are right in and whose art it is (hud_hires.h), for
+display.xbox_buttons to choose the port's or the Xbox's. The builds generate it
 (hud_assets_build, called by tools/linux_build.py, windows_build.py and
 android_build.py), so the assets are the committed source and Android needs
 no files beside its guest image.
@@ -72,6 +73,14 @@ def font_files() -> List[str]:
     return sorted({font["file"] for font in fonts})
 
 
+# hud_hires.h's HUD_HIRES_CONTEXT_* bits: where a picture's buttons are right
+# (the Switch's menus with A and B swapped, its menus without, a game: all
+# three), and whose art it is where a port has its own
+CONTEXT_PLACES = 1 | 2 | 4
+CONTEXT_PLATFORM_ART = 8
+CONTEXT_XBOX_ART = 16
+
+
 def platform_overrides(platform: Optional[str]) -> Dict[str, List[dict]]:
     """The port's own button art, by the common PNG's name: each PNG and its contexts."""
     listing = BUTTON_PLATFORMS / (platform or "") / "buttons.json"
@@ -87,7 +96,7 @@ def textures(platform: Optional[str] = None) -> List[tuple]:
     """The textures: each one's folder, its entry in its list, whether it
     is the menus' (a title or a button icon, drawn with the high-res text),
     its PNG's name and the contexts it is drawn in (0: all); a port's own
-    button art in place of the common PNG it stands for."""
+    button art beside the common PNG it stands for, each marked as whose."""
     result = []
     overrides = platform_overrides(platform)
     for folder, listing, title in ((HUD_ASSETS, LAYOUT, False), (TITLE_ASSETS, TITLE_LIST, True),
@@ -96,8 +105,12 @@ def textures(platform: Optional[str] = None) -> List[tuple]:
             continue
         for asset in json.loads((ROOT / listing).read_text())["assets"]:
             if listing == BUTTON_LIST and asset["name"] in overrides:
-                result += [(BUTTON_PLATFORMS / platform, asset, title, override["png"], override["contexts"])
+                # (the port's art, and the Xbox's beside it, for display.xbox_buttons to choose:
+                # hud_hires.h's HUD_HIRES_CONTEXT_PLATFORM_ART and _XBOX_ART)
+                result += [(BUTTON_PLATFORMS / platform, asset, title, override["png"],
+                            (override["contexts"] or CONTEXT_PLACES) | CONTEXT_PLATFORM_ART)
                            for override in overrides[asset["name"]]]
+                result.append((folder, asset, title, f"{asset['name']}.png", CONTEXT_PLACES | CONTEXT_XBOX_ART))
             else:
                 result.append((folder, asset, title, f"{asset['name']}.png", 0))
     return result

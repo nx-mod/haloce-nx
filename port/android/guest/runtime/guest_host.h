@@ -130,6 +130,11 @@ void host_android_path(int which, char *buffer, unsigned int size);
 in pixels of the current orientation, into insets[4]; all 0 when unknown */
 void host_gesture_insets(int *insets);
 
+/* the system's folder picker, after which the app copies the replays in
+folder (a path) to the folder chosen (HaloActivity.exportReplays); returns
+at once, the copy done on the app's own thread */
+void host_android_export_replays(const char *folder);
+
 /* ---------- the on-screen touch controls (host_touch.c, android_imports.list) */
 
 /* the overlay's controller: the SDL axes (left x, y, right x, y, left
@@ -148,6 +153,9 @@ void host_touch_bindings(const int *controls);
 /* the game's Gyro Aim for the overlay, which runs the phone's gyroscope: 0
 off, 1 on, 2 only while zoomed in */
 void host_touch_gyro_mode(int mode);
+/* the fingers that tap together to open the overlay menu (3 or 4), the
+overlay's General option */
+int host_touch_menu_fingers(void);
 
 /* ---------- the server browser's master servers (host_https.c) */
 

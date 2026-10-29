@@ -14,9 +14,25 @@ This guide covers changing them, adding a design, and giving a port
 | Message icons | Inside text: "Press (A) to join" | `hud_msg_icons_sm__0`: white stencils of each oval with its letter cut out, which the game tints | The A, B, X and Y sprites of the sheet `ui\hud\bitmaps\hud_msg_icons_sm` | A placeholder for those sprites (`port/linux/game/hud_hires_tags.c`) |
 | Gameplay prompts | The HUD's button prompts in a game, with `display.high_res_hud` on | `classic_*__0`, `gem_*__0`, and for Dark Gems the menu keys above | Bitmaps of the port's own, `ui\hud\buttons\*` (no map has them) | `hud_hires_button_draw` (`hud_hires_tags.c`), in the style `display.hud_button_style` names |
 | Sticks and triggers | Gameplay prompts for them, in every style | `trigger_*__0`, `thumbstick*_*__0` | `ui\hud\buttons\*` | The same |
+| Replay prompts | A replay's button bar and pause menu | `prompt_*__0`: Kenney's Xbox Series pictures (`kenney/`), every button the bar names, the d-pad, Back and Start too | `ui\hud\buttons\prompt_*` | `hud_hires_prompt_draw` (`hud_hires_tags.c`), from `port/linux/game/network_replay_playback.c` |
 
 The menu keys and message icons count as the menus' art: `display.high_res_text`
 turns them on and off. The gameplay prompts are the HUD's: `display.high_res_hud`.
+A replay's prompts are drawn whatever those say: the game has no pictures of
+its own of the d-pad, Back or Start to fall back to (its message icons'
+d-pad is the A's), so without them the bar writes the buttons' names. A
+replay swaps the Switch's A and B as the menus do, so its A and B prompts
+come twice there, as the menus' do.
+
+To render the prompts alone, after adding one to `PROMPT_ART` and
+`PLATFORM_ART` in `tools/button_assets.py` (and its name to
+`hud_prompt_names` in `hud_hires_tags.c`):
+
+```
+python tools/button_assets.py build --only prompt_a__0 ...
+python tools/button_assets.py platform --platform switch --only prompt_a__0 ...
+python tools/button_assets.py platform --platform ps5 --only prompt_a__0 ...
+```
 
 ## The pipeline
 
@@ -107,6 +123,7 @@ Prompts (CC0, `platforms/Kenney-LICENSE.txt`, which their releases carry):
 ```
 port/assets/buttons/
     a_butn__0.png             common PNGs (Android and the desktop builds)
+    kenney/*.svg              Kenney's Xbox Series pictures, a replay's prompts' in common
     platforms/Kenney-LICENSE.txt
     platforms/switch/
         kenney/*.svg          Kenney's pictures the port uses
@@ -131,9 +148,10 @@ port/assets/buttons/
   triggers; the Switch's B (the bottom button) for A, A for B, Y for X, X for
   Y, R and L, ZL and ZR.
 - **Embedding.** `hud_assets_build` passes a port that has a folder to
-  `embed_assets.py --platform <port>`, which embeds its PNGs in place of
-  the common ones, each with its contexts (`hud_hires.h`: where its
-  buttons are right; 0, everywhere).
+  `embed_assets.py --platform <port>`, which embeds its PNGs beside the
+  common ones, each with its contexts (`hud_hires.h`: where its buttons are
+  right, and whose art it is). The game draws the port's, or with
+  `display.xbox_buttons = true` the common Xbox ones (from the next map).
 
 ### The Switch
 

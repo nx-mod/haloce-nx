@@ -79,6 +79,7 @@ void hud_hires_tags_loaded(long scenario_index);
 void hud_hires_tags_unloaded(void);
 long hud_hires_asset_at(unsigned long address, long width, long height);
 struct bitmap_data const *hud_hires_sprite_bitmap(struct bitmap_data const *bitmap, short sequence_index);
+boolean network_replay_playing(void);
 
 #include "custom_edition_hud_buttons.h"
 
@@ -135,9 +136,30 @@ static struct
 } hud_buttons[14];
 static short hud_buttons_style;
 
+/* a replay's button prompts (hud_hires_prompt_draw): the port's own bitmaps,
+ui\hud\buttons\prompt_*, which no map has */
+static char const *const hud_prompt_names[] = {
+	"a", "b", "x", "y", "black", "white", "dpad_horizontal", "back", "start", "stick_right_press"
+};
+static struct
+{
+	struct bitmap_data *bitmap;
+	long asset;
+	boolean attempted;
+} hud_prompts[NUMBEROF(hud_prompt_names)];
+
 static void hud_buttons_forget(void)
 {
 	long index;
+	for (index = 0; index < (long)NUMBEROF(hud_prompts); index++)
+	{
+		if (hud_prompts[index].bitmap)
+		{
+			hud_hires_register_placeholder(hud_prompts[index].asset, NULL);
+			bitmap_delete(hud_prompts[index].bitmap);
+		}
+	}
+	csmemset(hud_prompts, 0, sizeof(hud_prompts));
 	ce_hud_buttons_forget();
 	for (index = 0; index < 14; index++)
 	{
@@ -316,9 +338,10 @@ struct bitmap_data const *hud_hires_sprite_bitmap(
 	struct bitmap_data const *bitmap,
 	short sequence_index)
 {
-	/* (the message icons by where they are drawn: a game's text by its buttons' places, the menus' and the carnage
-	report's as the menus' buttons are: game_engine_showing_postgame; xinput_sdl.c swaps them there too) */
-	boolean gameplay = !hud_hires_main_menu_loaded && !game_engine_showing_postgame();
+	/* (the message icons by where they are drawn: a game's text by its buttons' places, the menus', the carnage
+	report's and a replay's as the menus' buttons are: game_engine_showing_postgame, network_replay_playing;
+	xinput_sdl.c swaps them there too) */
+	boolean gameplay = !hud_hires_main_menu_loaded && !game_engine_showing_postgame() && !network_replay_playing();
 	long index;
 
 	for (index = 0; index < hires_sprite_bitmap_count; index++)
@@ -600,5 +623,76 @@ boolean hud_hires_button_draw(struct icon_hud_element_definition const *icon,
 	}
 	rasterizer_psuedo_dynamic_screen_quad_draw(&parameters, vertices);
 	cursor->x0 = advance;
+	return TRUE;
+}
+
+/* port: a replay's button prompt (port/linux/game/network_replay_playback.c):
+the picture of `name` (prompt_<name>: a, b, x, y, black, white,
+dpad_horizontal, back, start, stick_right_press), Kenney's of the port's
+controller, the A and B as the menus' are (a replay swaps them as the menus
+do: xinput_sdl.c), drawn in the square of `size` at x, y (its top left), or,
+when not draw, only looked for; whether there is one. Its texture stands for
+a bitmap of the port's own, made as first needed and deleted with the map,
+and a change of display.xbox_buttons or controls.nintendo_menu_buttons
+shows from the next map, as the menus' pictures do */
+boolean hud_hires_prompt_draw(char const *name, real x, real y, real size, pixel32 color, boolean draw)
+{
+	struct rasterizer_dynamic_screen_geometry_parameters parameters;
+	struct dynamic_screen_vertex vertices[4];
+	char tag[64];
+	long index;
+	long asset;
+	short i;
+
+	for (index = 0; index < (long)NUMBEROF(hud_prompt_names); index++)
+	{
+		if (!strcmp(name, hud_prompt_names[index]))
+			break;
+	}
+	if (index >= (long)NUMBEROF(hud_prompt_names))
+		return FALSE;
+	if (!hud_prompts[index].attempted)
+	{
+		hud_prompts[index].attempted = TRUE;
+		snprintf(tag, sizeof(tag), "ui\\hud\\buttons\\prompt_%s", name);
+		for (asset = 0; asset < hud_hires_asset_count(); asset++)
+		{
+			struct bitmap_data *bitmap;
+
+			if (strcmp(hud_hires_asset_tag(asset), tag) || !hud_hires_asset_applies(asset, FALSE))
+				continue;
+			bitmap = bitmap_2d_new(64, 64, 0, 11);
+			if (!bitmap)
+				break;
+			if (!rasterizer_bitmap_new(bitmap))
+			{
+				bitmap_delete(bitmap);
+				break;
+			}
+			hud_hires_register_placeholder(asset, bitmap->hardware_format);
+			hud_prompts[index].asset = asset;
+			hud_prompts[index].bitmap = bitmap;
+			break;
+		}
+	}
+	if (!hud_prompts[index].bitmap)
+		return FALSE;
+	if (!draw)
+		return TRUE;
+	csmemset(&parameters, 0, sizeof(parameters));
+	parameters.map[0] = hud_prompts[index].bitmap;
+	parameters.map_texture_scale[0].i = parameters.map_texture_scale[0].j = 1.0f;
+	parameters.map_scale[0].i = parameters.map_scale[0].j = 1.0f;
+	parameters.framebuffer_blend_function = 0;
+	for (i = 0; i < 4; i++)
+	{
+		boolean right = ((i + 1) & 2) != 0, bottom = i > 1;
+		vertices[i].position.x = x + (right ? size : 0.0f);
+		vertices[i].position.y = y + (bottom ? size : 0.0f);
+		vertices[i].texture_coordinates.x = right ? 1.0f : 0.0f;
+		vertices[i].texture_coordinates.y = bottom ? 1.0f : 0.0f;
+		vertices[i].color = (color & 0xFF000000UL) | 0xFFFFFFUL;
+	}
+	rasterizer_psuedo_dynamic_screen_quad_draw(&parameters, vertices);
 	return TRUE;
 }

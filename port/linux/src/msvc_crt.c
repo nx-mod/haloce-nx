@@ -644,20 +644,6 @@ FILE *platform_fopen_host(const char *path, const char *mode)
 	return fopen(path, mode);
 }
 
-#ifdef HALO_SWITCH
-/* ... and one removed by it (the Switch's overlay commands: port/linux/game/overlay_commands.c) */
-int platform_remove_host(const char *path)
-{
-	return remove(path);
-}
-
-/* ... and an empty folder */
-int platform_remove_directory_host(const char *path)
-{
-	return rmdir(path);
-}
-#endif
-
 FILE *halo_linux_freopen(const char *path, const char *mode, FILE *stream)
 {
 	char host_path[1024];

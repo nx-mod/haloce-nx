@@ -597,6 +597,7 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "units/units.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -3417,6 +3418,17 @@ static boolean multiplayer_message_internal(
 }
 
 
+/* port: whether the player's messages and the announcer's lines for them
+are this machine's: one of its local players, or in a replay's playback the
+player watched (port/linux/game/network_replay_playback.c) */
+static boolean game_engine_player_heard(
+	long player_index,
+	struct player_datum const *player)
+{
+	return player->local_player_index != NONE ||
+		(player_index != NONE && player_index == network_replay_watched_player());
+}
+
 static void multiplayer_message(
 	long player_index,
 	long message,
@@ -3424,7 +3436,7 @@ static void multiplayer_message(
 {
 	struct player_datum *player = player_get(player_index);
 
-	if (player->local_player_index != NONE)
+	if (game_engine_player_heard(player_index, player))
 	{
 		wchar_t buffer[1024];
 
@@ -3436,7 +3448,8 @@ static void multiplayer_message(
 			NUMBEROF(buffer)))
 		{
 			buffer[NUMBEROF(buffer) - 1] = 0;
-			hud_print_message(player->local_player_index, buffer);
+			/* (a replay's: the playback's view is local player 0's) */
+			hud_print_message(player->local_player_index != NONE ? player->local_player_index : 0, buffer);
 		}
 	}
 
@@ -3698,6 +3711,50 @@ static real game_engine_get_friendly_bonus(
 	return rating * 3.0f + 1.0f;
 }
 
+/* port: Teamplay Options' FORCE TEAM SPAWNS (game_variant_options): a team
+game other than CTF spawns a red or blue player as CTF does, only at the
+map's CTF starting locations, and only at his own team's. Not on a map with
+no CTF starting location for one of the teams, where his team would have
+nowhere to spawn */
+static long game_engine_get_type(
+	void);
+
+static boolean game_engine_force_team_spawns(
+	long player_index)
+{
+	struct player_datum *player = player_get(player_index);
+	boolean team_has_spawn[2] = { FALSE, FALSE };
+	short starting_location_count;
+	short starting_location_index;
+
+	if (!game_engine_running() ||
+		!game_engine_has_teams() ||
+		game_engine_get_type() == game_engine_ctf ||
+		!game_variant_options_get()->force_team_spawns ||
+		(player->team_index != _team_red && player->team_index != _team_blue))
+	{
+		return FALSE;
+	}
+
+	starting_location_count = player_get_starting_location_count();
+	for (starting_location_index = 0;
+		starting_location_index < starting_location_count;
+		starting_location_index++)
+	{
+		struct player_starting_location const *starting_location =
+			player_get_starting_location(starting_location_index);
+
+		if ((starting_location->team_index == _team_red ||
+				starting_location->team_index == _team_blue) &&
+			match_game_type(game_engine_ctf, 4, starting_location->game_types))
+		{
+			team_has_spawn[starting_location->team_index] = TRUE;
+		}
+	}
+
+	return team_has_spawn[_team_red] && team_has_spawn[_team_blue];
+}
+
 static real default_starting_location_rate_function(
 	long player_index,
 	struct player_starting_location const *starting_location)
@@ -3706,7 +3763,7 @@ static real default_starting_location_rate_function(
 	real rating = 1.0f;
 
 	if (game_engine_running() &&
-		game_engine_test_flag(0) &&
+		(game_engine_test_flag(0) || game_engine_force_team_spawns(player_index)) &&
 		player->team_index != starting_location->team_index)
 	{
 		rating = 0.0f;
@@ -4229,6 +4286,16 @@ static void game_engine_post_rasterize_in_game(
 	game_engine_globals.hud_message_timers[local_player_index] = fade;
 
 	return;
+}
+
+/* port: a replay's playback's scores, with Back held: the full-screen
+scoreboard, the watched player's row as a player's own
+(port/linux/game/network_replay_playback.c) */
+void game_engine_port_rasterize_scores(
+	long player_index)
+{
+	if (game_engine || network_coop_active())
+		game_engine_rasterize_in_game_score(player_index, 1.0f);
 }
 
 long game_engine_player_get_team_index(
@@ -7476,6 +7543,13 @@ void game_engine_variant_cleanup(
 	struct game_variant original = *variant;
 
 	variant->human_readable_game_description[NUMBEROF(variant->human_readable_game_description) - 1] = 0;
+	/* port: the CTF/Slayer game type of an earlier build (10) is capture the
+	flag with Kills Score on (game_engine_ctf.c) */
+	if (variant->game_engine_index == 10)
+	{
+		variant->game_engine_index = game_engine_ctf;
+		variant->game_engine_variant.ctf.kills_score = TRUE;
+	}
 	variant->game_engine_index = PIN(variant->game_engine_index, 1, 5);
 	variant->universal_variant.teams = !!variant->universal_variant.teams;
 	variant->universal_variant.odd_man_out = !!variant->universal_variant.odd_man_out;
@@ -7499,12 +7573,25 @@ void game_engine_variant_cleanup(
 		variant->universal_variant.teams = TRUE;
 		variant->game_engine_variant.ctf.flag_at_home_to_score = !!variant->game_engine_variant.ctf.flag_at_home_to_score;
 		variant->game_engine_variant.ctf.single_flag_time = FLOOR(variant->game_engine_variant.ctf.single_flag_time, 0);
+		/* port: Kills Score, and a capture's points (25 where none are kept:
+		a gametype of a build without them) */
+		variant->game_engine_variant.ctf.kills_score = !!variant->game_engine_variant.ctf.kills_score;
+		if (variant->game_engine_variant.ctf.points_per_capture <= 0)
+			variant->game_engine_variant.ctf.points_per_capture = 25;
+		variant->game_engine_variant.ctf.points_per_capture =
+			PIN(variant->game_engine_variant.ctf.points_per_capture, 1, 100);
 		break;
 
 	case game_engine_slayer:
 		variant->game_engine_variant.slayer.no_death_bonus = !!variant->game_engine_variant.slayer.no_death_bonus;
 		variant->game_engine_variant.slayer.no_kill_penalty = !!variant->game_engine_variant.slayer.no_kill_penalty;
 		variant->game_engine_variant.slayer.kill_in_order = !!variant->game_engine_variant.slayer.kill_in_order;
+		break;
+
+	case game_engine_king:
+		/* port: Multi-Hill's hills at once: 2 to 5, else none */
+		if (variant->game_engine_variant.king.multi_hill < 2 || variant->game_engine_variant.king.multi_hill > 5)
+			variant->game_engine_variant.king.multi_hill = 0;
 		break;
 
 	case game_engine_oddball:
@@ -7787,8 +7874,14 @@ real game_engine_get_starting_location_rating(
 	long player_index,
 	struct player_starting_location const *starting_location)
 {
-	if (!match_game_type(game_engine_get_type(), 4, starting_location->game_types))
+	/* port: (or CTF's: game_engine_force_team_spawns) */
+	if (!match_game_type(
+		game_engine_force_team_spawns(player_index) ? game_engine_ctf : game_engine_get_type(),
+		4,
+		starting_location->game_types))
+	{
 		return 0.0f;
+	}
 
 	if (nearby_vehicle(player_index, starting_location))
 		return 0.0f;
@@ -9559,13 +9652,13 @@ void game_engine_client_respawn_countdown(
 	{
 		return;
 	}
-	if (player->local_player_index != NONE &&
+	if (game_engine_player_heard(player_index, player) &&
 		(player->respawn_timer == 90 || player->respawn_timer == 60 || player->respawn_timer == 30))
 	{
 		game_engine_play_multiplayer_sound(_multiplayer_sound_countdown_for_respawn);
 	}
 	player->respawn_timer--;
-	if (player->local_player_index != NONE && player->respawn_timer == 1)
+	if (game_engine_player_heard(player_index, player) && player->respawn_timer == 1)
 		game_engine_play_multiplayer_sound(_multiplayer_sound_respawn);
 
 	return;

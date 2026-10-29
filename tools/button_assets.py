@@ -51,6 +51,14 @@ platform --platform switch|ps5: renders the port's own art (Kenney's Input
     Prompts) in place of each PNG, into port/assets/buttons/platforms/<port>
     with its list, buttons.json (embed_assets.py --platform embeds them).
 
+build and platform take --only NAME..., to render those PNGs alone (the
+others, and their lists' entries, kept as they are).
+
+A replay's button bar (port/linux/game/network_replay_playback.c) draws
+every button it names as a picture of its own, the prompts (prompt_*__0,
+bitmaps of the port's own, ui\\hud\\buttons\\prompt_*): Kenney's Xbox Series
+pictures (port/assets/buttons/kenney) in common, the port's own on a port.
+
 Needs rsvg-convert, Pillow, NumPy and SciPy.
 """
 
@@ -120,6 +128,28 @@ CONTROL_BUTTONS = [dict(name=f"{name}__0", tag=f"ui\\hud\\buttons\\{name}",
                    for name, cell in [("trigger_left", [50,35]), ("trigger_right", [50,35])] +
                    [(f"thumbstick{state}_{side}", [36,40])
                     for state in ("", "-halfway", "-full") for side in ("left", "right")]]
+
+
+# A replay's button prompts, every button the bar names (hud_hires_prompt_draw, hud_hires_tags.c): Kenney's Xbox
+# Series pictures (kenney/, CC0: platforms/Kenney-LICENSE.txt), each as large as fits its square cell, kept to its
+# proportions, a texel of the cell's size clear round it
+PROMPT_ART = {"a": "xbox_button_color_a", "b": "xbox_button_color_b", "x": "xbox_button_color_x",
+              "y": "xbox_button_color_y", "black": "xbox_rb", "white": "xbox_lb",
+              "dpad_horizontal": "xbox_dpad_horizontal", "back": "xbox_button_view", "start": "xbox_button_menu",
+              "stick_right_press": "xbox_stick_r_press"}
+PROMPT_BUTTONS = [dict(name=f"prompt_{button}__0", tag=f"ui\\hud\\buttons\\prompt_{button}",
+                       bitmap=0, width=64, height=64, format="a8r8g8b8", scale=8, crc=0, kenney=art)
+                  for button, art in PROMPT_ART.items()]
+
+
+def prompt(entry: dict) -> np.ndarray:
+    """A prompt's Kenney picture in its cell."""
+    scale = entry["scale"]
+    size = (entry["width"] * scale, entry["height"] * scale)
+    image = Image.new("RGBA", size)
+    placed_face(image, kenney_face(ASSETS / "kenney", entry["kenney"], (size[0] - 2 * scale, size[1] - 2 * scale)),
+                (0, 0, *size))
+    return bleed(np.asarray(image).copy())
 
 
 def gameplay_control(entry: dict) -> np.ndarray:
@@ -383,17 +413,22 @@ def layout(arguments) -> None:
     classic_buttons = [dict(entry) for entry in CLASSIC_BUTTONS]
     for entry, sprite in zip(classic_buttons, sprites):
         entry["letter"] = [round(n / sprite["place"][0], 4) for n in sprite["letter"]]
-    LIST.write_text(json.dumps({"assets": entries + HUD_BUTTONS + classic_buttons + GEM_BUTTONS + CONTROL_BUTTONS}, indent=1) + "\n")
+    LIST.write_text(json.dumps({"assets": entries + HUD_BUTTONS + classic_buttons + GEM_BUTTONS + CONTROL_BUTTONS +
+                                       PROMPT_BUTTONS}, indent=1) + "\n")
 
 
 def build(arguments) -> None:
     description = json.loads(LIST.read_text())
     names = {f"{entry['name']}.png" for entry in description["assets"]}
     for stale in ASSETS.glob("*.png"):
-        if stale.name not in names:
+        if stale.name not in names and not arguments.only:
             stale.unlink()
     for entry in description["assets"]:
-        if "control_cell" in entry:
+        if arguments.only and entry["name"] not in arguments.only:
+            continue
+        if "kenney" in entry:
+            image = prompt(entry)
+        elif "control_cell" in entry:
             image = gameplay_control(entry)
         elif "source_png" in entry:
             image = gameplay_gem(entry)
@@ -469,20 +504,26 @@ CONTEXT_MENUS_SWAPPED, CONTEXT_MENUS, CONTEXT_GAME = 1, 2, 4
 PLATFORM_ART = {
     "switch": {"a": "switch_button_b", "b": "switch_button_a", "x": "switch_button_y", "y": "switch_button_x",
                "black": "switch_button_r", "white": "switch_button_l",
+               "dpad_horizontal": "switch_dpad_horizontal", "back": "switch_button_minus",
+               "start": "switch_button_plus",
                "trigger_left": "switch_button_zl", "trigger_right": "switch_button_zr",
                "stick_left": "switch_stick_l", "stick_right": "switch_stick_r",
                "stick_left_press": "switch_stick_l_press", "stick_right_press": "switch_stick_r_press"},
     "ps5": {"a": "playstation_button_cross", "b": "playstation_button_circle", "x": "playstation_button_square",
             "y": "playstation_button_triangle", "black": "playstation_trigger_r1", "white": "playstation_trigger_l1",
+            "dpad_horizontal": "playstation_dpad_horizontal", "back": "playstation5_button_create",
+            "start": "playstation5_button_options",
             "trigger_left": "playstation_trigger_l2", "trigger_right": "playstation_trigger_r2",
             "stick_left": "playstation_stick_l", "stick_right": "playstation_stick_r",
             "stick_left_press": "playstation_stick_l_press", "stick_right_press": "playstation_stick_r_press"},
 }
 # (the Switch's menus with the swap on: A and B by their letters)
 SWAPPED_MENU_ART = {"switch": {"a": "switch_button_a", "b": "switch_button_b"}}
-# the textures the menus draw (the others are a game's HUD prompts)
+# the textures the menus draw, and a replay's prompts, whose buttons are swapped as the menus' (xinput_sdl.c); the
+# others are a game's HUD prompts
 MENU_TEXTURES = {"a_butn__0", "b_butn__0", "x_butn__0", "y_butn__0", "a_butn_sm__0", "b_butn_sm__0",
-                 "black_butn__0", "white_butn__0", "hud_msg_icons_sm__0"}
+                 "black_butn__0", "white_butn__0", "hud_msg_icons_sm__0"} | {
+                 entry["name"] for entry in PROMPT_BUTTONS}
 
 
 def platform_button(name: str) -> str:
@@ -494,15 +535,15 @@ def platform_button(name: str) -> str:
         return f"stick_{side}" + ("_press" if state == "-full" else "")
     if stem.startswith("trigger_"):
         return stem
-    for prefix in ("classic_", "gem_"):
+    for prefix in ("classic_", "gem_", "prompt_"):
         if stem.startswith(prefix):
             return stem[len(prefix):]
     return stem.split("_")[0]
 
 
-def kenney_face(platform: str, art: str, size: tuple) -> Image.Image:
-    """Kenney's picture, cropped to its shape and as large as fits size (keeping its proportions)."""
-    svg = PLATFORMS / platform / "kenney" / f"{art}.svg"
+def kenney_face(folder: Path, art: str, size: tuple) -> Image.Image:
+    """Kenney's picture (of folder), cropped to its shape and as large as fits size (keeping its proportions)."""
+    svg = folder / f"{art}.svg"
     root = ElementTree.parse(svg).getroot()
     view = [float(n) for n in (root.get("viewBox") or f"0 0 {root.get('width')} {root.get('height')}").split()]
     zoom = max(4.0, 2 * max(size[0] / view[2], size[1] / view[3]))
@@ -534,12 +575,12 @@ def platform_texture(platform: str, entry: dict, art: dict) -> np.ndarray:
                 continue
             box = (left + cell[0], top + cell[1], left + cell[2], top + cell[3])
             button = Path(sprite["svg"]).stem.split("_")[0]
-            placed_face(image, kenney_face(platform, art[button], (box[2] - box[0], box[3] - box[1])), box)
+            placed_face(image, kenney_face(PLATFORMS / platform / "kenney", art[button], (box[2] - box[0], box[3] - box[1])), box)
         pixels = np.asarray(image).copy()
         pixels[..., :3] = pixels[..., 3:4]
         return pixels
     box = common.getchannel("A").getbbox()
-    placed_face(image, kenney_face(platform, art[platform_button(entry["name"])], (box[2] - box[0], box[3] - box[1])),
+    placed_face(image, kenney_face(PLATFORMS / platform / "kenney", art[platform_button(entry["name"])], (box[2] - box[0], box[3] - box[1])),
                 box)
     pixels = np.asarray(image).copy()
     if "control_cell" in entry:
@@ -555,9 +596,16 @@ def platform(arguments) -> None:
     folder = PLATFORMS / name
     entries = json.loads(LIST.read_text())["assets"]
     overrides = []
-    for stale in folder.glob("*.png"):
-        stale.unlink()
+    if arguments.only:
+        # (the others' entries kept, their PNGs untouched)
+        overrides = [override for override in json.loads((folder / "buttons.json").read_text())["overrides"]
+                     if override["name"] not in arguments.only]
+    else:
+        for stale in folder.glob("*.png"):
+            stale.unlink()
     for entry in entries:
+        if arguments.only and entry["name"] not in arguments.only:
+            continue
         variants = [(f"{entry['name']}.png", 0, PLATFORM_ART[name])]
         swapped = SWAPPED_MENU_ART.get(name, {})
         if entry["name"] in MENU_TEXTURES and swapped and (
@@ -578,9 +626,11 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("layout")
     command.add_argument("--map", required=True)
-    commands.add_parser("build")
+    command = commands.add_parser("build")
+    command.add_argument("--only", nargs="+", metavar="NAME")
     command = commands.add_parser("platform")
     command.add_argument("--platform", required=True, choices=sorted(PLATFORM_ART))
+    command.add_argument("--only", nargs="+", metavar="NAME")
     command = commands.add_parser("check")
     command.add_argument("--map", required=True)
     command.add_argument("--out", required=True)

@@ -134,6 +134,56 @@
    "name": "thumbstick-full_right__0",
    "png": "thumbstick-full_right__0.png",
    "contexts": 0
+  },
+  {
+   "name": "prompt_a__0",
+   "png": "prompt_a__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_b__0",
+   "png": "prompt_b__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_x__0",
+   "png": "prompt_x__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_y__0",
+   "png": "prompt_y__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_black__0",
+   "png": "prompt_black__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_white__0",
+   "png": "prompt_white__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_dpad_horizontal__0",
+   "png": "prompt_dpad_horizontal__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_back__0",
+   "png": "prompt_back__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_start__0",
+   "png": "prompt_start__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_stick_right_press__0",
+   "png": "prompt_stick_right_press__0.png",
+   "contexts": 0
   }
  ]
 }

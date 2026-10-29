@@ -1766,8 +1766,6 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 		return S_OK;
 	device.visibility_test_active = FALSE;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 	command = stream_command(VK_COMMAND_VISIBILITY_END, sizeof(*command));
 	command->index = (uint32_t)index;
 	/* the target's pixels to a game pixel: the count is of the game's pixels (visibility_unscaled in d3d8_gl.c), which the game
@@ -1783,8 +1781,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (time_stamp)
 		*time_stamp = 0;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 	if (!device.video_ready || !visibility_pending[index])
 	{
 		if (result)

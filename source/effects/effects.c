@@ -2454,7 +2454,8 @@ static void effect_update(
 				{
 					effect->particle_counts[particle_index] = (byte)(long)
 						(((real)count - MAXIMUM_SPLIT_SCREEN_PARTICLE_COUNT) /
-						local_player_count() +
+						/* port: and a replay's playback, of no local player, as one */
+						MAX(local_player_count(), 1) +
 						MAXIMUM_SPLIT_SCREEN_PARTICLE_COUNT);
 				}
 			}

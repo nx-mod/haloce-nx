@@ -37,8 +37,12 @@ The game updates itself from this repository's releases, asking first.
 - 60 fps; shaders compiled on two threads, shared shader keys downloaded so a
   new install has them, and a map's load waits for its shaders
 - online play with OpenCE (network version 39): a server browser with the
-  dedicated servers first, internet games through UPnP, an invite link shown
+  fullest games first, internet games through UPnP, an invite link shown
   as a QR code for a phone, up to 128 players, joining a game in progress
+- Theater: games recorded as replays, watched with a free camera, any player's
+  eyes, speed controls and a seek bar
+- OpenCE gametype options (Force Team Spawns, CTF and Slayer variants, more
+  than one hill), a match timer on the HUD, co-op cutscene cameras
 - co-op campaign over the network, and bots in multiplayer
 - Custom Edition maps in `custom_maps/`, sent by the host to players who lack
   them

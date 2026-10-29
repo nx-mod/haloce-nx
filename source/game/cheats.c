@@ -169,7 +169,11 @@ static boolean cheats_network_client_rasterizer_enforce(
 /* port: a client in another's game plays by the host's rules: none of its
 own cheats, its own game speed or its own changes to how players play, nor
 what its drawing shows it that others' does not, set before it joined too
-(after, hs_compile_and_evaluate refuses them); each frame and each tick */
+(after, hs_compile_and_evaluate refuses them); each frame and each tick. A
+replay's playback is such a client too, but its speed is the playback's own
+(the shoulder buttons, its pause: port/linux/game/network_replay_playback.c) */
+boolean network_replay_playing(void);
+
 void cheats_network_client_enforce(
 	void)
 {
@@ -184,7 +188,8 @@ void cheats_network_client_enforce(
 	rider_ejection = TRUE;
 	player_autoaim_flag = TRUE;
 	player_magnetism_flag = TRUE;
-	changed |= game_time_reset_speed();
+	if (!network_replay_playing())
+		changed |= game_time_reset_speed();
 	changed |= cheats_network_client_rasterizer_enforce();
 	if (changed)
 	{

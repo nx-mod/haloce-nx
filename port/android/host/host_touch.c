@@ -45,6 +45,9 @@ static volatile int gyro_mode;
 static int rumble_amplitude;
 static int64_t rumble_ns;
 static volatile int touch_scene;
+/* the fingers that tap together to open the overlay menu, the overlay's
+General option; touch_input.c counts them in the menus */
+static volatile int menu_fingers = 3;
 /* the game control on each controller button (-1: none), and a count of
 its changes, which the overlay polls */
 #define TOUCH_BUTTONS 16
@@ -145,6 +148,19 @@ JNIEXPORT jint JNICALL Java_com_halo_decomp_TouchControls_nativeGyroMode(JNIEnv 
 	(void)env;
 	(void)cls;
 	return gyro_mode;
+}
+
+JNIEXPORT void JNICALL Java_com_halo_decomp_TouchControls_nativeMenuFingers(JNIEnv *env, jclass cls, jint fingers)
+{
+	(void)env;
+	(void)cls;
+	if (fingers == 3 || fingers == 4)
+		menu_fingers = fingers;
+}
+
+int host_touch_menu_fingers(void)
+{
+	return menu_fingers;
 }
 
 JNIEXPORT void JNICALL Java_com_halo_decomp_TouchControls_nativeLookReset(JNIEnv *env, jclass cls)

@@ -12,6 +12,7 @@ the platform layer reads the display.interpolation setting */
 struct observer_result;
 struct render_camera;
 struct real_matrix4x3;
+union real_point3d;
 int halo_interpolation_enabled(void);
 float game_time_get_tick_fraction(void);
 void render_interpolation_tick(void);
@@ -20,6 +21,8 @@ void render_interpolation_frame_begin(void);
 void render_interpolation_frame_end(void);
 float render_interpolation_fraction(void);
 struct real_matrix4x3 *render_interpolation_object_node_matrices(long object_index);
+/* a point on an object (a nav marker's), moved to where the frame draws it */
+void render_interpolation_object_point(long object_index, union real_point3d *point);
 struct observer_result const *render_interpolation_camera(short local_player_index,
 	struct observer_result const *observer);
 void render_interpolation_first_person(short local_player_index, struct real_matrix4x3 *node_matrices,
@@ -145,6 +148,9 @@ int halo_server_debug_echo(void);
 char const *server_director_first_level(void);
 /* the mouse in the menus (source/interface/ui_widget.c) */
 #include "halo_ui_pointer.h"
+/* the overlay menu (port/linux/game/overlay_menu.c): while it is open the
+menus' pointer is its own, and it is drawn over the screen (interface.c) */
+#include "halo_overlay_menu.h"
 /* TRUE when B steps out of a custom-map folder or the Map screen's
 difficulties and the screen stays (port/linux/game/menu_functions.c) */
 unsigned char menu_port_back(void *widget);

@@ -521,6 +521,116 @@
     36,
     40
    ]
+  },
+  {
+   "name": "prompt_a__0",
+   "tag": "ui\\hud\\buttons\\prompt_a",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_color_a"
+  },
+  {
+   "name": "prompt_b__0",
+   "tag": "ui\\hud\\buttons\\prompt_b",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_color_b"
+  },
+  {
+   "name": "prompt_x__0",
+   "tag": "ui\\hud\\buttons\\prompt_x",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_color_x"
+  },
+  {
+   "name": "prompt_y__0",
+   "tag": "ui\\hud\\buttons\\prompt_y",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_color_y"
+  },
+  {
+   "name": "prompt_black__0",
+   "tag": "ui\\hud\\buttons\\prompt_black",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_rb"
+  },
+  {
+   "name": "prompt_white__0",
+   "tag": "ui\\hud\\buttons\\prompt_white",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_lb"
+  },
+  {
+   "name": "prompt_dpad_horizontal__0",
+   "tag": "ui\\hud\\buttons\\prompt_dpad_horizontal",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_dpad_horizontal"
+  },
+  {
+   "name": "prompt_back__0",
+   "tag": "ui\\hud\\buttons\\prompt_back",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_view"
+  },
+  {
+   "name": "prompt_start__0",
+   "tag": "ui\\hud\\buttons\\prompt_start",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_button_menu"
+  },
+  {
+   "name": "prompt_stick_right_press__0",
+   "tag": "ui\\hud\\buttons\\prompt_stick_right_press",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 0,
+   "kenney": "xbox_stick_r_press"
   }
  ]
 }

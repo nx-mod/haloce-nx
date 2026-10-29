@@ -83,6 +83,7 @@ machine (their datum identifiers need not be).
 #include "latency_meter.h"
 #include "profile_sections.h"
 #include "server_director.h"
+#include "network_replay.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -96,6 +97,7 @@ boolean network_distributed_server_send_to_all_reliably(void *message, word size
 boolean network_distributed_server_send_to_machine(long machine_index, void *message, word size);
 boolean network_distributed_server_send_to_machine_reliably(long machine_index, void *message, word size);
 short network_distributed_server_machines(long *machine_indices, short maximum);
+boolean network_distributed_server_slot_taken(long machine_index);
 /* players.c's */
 void network_player_attach_unit(long player_index, long unit_index);
 void network_player_detach_unit(long player_index);
@@ -122,6 +124,7 @@ void main_build_identity(long *number, char *flavor, size_t flavor_size, char *r
 	char *version, size_t version_size);
 int port_mods_list(char *text, unsigned long size);
 void console_warning(const char *format, ...);
+int config_boolean(char const *name);
 
 /* the host: a client's game run faster than its clock (a speed hack, which
 speeds up the machine's own clock: nothing on it can tell), found by its
@@ -747,6 +750,17 @@ static long distributed_shown_slowest_ping = NONE;
 told) */
 static word distributed_player_pings[MAXIMUM_TRACKED_PLAYERS];
 
+/* the host: network.full_detail_to_clients, read once a tick: every client
+is sent every player every tick and every damage event, as the replay
+recorder is (a client's recording then holds all of the game) */
+static boolean distributed_full_detail;
+
+boolean distributed_full_detail_to_clients(
+	void)
+{
+	return distributed_full_detail;
+}
+
 /* the host: its clients' machines, found once a tick */
 static struct
 {
@@ -754,7 +768,10 @@ static struct
 	boolean valid;
 	short count;
 	long indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-} distributed_machines;
+	/* the replay recorder's machine (network_replay.c), NONE when there is
+	none: found with them */
+	long recorder;
+} distributed_machines = { FALSE, FALSE, 0, { 0 }, NONE };
 
 /* the unreliable messages of this tick, a batch for each machine and one
 for the host */
@@ -1013,6 +1030,9 @@ static void distributed_batch_flush(
 	build_message_header(&header->header, batch->size, 2, 0);
 	if (sender == HOST_SENDER)
 		network_distributed_client_send(batch->data, batch->size);
+	/* (the replay recorder's goes to its file, network_replay.c) */
+	else if (sender == distributed_machines.recorder)
+		network_replay_record(_network_replay_datagram, batch->data, batch->size);
 	else
 		network_distributed_server_send_to_machine(sender, batch->data, batch->size);
 	batch->size = 0;
@@ -1159,14 +1179,18 @@ void distributed_send(
 	case _distributed_to_clients:
 	{
 		long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-		short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+		/* (and the replay recorder) */
+		short machine_count = distributed_viewing_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
 		short index;
 
 		for (index = 0; index < machine_count; index++)
 			distributed_batch_add((short)machine_indices[index], message, size, distributed_entry_size(count, size));
 		break;
 	}
-	case _distributed_to_clients_reliably: network_distributed_server_send_to_all_reliably(message, size); break;
+	case _distributed_to_clients_reliably:
+		network_distributed_server_send_to_all_reliably(message, size);
+		network_replay_record(_network_replay_reliable, message, size);
+		break;
 	case _distributed_to_host:
 		distributed_batch_add(HOST_SENDER, message, size, distributed_entry_size(count, size));
 		break;
@@ -1195,7 +1219,10 @@ void distributed_send_to_machine_reliably(
 	word size)
 {
 	distributed_fill_header(message, type, count, size);
-	network_distributed_server_send_to_machine_reliably(machine_index, message, size);
+	if (machine_index == distributed_machines.recorder && machine_index != NONE)
+		network_replay_record(_network_replay_reliable_to_machine, message, size);
+	else
+		network_distributed_server_send_to_machine_reliably(machine_index, message, size);
 }
 
 /* a packer's messages of the type, to the machine (or the host), each
@@ -1355,6 +1382,34 @@ static boolean distributed_machine_is_local(
 	return FALSE;
 }
 
+/* (the host, recording a replay) the recorder's machine: the highest slot
+no client has (joined, joining or loading the game in progress) and no
+player is at, a bot's either; NONE when not recording, or all are taken.
+Found again each tick: a client or a bot may take its slot, and it moves */
+static long distributed_recorder_find(
+	void)
+{
+	long machine_index;
+
+	if (!network_replay_recording())
+		return NONE;
+	for (machine_index = HALO_PORT_MAXIMUM_NETWORK_MACHINES - 1; machine_index >= 0; machine_index--)
+	{
+		long *player_list;
+		short local_player_index;
+		boolean empty = TRUE;
+
+		if (network_distributed_server_slot_taken(machine_index))
+			continue;
+		player_list = machine_get_player_list(machine_index);
+		for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+			empty &= player_list[local_player_index] == NONE;
+		if (empty && !distributed_machine_is_local(machine_index))
+			return machine_index;
+	}
+	return NONE;
+}
+
 short distributed_client_machines(
 	long *machine_indices,
 	short maximum)
@@ -1377,11 +1432,36 @@ short distributed_client_machines(
 				distributed_machines.indices[distributed_machines.count++] = distributed_machines.indices[index];
 			}
 		}
+		distributed_machines.recorder = distributed_recorder_find();
 		distributed_machines.valid = distributed_machines.in_tick;
 	}
 	for (index = 0; index < distributed_machines.count && index < maximum; index++)
 		machine_indices[index] = distributed_machines.indices[index];
 	return index;
+}
+
+long distributed_recorder_machine(
+	void)
+{
+	/* (found with the machines, once a tick) */
+	if (!distributed_machines.valid)
+	{
+		long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+
+		distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	}
+	return distributed_machines.recorder;
+}
+
+short distributed_viewing_machines(
+	long *machine_indices,
+	short maximum)
+{
+	short count = distributed_client_machines(machine_indices, maximum);
+
+	if (distributed_machines.recorder != NONE && count < maximum)
+		machine_indices[count++] = distributed_machines.recorder;
+	return count;
 }
 
 /* (the host) a machine has loaded the game: if it is new at its index (its
@@ -2761,6 +2841,171 @@ static void distributed_handle_unit_states(
 
 /* (a client) its own players' input of the tick just run, with the buttons
 of the ticks before it, to the host */
+static word distributed_relayed_action_write(struct distributed_relayed_action const *relayed, byte *buffer);
+static word distributed_relayed_action_read(byte const *buffer, byte const *end, struct distributed_relayed_action *relayed);
+
+/* (a client recording a replay) its player's input of this tick, its tick
+then the action as the host relays a player's (network_replay.c's
+_network_replay_own_actions), which a playback gives the player as the
+host's relayed input (network_distributed_own_actions) */
+static void distributed_record_own_action(
+	short player_index,
+	struct distributed_player_input const *input)
+{
+	struct player_action const *action = &input->action;
+	struct distributed_relayed_action relayed;
+	byte record[sizeof(long) + DISTRIBUTED_RELAYED_ACTION_MAXIMUM_SIZE];
+	real throttle_i = PIN(action->throttle.i, -1.0f, 1.0f);
+	real throttle_j = PIN(action->throttle.j, -1.0f, 1.0f);
+	real trigger = PIN(action->primary_trigger, 0.0f, 1.0f);
+	short history;
+
+	csmemset(&relayed, 0, sizeof(relayed));
+	relayed.player_index = (byte)player_index;
+	relayed.desired_weapon_index = (signed char)action->desired_weapon_index;
+	relayed.desired_grenade_index = (signed char)action->desired_grenade_index;
+	relayed.desired_zoom_level = (signed char)MIN(action->desired_zoom_level, 127);
+	for (history = 0; history < DISTRIBUTED_INPUT_HISTORY; history++)
+		relayed.control_flags[history] = input->control_flags[history];
+	relayed.yaw = distributed_angle_pack(action->desired_facing.yaw);
+	relayed.pitch = distributed_angle_pack(action->desired_facing.pitch);
+	relayed.throttle_i = (signed char)(long)floor(throttle_i * 127.0f + 0.5f);
+	relayed.throttle_j = (signed char)(long)floor(throttle_j * 127.0f + 0.5f);
+	relayed.primary_trigger = (byte)(long)floor(trigger * 255.0f + 0.5f);
+	csmemcpy(record, &input->tick, sizeof(long));
+	network_replay_record(_network_replay_own_actions, record,
+		(long)(sizeof(long) + distributed_relayed_action_write(&relayed, record + sizeof(long))));
+}
+
+void network_distributed_own_actions(
+	byte const *data,
+	long size)
+{
+	byte const *end = data + size;
+	struct distributed_relayed_action relayed;
+	struct player_action action;
+	long tick;
+	word read;
+
+	if (size < (long)sizeof(long))
+		return;
+	csmemcpy(&tick, data, sizeof(long));
+	read = distributed_relayed_action_read(data + sizeof(long), end, &relayed);
+	if (!read)
+		return;
+	/* (as distributed_handle_actions gives a player the host's: the
+	client's own tick its update's number, which orders that player's alone) */
+	csmemset(&action, 0, sizeof(action));
+	action.control_flags = relayed.control_flags[0];
+	action.desired_facing.yaw = distributed_angle_unpack(relayed.yaw, FALSE);
+	action.desired_facing.pitch = distributed_angle_unpack(relayed.pitch, TRUE);
+	action.throttle.i = PIN((real)relayed.throttle_i / 127.0f, -1.0f, 1.0f);
+	action.throttle.j = PIN((real)relayed.throttle_j / 127.0f, -1.0f, 1.0f);
+	action.primary_trigger = (real)relayed.primary_trigger / 255.0f;
+	action.desired_weapon_index = relayed.desired_weapon_index;
+	action.desired_grenade_index = relayed.desired_grenade_index;
+	action.desired_zoom_level = relayed.desired_zoom_level;
+	update_client_handle_relayed_action(relayed.player_index, tick, &action, relayed.control_flags,
+		DISTRIBUTED_INPUT_HISTORY);
+}
+
+void network_distributed_replay_facings(
+	byte const *data,
+	long size,
+	boolean own_actions,
+	void (*found)(void *context, short player_index, long tick, short yaw, short pitch),
+	void *context)
+{
+	byte const *end = data + size;
+	struct distributed_message_header header;
+	struct distributed_relayed_action relayed;
+	long update_number;
+	short index;
+
+	if (own_actions)
+	{
+		long tick;
+
+		if (size >= (long)sizeof(long) && distributed_relayed_action_read(data + sizeof(long), end, &relayed))
+		{
+			csmemcpy(&tick, data, sizeof(long));
+			found(context, (short)relayed.player_index, tick, relayed.yaw, relayed.pitch);
+		}
+		return;
+	}
+	if (size < (long)sizeof(header))
+		return;
+	csmemcpy(&header, data, sizeof(header));
+	/* (a tick's messages in one, as network_distributed_handle_message
+	takes them: each message after its length, without the message header
+	the batch has once) */
+	if (header.type == _distributed_message_batch)
+	{
+		long offset = sizeof(header);
+
+		while (offset + (long)sizeof(word) <= size)
+		{
+			byte buffer[sizeof(message_header) + DATAGRAM_MAXIMUM_SIZE + 1];
+			word length;
+
+			csmemcpy(&length, data + offset, sizeof(word));
+			offset += sizeof(word);
+			if (length > size - offset || length < sizeof(header) - sizeof(message_header) ||
+				sizeof(message_header) + length > sizeof(buffer))
+			{
+				break;
+			}
+			csmemcpy(buffer, data, sizeof(message_header));
+			csmemcpy(buffer + sizeof(message_header), data + offset, length);
+			offset += length;
+			if (((struct distributed_message_header const *)buffer)->type != _distributed_message_batch)
+			{
+				network_distributed_replay_facings(buffer, (long)(sizeof(message_header) + length), FALSE, found,
+					context);
+			}
+		}
+		return;
+	}
+	if (header.type != _distributed_message_relayed_actions)
+		return;
+	/* (as distributed_handle_actions reads them: the host's update, then
+	each player's) */
+	data += sizeof(header);
+	if (!distributed_take(&data, end, &update_number, sizeof(update_number)))
+		return;
+	for (index = 0; index < header.count; index++)
+	{
+		word read = distributed_relayed_action_read(data, end, &relayed);
+
+		if (!read)
+			break;
+		data += read;
+		found(context, (short)relayed.player_index, update_number, relayed.yaw, relayed.pitch);
+	}
+}
+
+void network_distributed_replay_restored(
+	void)
+{
+	if (distributed_host_time != NONE)
+		distributed_host_time_received = system_milliseconds();
+	distributed_host_silent_since = 0;
+}
+
+short network_distributed_own_actions_player(
+	byte const *data,
+	long size)
+{
+	struct distributed_relayed_action relayed;
+
+	if (size < (long)sizeof(long) ||
+		!distributed_relayed_action_read(data + sizeof(long), data + size, &relayed))
+	{
+		return NONE;
+	}
+	return (short)relayed.player_index;
+}
+
 static void distributed_client_send_inputs(
 	void)
 {
@@ -2783,6 +3028,10 @@ static void distributed_client_send_inputs(
 		if (!update_client_distributed_input(local_player_index, &input->tick, &input->action, input->control_flags))
 			continue;
 		input->player_index = distributed_player_to_byte(player_index);
+		/* (a client recording a replay: its player's input, which the host
+		never sends it, as the host relays a player's) */
+		if (network_replay_recording_as_client())
+			distributed_record_own_action((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), input);
 		input->structure_bsp_index = (byte)global_structure_bsp_index_get();
 		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire();
 		input->host_time = distributed_host_time;
@@ -3068,7 +3317,9 @@ static void distributed_host_plan_players(
 	static short clusters[MAXIMUM_TRACKED_PLAYERS];
 	static boolean placed[MAXIMUM_TRACKED_PLAYERS];
 	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	/* (and the replay recorder, which has no players: it is sent everyone,
+	every tick) */
+	short machine_count = distributed_viewing_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
 	struct structure_bsp *structure_bsp = global_structure_bsp_get();
 	short cluster_count = structure_bsp ? (short)structure_bsp->clusters.count : 0;
 	long now = game_time_get();
@@ -3196,8 +3447,9 @@ static void distributed_host_plan_players(
 				period = HIDDEN_PLAYER_PERIOD_TICKS;
 				distributed_seen[machine_index][player_index] = TRUE;
 			}
-			/* (a client that has had no player alive watches anyone) */
-			else if (!own && viewer_count)
+			/* (a client that has had no player alive watches anyone; with
+			network.full_detail_to_clients, every client does, every tick) */
+			else if (!own && viewer_count && !distributed_full_detail)
 			{
 				real distances_squared[MAXIMUM_LOCAL_PLAYERS];
 				boolean sees[MAXIMUM_LOCAL_PLAYERS];
@@ -3278,7 +3530,7 @@ static void distributed_host_send_players(
 	void)
 {
 	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	short machine_count = distributed_viewing_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
 	short machine_number;
 
 	for (machine_number = 0; machine_number < machine_count; machine_number++)
@@ -3740,6 +3992,8 @@ void network_distributed_new_game(
 	short player_index;
 
 	distributed_last_sent_time = NONE;
+	/* (a recording is of one game: network_replay.c) */
+	network_replay_stop();
 	csmemset(distributed_deaths, 0, sizeof(distributed_deaths));
 	csmemset(distributed_seat_disagreements, 0, sizeof(distributed_seat_disagreements));
 	csmemset(distributed_predictions, 0, sizeof(distributed_predictions));
@@ -3864,6 +4118,10 @@ void network_distributed_tick(
 		decided first: the damage goes where the players it hurt do), and a
 		kill's statistics before the kill, so that a client announcing it
 		counts it (a double kill, a killing spree) */
+		/* (a replay's recording begins at the game's first tick, before
+		anything of it is sent: network_replay.c) */
+		network_replay_host_tick();
+		distributed_full_detail = config_boolean("network.full_detail_to_clients") != 0;
 		profile_scope(distributed_tick_apply_predictions_section, distributed_apply_predictions();)
 		profile_scope(distributed_tick_apply_vehicle_predictions_section, network_objects_apply_vehicle_predictions();)
 		profile_scope(distributed_tick_objects_host_tick_section, network_objects_host_tick();)
@@ -3894,6 +4152,8 @@ void network_distributed_tick(
 	}
 	else if (connection == _game_connection_network_client)
 	{
+		/* (a client's recording of what it reads of its host: network_replay.c) */
+		network_replay_client_tick();
 		profile_scope(distributed_tick_note_own_positions_section, distributed_note_own_positions();)
 		if (game_time_get() % PING_REFRESH_TICKS == 0 && latency_meter_enabled())
 			distributed_refresh_pings();
@@ -4752,7 +5012,8 @@ void network_distributed_handle_message(
 	case _distributed_message_client_identity: entry_size = sizeof(struct distributed_client_identity); break;
 	case _distributed_message_client_build: entry_size = sizeof(struct distributed_client_build); break;
 	case _distributed_message_damage_events:
-	case _distributed_message_hit_reports: entry_size = network_damage_entry_size(header.type); break;
+	case _distributed_message_hit_reports:
+	case _distributed_message_fire_origins: entry_size = network_damage_entry_size(header.type); break;
 	default: entry_size = network_objects_entry_size(header.type); break;
 	}
 	if (header.type == 0 || header.type >= NUMBER_OF_DISTRIBUTED_MESSAGES ||
@@ -4803,6 +5064,7 @@ void network_distributed_handle_message(
 	case _distributed_message_coop_skip_vote:
 	case _distributed_message_votekick:
 	case _distributed_message_chat_up:
+	case _distributed_message_fire_origins:
 		if (machine_index == NONE || game_connection() != _game_connection_network_server)
 			return;
 		/* (heard from: the latency meter's connection problem) */
@@ -4944,7 +5206,7 @@ void network_distributed_handle_message(
 		network_objects_handle_changes(entries, header.count);
 		break;
 	case _distributed_message_object_states:
-		network_objects_handle_states(entries, header.count);
+		network_objects_handle_states(entries, header.count, header.game_time);
 		break;
 	case _distributed_message_game_state:
 		game_engine_read_network_state((byte const *)entries, size - sizeof(header));
@@ -5081,6 +5343,9 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_hit_reports:
 		network_damage_handle_reports(machine_index, entries, header.count);
+		break;
+	case _distributed_message_fire_origins:
+		network_damage_handle_fire_origins(machine_index, entries, header.count);
 		break;
 	case _distributed_message_vehicle_prediction:
 		network_objects_handle_vehicle_prediction(machine_index, entries, header.count);

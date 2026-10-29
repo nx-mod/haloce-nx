@@ -112,6 +112,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "rasterizer/rasterizer_console_vars.h"
 #include "rasterizer/rasterizer_model_types.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 /* ---------- constants */
 
@@ -528,6 +529,17 @@ static boolean object_is_first_person_camera(
 		? NONE
 		: player_get(local_player_get_player_index(render.local_player_index))->unit_index;
 
+	/* port: a replay's playback's view through the watched player's eyes:
+their unit is the camera's, as a local player's own is
+(port/linux/game/network_replay_playback.c) */
+	if (network_replay_viewing_eyes())
+	{
+		long watched = network_replay_watched_player();
+		struct player_datum *player = watched != NONE ? player_try_and_get(watched) : NULL;
+
+		if (player && player->unit_index != NONE && player->unit_index == object_index)
+			return TRUE;
+	}
 	return (unit_index == object_index &&
 		director_get_perspective(render.local_player_index) ==
 			_director_perspective_first_person) ||
@@ -603,6 +615,13 @@ static void render_object_list(
 		real_matrix4x3 const *node_matrices = legs ?
 			first_person_legs_node_matrices(object_index, object_get_node_matrices(object_index)) :
 			object_get_node_matrices(object_index);
+		/* port: the function values the picture shows
+		(object_function_values_for_render), kept in the rasterizer's memory
+		for the frame: a modifier's group, a queued transparent part and a
+		child that copies this modifier read them after this block is done,
+		and the overshield finds its own values by their address
+		(overshield_effect.c), so they are not copied again */
+		real const *shown_functions = object->object.outgoing_function_values;
 
 		if (!object_is_first_person_camera(object_index) || render.camera.mirrored || (legs && node_matrices))
 		{
@@ -646,6 +665,17 @@ static void render_object_list(
 
 				if (!data->shadow)
 				{
+					/* port: the tick's functions, moved into this frame, so a
+					charge clicks with the picture instead of once a tick */
+					{
+						real values[NUMBER_OF_OUTGOING_OBJECT_FUNCTIONS];
+						real *kept;
+
+						object_function_values_for_render(object_index, values);
+						kept = rasterizer_memory_alloc(values, sizeof(values));
+						if (kept)
+							shown_functions = kept;
+					}
 					if (definition->object.modifier_shader.index != NONE)
 					{
 						model_effect.modifier_shader = shader_definition_get(
@@ -663,8 +693,8 @@ static void render_object_list(
 							(port/linux/game/overshield_effect.c) */
 							model_effect.modifier_animation.values =
 								TEST_FLAG(_object_mask_unit, object->object.type) ?
-									overshield_effect_values(object_index, object->object.outgoing_function_values, FALSE) :
-									object->object.outgoing_function_values;
+									overshield_effect_values(object_index, shown_functions, FALSE) :
+									shown_functions;
 						}
 						else
 						{
@@ -746,7 +776,7 @@ static void render_object_list(
 						node_matrices,
 						object->object.region_permutations,
 						object->object.outgoing_change_colors,
-						object->object.outgoing_function_values,
+						shown_functions,
 						data->lighting,
 						&object->object.bounding_sphere_center,
 						object->object.bounding_sphere_radius,
@@ -782,9 +812,13 @@ static void render_object_list(
 			if (!data->shadow && !legs && object->object.first_widget_index != NONE)
 			{
 				struct render_animation animation;
+				real widget_functions[NUMBER_OF_OUTGOING_OBJECT_FUNCTIONS];
 
+				/* port: the tick's functions, moved into this frame (the
+				widgets read them as they are drawn, here) */
+				object_function_values_for_render(object_index, widget_functions);
 				animation.colors = object->object.outgoing_change_colors;
-				animation.values = object->object.outgoing_function_values;
+				animation.values = widget_functions;
 				widgets_render(object_index, data->lighting, &animation);
 			}
 

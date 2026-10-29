@@ -281,6 +281,7 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1853,6 +1854,26 @@ static void players_compute_combined_pvs(
 					structure_bsp,
 					activating_cluster_index),
 				combined_pvs);
+		}
+
+		/* port: a replay's playback has no local player: what its view sees is
+		the local players' (the effects and particles made where they can be
+		seen: port/linux/game/network_replay_playback.c) */
+		if (local_player_only && network_replay_playing())
+		{
+			struct observer_result const *camera = network_replay_camera();
+
+			if (camera && camera->location.cluster_index >= 0 &&
+				camera->location.cluster_index < structure_bsp->clusters.count)
+			{
+				bit_vector_or(
+					(short)structure_bsp->clusters.count,
+					combined_pvs,
+					structure_bsp_get_cluster_pvs(
+						structure_bsp,
+						camera->location.cluster_index),
+					combined_pvs);
+			}
 		}
 	}
 	else

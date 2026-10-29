@@ -1,5 +1,117 @@
 # Changelog
 
+## Build 127
+
+- Replays: you can watch through any player's eyes, not only your own; in a replay you recorded as a client, the other players' aim is smoothed between the host's updates and the top line says EYES (SMOOTHED). (thelinkin3000)
+- Replays: the view through a player's eyes turns smoothly between the game's ticks and glides over the host's corrections instead of jumping. (thelinkin3000)
+- Replays: the d-pad's right skips to the next 10-second mark at 50 times speed, holding a dimmed frame with SKIPPING and pausing the sound until it gets there, then plays on at normal speed. (thelinkin3000)
+- Replays: a seek bar at the bottom of the screen shows where the replay is, with the time on its left and the replay's length on its right. (thelinkin3000)
+- Replays: the free camera moves slowly with a slight tilt of the left stick, speeds up and stops smoothly, and the Switch's ZL and ZR raise and lower it in small steps when tapped. (thelinkin3000)
+- Replays: the free camera no longer flickers into a wall when it flies against one. (thelinkin3000)
+- Replays: L slows a replay down even when it is bound to push-to-talk. (thelinkin3000)
+- Theater: RECORD says ON when replays are being recorded; it always said OFF. (thelinkin3000)
+- Android (Vulkan) and Switch: a light's glow no longer shows or hides with another light's visibility. (thelinkin3000)
+
+### From OpenCE
+
+- Vehicles' headlights light again with Smooth Motion on: the Warthog's, the Ghost's and the Scorpion's went dark while their guns were idle. (Alastair)
+- Parts of a level no longer flash out of view where a portal's corner lies on the view's edge. (PeterRichardsonGolf)
+- Split screen: each player's window keeps its own fog. (PeterRichardsonGolf)
+- The updater refuses a release with more files than it can install, instead of installing it partly. (PeterRichardsonGolf)
+
+## Build 126
+
+- Hotfix: Android: the touch controls' General settings scroll, so every one of them can be reached in portrait or on a short screen; the last ones were cut off, with no way to scroll to them. (thelinkin3000)
+- Theater, below Multiplayer in the main menu: your replays, newest first, a row each with its map, when it was played and how long it lasted; A watches one, and RECORD, DELETE (press it twice) and BACK are under the list. Android also has EXPORT, which copies the replays out through the system's folder picker. (thelinkin3000)
+- Replays: turn on RECORD in the Theater, or Record Replays in the overlay's System folder (network.record_replays), and every network game you play is recorded whole, from its first tick. A host records what everyone sees; a client records what its host sends it and its own input. Recordings under 5 seconds are not kept, and the newest 30 are (network.replays_kept, 0 keeps them all). (thelinkin3000)
+- Watching a replay: Y changes the view, behind the player, through their eyes (with their arms and weapon), or a free camera. A watches the next player, X the one before. The free camera flies with the sticks and triggers, slides along walls, and follows the player until you move it; behind the player, the right stick orbits round them (R3 turns back with them) and the left stick zooms. (thelinkin3000)
+- Watching a replay: the shoulder buttons play it faster (2, 4, 8 times) or slower (half, quarter, paused); the d-pad's left goes back to the last 10-second mark and its right on to the next; Back held shows the scores; B hides the text on the screen; Start pauses, and B in the pause menu leaves. A bar at the bottom shows the buttons as your controller's own: the Xbox's, the Switch's or the PS5's. (thelinkin3000)
+- Watching a replay: you hear the game where the camera is, the announcer speaks to the player you are watching, and effects and particles are drawn as in the game. (thelinkin3000)
+- Switch and PS5: while the Theater is open, a page on the local network (its QR code and address are in the Theater) lists the replays to download and takes replays uploaded from a phone or a computer; network.link_page = false turns it off, with Direct Link's. (thelinkin3000)
+- A host can send every client every player on every tick, and every damage event, for the most detailed recordings and spectating (network.full_detail_to_clients, off by default). (thelinkin3000)
+- Android: buttons at the edges of the screen, where the navigation bar is, press again: Android keeps its swipe areas there while the bars are hidden. Only a swipe that starts on no button is still left to Android. (thelinkin3000)
+- Android: the cheat menu opens with three fingers or four, set in the touch controls' Options, General. (thelinkin3000)
+- Android: Held buttons don't aim (Options, General; off by default): a finger that slides from a button holds it without turning the view. (thelinkin3000)
+- Android: Edit buttons layout moves the Options button too, and its Save, Import and Export are in the middle of the screen. Reset puts Options back in its corner. (thelinkin3000)
+- The server browser lists the games with the most players first; dedicated servers come first only when you choose to sort by them (network.browser_sort). (thelinkin3000)
+
+### From OpenCE
+
+- King of the Hill: MULTI-HILL (OFF, 2 to 5) puts that many hills in play at once, each with its own boundary and crown; standing on any of them scores, and with Moving Hill they all move together each minute. (s3anyboy)
+- Capture the Flag: Kills Score adds a point for each kill (a team kill takes one away), with Kills per Capture setting what a capture is worth; it replaces the CTF/Slayer gametype. (s3anyboy)
+- FORCE TEAM SPAWNS in Teamplay Options: in team games other than Capture the Flag, players spawn only at their own team's Capture the Flag spawn points, where the map has them. (s3anyboy)
+- Co-op: a dead player always sees the cutscene while the level's scripts hold the camera, even when spectating a teammate in an AI-flown Pelican. (s3anyboy)
+- A host checks a shot's line of sight from where it left when that is not the camera (a VR player's hand), as far as a hand can reach; network.fire_origins = false checks from the camera only. (Stefan Maier)
+- Weapon lights, markers and scope ticks move with the picture between the game's ticks, another player's aim too, and the plasma pistol's charge meter does as well. (justinfilip)
+- On a client, a vehicle nobody is driving moves smoothly from one of the host's updates to the next. (justinfilip, bnunu)
+- Objects keep their lighting when more lights are on the screen than the renderer has room for. (Antimomentum)
+- MATCH TIMER moved from Video Setup's Graphics to the Multiplayer HUD. (medic-code)
+- The console no longer prints its messages on the screen by default (game.console_log = "important" brings back bans, cheaters and refused commands). (justinfilip)
+- Settings screens: after backing out of a screen, the d-pad and the keys change the setting you return to again, not only the mouse. (bnunu)
+- Dedicated servers: a setting too long for the web API to read is refused instead of being saved as empty, which could clear a pasted server password. (Alastair)
+
+## Build 125
+
+- Theater, below Multiplayer in the main menu: your replays, newest first, a row each with its map, when it was played and how long it lasted; A watches one, and RECORD, DELETE (press it twice) and BACK are under the list. Android also has EXPORT, which copies the replays out through the system's folder picker. (thelinkin3000)
+- Replays: turn on RECORD in the Theater, or Record Replays in the overlay's System folder (network.record_replays), and every network game you play is recorded whole, from its first tick. A host records what everyone sees; a client records what its host sends it and its own input. Recordings under 5 seconds are not kept, and the newest 30 are (network.replays_kept, 0 keeps them all). (thelinkin3000)
+- Watching a replay: Y changes the view, behind the player, through their eyes (with their arms and weapon), or a free camera. A watches the next player, X the one before. The free camera flies with the sticks and triggers, slides along walls, and follows the player until you move it; behind the player, the right stick orbits round them (R3 turns back with them) and the left stick zooms. (thelinkin3000)
+- Watching a replay: the shoulder buttons play it faster (2, 4, 8 times) or slower (half, quarter, paused); the d-pad's left goes back to the last 10-second mark and its right on to the next; Back held shows the scores; B hides the text on the screen; Start pauses, and B in the pause menu leaves. A bar at the bottom shows the buttons as your controller's own: the Xbox's, the Switch's or the PS5's. (thelinkin3000)
+- Watching a replay: you hear the game where the camera is, the announcer speaks to the player you are watching, and effects and particles are drawn as in the game. (thelinkin3000)
+- Switch and PS5: while the Theater is open, a page on the local network (its QR code and address are in the Theater) lists the replays to download and takes replays uploaded from a phone or a computer; network.link_page = false turns it off, with Direct Link's. (thelinkin3000)
+- A host can send every client every player on every tick, and every damage event, for the most detailed recordings and spectating (network.full_detail_to_clients, off by default). (thelinkin3000)
+- Android: buttons at the edges of the screen, where the navigation bar is, press again: Android keeps its swipe areas there while the bars are hidden. Only a swipe that starts on no button is still left to Android. (thelinkin3000)
+- Android: the cheat menu opens with three fingers or four, set in the touch controls' Options, General. (thelinkin3000)
+- Android: Held buttons don't aim (Options, General; off by default): a finger that slides from a button holds it without turning the view. (thelinkin3000)
+- Android: Edit buttons layout moves the Options button too, and its Save, Import and Export are in the middle of the screen. Reset puts Options back in its corner. (thelinkin3000)
+- The server browser lists the games with the most players first; dedicated servers come first only when you choose to sort by them (network.browser_sort). (thelinkin3000)
+
+### From OpenCE
+
+- King of the Hill: MULTI-HILL (OFF, 2 to 5) puts that many hills in play at once, each with its own boundary and crown; standing on any of them scores, and with Moving Hill they all move together each minute. (s3anyboy)
+- Capture the Flag: Kills Score adds a point for each kill (a team kill takes one away), with Kills per Capture setting what a capture is worth; it replaces the CTF/Slayer gametype. (s3anyboy)
+- FORCE TEAM SPAWNS in Teamplay Options: in team games other than Capture the Flag, players spawn only at their own team's Capture the Flag spawn points, where the map has them. (s3anyboy)
+- Co-op: a dead player always sees the cutscene while the level's scripts hold the camera, even when spectating a teammate in an AI-flown Pelican. (s3anyboy)
+- A host checks a shot's line of sight from where it left when that is not the camera (a VR player's hand), as far as a hand can reach; network.fire_origins = false checks from the camera only. (Stefan Maier)
+- Weapon lights, markers and scope ticks move with the picture between the game's ticks, another player's aim too, and the plasma pistol's charge meter does as well. (justinfilip)
+- On a client, a vehicle nobody is driving moves smoothly from one of the host's updates to the next. (justinfilip, bnunu)
+- Objects keep their lighting when more lights are on the screen than the renderer has room for. (Antimomentum)
+- MATCH TIMER moved from Video Setup's Graphics to the Multiplayer HUD. (medic-code)
+- The console no longer prints its messages on the screen by default (game.console_log = "important" brings back bans, cheaters and refused commands). (justinfilip)
+- Settings screens: after backing out of a screen, the d-pad and the keys change the setting you return to again, not only the mouse. (bnunu)
+- Dedicated servers: a setting too long for the web API to read is refused instead of being saved as empty, which could clear a pasted server password. (Alastair)
+
+## Build 124
+
+- The OpenCE overlay, on the Switch, the PS5 and Android: hold L and R (L1 and R1) and press the d-pad's down, or on Android tap the screen with three fingers, for a panel at the left of the screen with cheats, bots, the game's speed, the HUD, the camera and the renderer's switches, in the menus and in a game. While it is open the game gets none of your input, but it is not paused; game.overlay_menu = false stops the buttons from opening it. Its first entries are hardran3's OpenCE-Ultrahand and HaloDrones packages'. (thelinkin3000)
+- The overlay's Bots folder adds and drops bots in a game in progress (on either team), and sets their difficulty, whether they take vehicles and their routes, at once. (thelinkin3000)
+- Entries of your own in the overlay: a .toml file each (a command, a toggle or a choice) in the overlay folder beside maps/, its folders the overlay's folders, one of a built-in folder's name adding to it; a file that is not a whole entry shows in red. The README's "The OpenCE overlay" says how. (thelinkin3000)
+- No cheats in multiplayer unless you are the host: in a game someone else hosts, the overlay refuses its cheats, as the console does. (thelinkin3000)
+- Switch and PS5: display.xbox_buttons = true draws the Xbox controller's buttons in the menus, the game's prompts and the text instead of the console's own (the overlay's System folder has it too; it applies at the next restart). (thelinkin3000)
+- Switch: the overlay replaces the Ultrahand overlay's command file: the game no longer reads /switch/.packages/halo/overlay/command.txt nor writes its result and flags there, and game.overlay_commands is gone. (thelinkin3000)
+
+## Build 123
+
+- Main menu: the X button (Y on the Switch, Square on the PS5), or a tap on NEWS, opens the news: this release's notes in a window that scrolls. (thelinkin3000)
+- PS5: Join Game > Direct Link shows a QR code: scan it with a phone (or open the address under it) and paste an invite link there, and the PS5 joins its game. The page is served on the local network only while Direct Link is open (network.link_page). (thelinkin3000)
+- PS5: Server Setup's invite row opens the game's invite link as a QR code, for a phone to read; B closes it. (thelinkin3000)
+- Bots drive and ride vehicles: a bot whose goal is far off takes an empty Warthog, Ghost or Scorpion, rides as a Warthog's gunner when a teammate drives, backs off when stuck, and mans turrets near an enemy (bots.vehicles). (thelinkin3000, from BirchWoodGod's halo-ce-vita)
+- Bots go for health packs when hurt, and for an overshield or camouflage nearby. (thelinkin3000, from BirchWoodGod's halo-ce-vita)
+- Bots hold vantage points: a bot with a sniper rifle or a rocket launcher (or a pistol in Slayer) holds a place overlooking the map a while, and leaves it when an enemy comes near, it runs low on ammunition, it is hurt, or its flag needs it. (thelinkin3000, from BirchWoodGod's halo-ce-vita)
+- Bots find their way better: through teleporters when a goal cannot be walked to, through them as shortcuts when they save a long walk, and up ladders. (thelinkin3000, from BirchWoodGod's halo-ce-vita)
+- Bots can spread over a map's side lanes instead of all going down the middle (bots.routes: direct, lanes or mixed). (thelinkin3000, from BirchWoodGod's halo-ce-vita)
+- Switch and PS5: the server browser lists the master servers' dedicated servers, as the other platforms do. (thelinkin3000)
+
+### From OpenCE
+
+- Network version 39: this build plays with OpenCE 39 and later, not with Build 122 or older.
+- The server browser has a DEDICATED tab for the master servers' dedicated servers, and opens on ALL GAMES, dedicated servers first.
+- The server browser asks the official master server, master.opencommunityedition.com, when masters.txt names none.
+- A server that refuses a player's name says so: "The host refused: your player name".
+- Fishsticks and Recon controller layouts.
+- The host refuses a reported hit with no line of sight to the target.
+- Gun Game: the plasma rifle and plasma pistol can fire.
+- A client keeps its inventory until its weapons have arrived, so it no longer spawns empty-handed.
+
 ## Build 122
 
 - Switch: Join Game > Direct Link shows a QR code: scan it with a phone (or open the address under it) and paste an invite link there, and the Switch joins its game. The page is served on the local network only while Direct Link is open (network.link_page). (thelinkin3000)

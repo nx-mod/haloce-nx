@@ -188,6 +188,8 @@ void draw_string_and_hack_in_icons(
 	short height_adjust,
 	wchar_t const *instring,
 	boolean ignore_icon_color);
+/* port: where the last draw_string_and_hack_in_icons left its cursor */
+extern short draw_string_and_hack_in_icons_port_end_x;
 void ui_widgets_dispose(
 	void);
 boolean widget_event_function_list_widget_goto_next_item(

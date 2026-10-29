@@ -1375,12 +1375,12 @@ int p2p_lobby_sort_parse(const char *text, int *reverse)
 			return order;
 	}
 	*reverse = 0;
-	return P2P_LOBBY_SORT_SERVERS;
+	return P2P_LOBBY_SORT_PLAYERS;
 }
 
 void p2p_lobby_sort_text(int order, int reverse, char *text, int size)
 {
 	if (order < 0 || order >= NUMBER_OF_P2P_LOBBY_SORTS)
-		order = P2P_LOBBY_SORT_SERVERS;
+		order = P2P_LOBBY_SORT_PLAYERS;
 	snprintf(text, (size_t)size, "%s%s", reverse ? "-" : "", sort_names[order]);
 }

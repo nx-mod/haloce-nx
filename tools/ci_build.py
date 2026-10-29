@@ -236,11 +236,12 @@ def main() -> int:
         masters = ROOT / "port/assets/network/masters.txt"
         if masters.exists():
             shutil.copy2(masters, dist / "masters.txt")
+    # the controller buttons' pictures, Kenney's Input Prompts (every port has
+    # a replay's button prompts, port/assets/buttons/kenney; the Switch all
+    # its buttons, port/assets/buttons/platforms), CC0: not required, but
+    # credited (the PS5's release has it in licenses/: tools/ps5_build.py)
+    shutil.copy2(ROOT / "port/assets/buttons/platforms/Kenney-LICENSE.txt", dist / "Kenney-LICENSE.txt")
     if args.platform == "switch":
-        # the controller buttons' pictures, Kenney's Input Prompts
-        # (port/assets/buttons/platforms), CC0: not required, but credited (the
-        # PS5's release has it in licenses/: tools/ps5_build.py)
-        shutil.copy2(ROOT / "port/assets/buttons/platforms/Kenney-LICENSE.txt", dist / "Kenney-LICENSE.txt")
         # the link page's QR code (port/third_party/qrcodegen, Project
         # Nayuki's, in the Switch's build alone), whose MIT license asks
         # copies to carry its notice

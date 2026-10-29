@@ -1941,8 +1941,9 @@ void network_chat_update(
 		pressed = held & ~chat_actions_held;
 		chat_actions_held = held;
 		/* (or the controller's D-pad Up, the touch controls' too, which opens
-		the on-screen keyboard) */
-		if ((pressed || TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP)) && !console_is_active())
+		the on-screen keyboard; not while the overlay menu is open, whose up
+		it is: port/linux/game/overlay_menu.c) */
+		if ((pressed || TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP)) && !console_is_active() && !overlay_menu_open())
 		{
 			/* (no typing where the host has the chat off: it says so, once a
 			while) */

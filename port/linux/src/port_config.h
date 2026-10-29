@@ -27,9 +27,6 @@ int config_write_boolean(const char *name, int value);
 /* a setting set from its value as config.toml writes it ("true", "4096", "\"900\""); 0, with why in error, for
 no such setting or a value not of its type */
 int config_set_text(const char *name, const char *value, char *error, size_t error_size);
-/* the index'th setting, if it is a boolean this platform has: 1 with its name and value, 0 for one that is not, -1
-past the last */
-int config_boolean_setting(unsigned index, const char **name, int *value);
 /* a setting's value as text ("true", "60", "1.5", "all"); 0 if there is no
 such setting */
 int config_text(const char *name, char *text, size_t size);

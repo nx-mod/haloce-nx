@@ -20,12 +20,31 @@ from xml.sax.saxutils import quoteattr
 
 PE = "main_menu/settings_select/player_setup/player_profile_edit"
 # the mods' screen, and its rows (_mods); the main menu's items
-# (ce/main_menu.xml): MODS in Credits' place (Credits is left out:
-# tools/ce_menus.py's LEFT_OUT), Quit a row below it (its CHILD_OFFSETS)
+# (ce/main_menu.xml), MAIN_MENU_ITEM_SPACING apart (the PC version's 36
+# leaves no room below Quit for a seventh): Campaign and Multiplayer, THEATER
+# below it (_theater), the PC version's Profiles and Settings, MODS in
+# Credits' place (Credits is left out: tools/ce_menus.py's LEFT_OUT), and
+# Quit (their CHILD_OFFSETS); the list's order is its up and down's
 MODS = "main_menu/mods"
 MOD_ROWS = 11
-MODS_ITEM_PLACE = (192, 391)
-QUIT_ITEM_PLACE = (192, 427)
+MAIN_MENU_ITEM_TOP = 247
+MAIN_MENU_ITEM_SPACING = 32
+MAIN_MENU_ITEMS = ["load_camp", "multiplayer", "theater", "profile", "settings", "mods", "quit_game"]
+
+
+def main_menu_item_place(item: str) -> tuple:
+    """where the main menu's item is (Campaign's 2 units right of the rest,
+    as the PC version has it)"""
+    return (194 if item == "load_camp" else 192,
+            MAIN_MENU_ITEM_TOP + MAIN_MENU_ITEM_SPACING * MAIN_MENU_ITEMS.index(item))
+
+
+MODS_ITEM_PLACE = main_menu_item_place("mods")
+THEATER_ITEM_PLACE = main_menu_item_place("theater")
+QUIT_ITEM_PLACE = main_menu_item_place("quit_game")
+# the Theater (port/linux/REPLAY.md): the replays a host records, its rows
+# (_theater)
+THEATER = "main_menu/theater"
 # the profile settings' rows, in order: the PC version's nine and Gameplay,
 # second to last, all in the nine's room (78 to About's top, 342) so the
 # last one's 32-unit highlight stays beside the description panel. Each is
@@ -182,8 +201,6 @@ SCREENS = {
              "Shields light their surroundings as they flare.\nOnline: the host's choice.", None),
             ("GLOW INTENSITY:", "display.shield_glow_intensity", [("DEFAULT", "default"), ("LIGHT SHOW", "light_show")],
              "Light Show: three times as far, at full from a\nthird of the flare. Online: the host's choice.", None),
-            ("MATCH TIMER:", "display.match_timer", ON_OFF,
-             "Draw a clock at the bottom right in multiplayer,\ncounting up from the start of the game.", None),
             # (the OpenGL renderer's alone, as texture filtering: the deko3d
             # and Vulkan ones draw the Xbox's range)
             ("HDR:", "display.hdr", ON_OFF,
@@ -334,7 +351,7 @@ SCREENS["gamepad_setup/gyro"] = {
 # pending edits, Defaults, OK and Cancel as the other settings screens.
 _video = SCREENS["video_settings"]
 _graphics = {"display.high_res_hud", "display.hud_button_style", "display.high_res_text", "display.anti_aliasing",
-             "display.anisotropic_filtering", "display.shadow_resolution", "display.per_pixel_lighting", "display.match_timer",
+             "display.anisotropic_filtering", "display.shadow_resolution", "display.per_pixel_lighting",
              "display.model_detail"}
 # (the visual modifiers: a screen of their own, Extra Effects)
 _extra_effects = {"display.shield_glow", "display.shield_glow_intensity",
@@ -427,7 +444,7 @@ _network["categories"] = [
      "Downloading Custom Edition maps you do not have,\nand helping send them to other players.",
      "desktop android ps5"),
     ("MULTIPLAYER HUD:", "network_setup/multiplayer_hud",
-     "Players' names above their heads, the\nscoreboard, and the text chat."),
+     "Players' names above their heads, the\nscoreboard, the text chat and the match clock."),
     ("STREAMER MODE:", "network_setup/streamer_mode",
      "Hide offensive words in names and text from\nother players, maps and mods, as stars."),
     ("SERVER BROWSER:", "network_setup/server_browser",
@@ -507,6 +524,8 @@ SCREENS["network_setup/multiplayer_hud"] = {
          "SHOW the text chat, or HIDE it: no lines, and\nits keys and D-pad Up open nothing.", None),
         ("CHAT TEXT:", "display.chat_style", [("COLORS", "colors"), ("WHITE", "white")],
          "The text chat's colors: COLORS, names in their\nteam's color; WHITE, as Custom Edition.", None),
+        ("MATCH TIMER:", "display.match_timer", ON_OFF,
+         "Draw a clock at the bottom right in multiplayer,\ncounting up from the start of the game.", None),
     ],
 }
 
@@ -547,12 +566,24 @@ CONTROL_ROWS = 7
 WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "streamer.slurs", "streamer.swearing",
                  "streamer.insults", "network.listings", "network.browser_maps", "network.browser_sort"}
 
-# the host's voice chat and vote kicks, on Teamplay Options
-# (_teamplay_options_extras): each row's key, its label, its choices' words
-# (menu_functions.c's gametype_options give their settings' values) and
-# their helps
+# Teamplay Options' rows of the port's (_teamplay_options_extras): the
+# gametype's FORCE TEAM SPAWNS, then the host's voice chat and vote kicks;
+# each row's key, its label, its choices' words (menu_functions.c's
+# gametype_options give their values) and their helps
 TEAMPLAY_EDIT = "main_menu/settings_select/multiplayer_setup/teamplay_options_edit"
 VOICE_QUALITIES = (8, 12, 16, 24, 32, 48, 64)
+# (the rows' step: closer than the PC's 30px, so that all of Server Setup's
+# fit above the help text, which moves down to TEAMPLAY_HELP_TOP)
+TEAMPLAY_STEP = 26
+TEAMPLAY_HELP_TOP = 351
+# (game_engine.c's game_engine_force_team_spawns: the gametype's own, so
+# shown in Edit Gametypes' copy too, and not on Server Setup's VOICE OPTIONS)
+TEAMPLAY_GAMETYPE_ROWS = [
+    ("force_team_spawns", "FORCE TEAM SPAWNS:", ["OFF", "ON"], [
+        "Players will spawn at any spawn point the\\ngametype allows.",
+        "Players will only spawn at their own team's\\nCapture the Flag spawn points.",
+    ]),
+]
 TEAMPLAY_ROWS = [
     ("voice_mode", "VOICE CHAT:", ["OFF", "TEAM NEAR", "ANYONE NEAR", "TEAM", "TEAM, ENEMIES NEAR"], [
         "No voice chat during the game.",
@@ -582,6 +613,8 @@ TEAMPLAY_ROWS = [
         "No text chat in the game.",
     ]),
 ]
+# (Teamplay Options' rows of the port's, in order)
+TEAMPLAY_EXTRA_ROWS = TEAMPLAY_GAMETYPE_ROWS + TEAMPLAY_ROWS
 
 # the profile menu's words for what its items now open
 STRING_OVERRIDES = {
@@ -953,8 +986,8 @@ STRING_INSERTS = {
     f"{PLAYER_EDIT}/cap_player_options": [(28, AIM_ASSIST_HELP + SHIELD_EFFECTS_HELP)],
     # (Teamplay Options' voice chat and vote kick rows, after its own:
     # TEAMPLAY_ROWS)
-    f"{TEAMPLAY_EDIT}/teamplay_options_labels": [(3, [label for _, label, *_ in TEAMPLAY_ROWS])],
-    f"{TEAMPLAY_EDIT}/cap_teamplay_options": [(10, [text for *_, helps in TEAMPLAY_ROWS for text in helps])],
+    f"{TEAMPLAY_EDIT}/teamplay_options_labels": [(3, [label for _, label, *_ in TEAMPLAY_EXTRA_ROWS])],
+    f"{TEAMPLAY_EDIT}/cap_teamplay_options": [(10, [text for *_, helps in TEAMPLAY_EXTRA_ROWS for text in helps])],
     f"{SLAYER_EDIT}/var_kills_to_win": [(5, ["75", "100", "150", "200", "250", "500"])],
     f"{VEHICLE_EDIT}/var_vehicle_set": [(8, ["PC"])],
     f"{VEHICLE_EDIT}/cap_vehicle_options": [(17, [
@@ -1077,9 +1110,13 @@ WIDGET_PATCHES = {
     f"{MT}/connected/connected_map_select_wrapper": {"set": {
         "flags": "pass_unhandled_to_focused_child pause_game main_menu_if_no_history tag_controller_index force_handle_mouse",
     }},
-    # (the main menu's MODS, before Quit: _mods)
-    "main_menu/main_menu_select_list": {"insert_before": {"main_menu/main_menu_item_quit_game": [
-        f'<child widget="main_menu/main_menu_item_mods" x="{MODS_ITEM_PLACE[0]}" y="{MODS_ITEM_PLACE[1]}"/>']},
+    # (the main menu's THEATER, after Multiplayer, and MODS, before Quit:
+    # _theater, _mods)
+    "main_menu/main_menu_select_list": {"insert_before": {
+        "main_menu/main_menu_item_profile": [
+            f'<child widget="main_menu/main_menu_item_theater" x="{THEATER_ITEM_PLACE[0]}" y="{THEATER_ITEM_PLACE[1]}"/>'],
+        "main_menu/main_menu_item_quit_game": [
+            f'<child widget="main_menu/main_menu_item_mods" x="{MODS_ITEM_PLACE[0]}" y="{MODS_ITEM_PLACE[1]}"/>']},
         # (the main menu's X - the west face button: Y on a Switch, Square on
         # a PS5 - opens the news, the latest release's notes: _news_screen;
         # on the main menu alone)
@@ -1212,8 +1249,10 @@ WIDGET_PATCHES = {
     # Server Setup's only, _teamplay_options_extras)
     f"{TEAMPLAY_EDIT}/teamplay_options_menu": {"insert_before": {
         f"{TEAMPLAY_EDIT}/teamplay_button_bar": [
-            f'<child widget="{TEAMPLAY_EDIT}/op_{key}" x="54" y="{163 + 30 * index}"/>'
-            for index, (key, *_) in enumerate(TEAMPLAY_ROWS)]}},
+            f'<child widget="{TEAMPLAY_EDIT}/op_{key}" x="54" y="{163 + TEAMPLAY_STEP * index}"/>'
+            for index, (key, *_) in enumerate(TEAMPLAY_EXTRA_ROWS)]}},
+    f"{TEAMPLAY_EDIT}/teamplay_options_help": {"set": {"top": TEAMPLAY_HELP_TOP,
+                                                       "height": 414 - TEAMPLAY_HELP_TOP}},
     # (the PC's Vehicles row's Start opened Item Options)
     "main_menu/settings_select/multiplayer_setup/playlist_edit/playlist_edit_vehicles_list_item": {"handlers": [
         '<on event="a" open="main_menu/settings_select/multiplayer_setup/vehicle_options_edit/vehicle_options_screen"/>',
@@ -1245,6 +1284,7 @@ BITMAP_FRAMES = {
 # are (port/assets/menus/port_svg): bitmap name, text
 TITLES = {
     "main_menu/mods/header_mods": "MODS",
+    "main_menu/theater/header_theater": "THEATER",
     f"{MT}/join_game/header_server_browser": "SERVER BROWSER",
     f"{MT}/join_game/header_direct_link": "DIRECT LINK",
     f"{MT}/join_game/header_password": "PASSWORD",
@@ -2059,12 +2099,13 @@ def _opence_options() -> list:
 
 
 def _teamplay_options_extras() -> list:
-    """Teamplay Options' rows of the port's: the host's voice chat
+    """Teamplay Options' rows of the port's: the gametype's FORCE TEAM
+    SPAWNS (game_engine.c), then the host's voice chat
     (port/linux/game/network_voice.c) and vote kicks (network_votekick.c),
     in Server Setup's copy only (menu_functions.c's gametype_options_init),
     kept in config.toml"""
     lines = []
-    for index, (key, label, strings, _) in enumerate(TEAMPLAY_ROWS):
+    for index, (key, label, strings, _) in enumerate(TEAMPLAY_EXTRA_ROWS):
         lines += _widget(f"{TEAMPLAY_EDIT}/op_{key}", [("width", 512), ("height", 28),
                                                        ("flags", "pass_unhandled_to_focused_child"),
                                                        ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
@@ -2219,6 +2260,8 @@ def multiplayer_files() -> dict:
         OPENCE_EDIT.replace("/", ".") + ".port.xml": head + _opence_options() + ["</menus>", ""],
         MODS.replace("/", ".") + ".xml": [head[0], "<!-- The port's Mods screen, in the PC version's style "
                                           "(tools/port_settings.py) -->", head[2]] + _mods() + ["</menus>", ""],
+        THEATER.replace("/", ".") + ".xml": [head[0], "<!-- The port's Theater screen, in the PC version's style "
+                                             "(tools/port_settings.py) -->", head[2]] + _theater() + ["</menus>", ""],
     }
 
 
@@ -2238,7 +2281,10 @@ MENU_ITEM_TOP, MENU_ITEM_SCALE, MENU_ITEM_MIDDLE = 6.57, 0.9037, 130.0
 # these pairs, so each is the sum of a space after the first letter and one
 # before the second, fitted (least squares) to the 53 pairs the redraws' items
 # and headers have (D-I, of the main menu's Credits, gives D's right side)
-MENU_ITEM_SPACES = {"MO": 3.17, "OD": 2.8, "DS": 2.3}
+MENU_ITEM_SPACES = {"MO": 3.17, "OD": 2.8, "DS": 2.3,
+                    # (THEATER's: ER as the redraws' PLAYER has it; the
+                    # others set by eye beside the PC version's items)
+                    "TH": 2.5, "HE": 2.6, "EA": 1.5, "AT": 0.5, "TE": 1.5, "ER": 3.24}
 # the mods' status icons (port/assets/icons/lucide): a mod out of the order it
 # asks for, and one that cannot be played (another mod says it cannot be
 # played with it, or this build cannot play it): menu_functions.c's
@@ -2384,4 +2430,96 @@ def _mods() -> list:
                                                               '<on event="start" run="port mods move down"/>'])
     lines += _button(f"{base}/button_ok", 1, ['<on event="a" run="port mods save" back="true"/>',
                                               '<on event="start" run="port mods save" back="true"/>'])
+    return lines
+
+
+# ---------- the Theater (port/linux/REPLAY.md): the main menu's THEATER,
+# the replays a host or a client records (port/linux/game/network_replay.c),
+# laid out as the Mods screen is: on the left the replays, a row each, the
+# newest first (its map and when, and its length), scrolling over more, A
+# playing the one chosen (network_replay_playback.c); on the right, in the
+# lobby's frame, what the one chosen is; and the buttons: RECORD (ON or OFF,
+# network.record_replays), DELETE (the one chosen, at a second press), EXPORT
+# (Android's: the app's folder picker, HaloActivity.exportReplays) and BACK
+# (menu_functions.c's "port theater" functions). The Switch and the PS5 have
+# fewer rows: under them a QR code of their replay page
+# (network_replay_page.c)
+
+THEATER_ROWS = 10
+THEATER_QR_ROWS = 6
+THEATER_ROW_TOP = 73
+
+
+def _theater() -> list:
+    base = THEATER
+    lines = _widget("main_menu/main_menu_item_theater",
+                    [("type", "text"), ("width", 256), ("height", 33), ("bitmap", "main_menu/menu_theater")],
+                    [f'<on event="a" open="{base}/theater_screen"/>', f'<on event="start" open="{base}/theater_screen"/>',
+                     '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _widget(f"{base}/theater_screen", [("width", 640), ("height", 480),
+                                                ("flags", "pass_unhandled_to_focused_child pause_game"),
+                                                ("bitmap", "bitmaps/gradient")],
+                     ['<on event="b" back="true"/>', '<on event="back" back="true"/>',
+                      '<child widget="main_menu/new_select/sel_list_desc_bkd"/>',
+                      f'<child widget="{base}/theater_list"/>',
+                      f'<child widget="{base}/header_theater"/>',
+                      f'<child widget="{base}/theater_qr_text" platform="switch ps5"/>'])
+    lines += _header(f"{base}/header_theater", f"{base}/header_theater")
+    rows = []
+    for index in range(THEATER_ROWS):
+        rows.append(f'<child{attributes([("widget", f"{base}/op_replay_{index + 1}"), ("x", 20), ("y", THEATER_ROW_TOP + 30 * index), ("platform", "desktop android web" if index >= THEATER_QR_ROWS else None)])}/>')
+    lines += _widget(f"{base}/theater_list", [("type", "column_list"), ("width", 640), ("height", 480),
+                                              ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
+                                              ("description", f"{base}/theater_details")],
+                     ['<data input="port theater update"/>', *rows, f'<child widget="{base}/button_bar" y="414"/>'])
+    for index in range(THEATER_ROWS):
+        lines += _widget(f"{base}/op_replay_{index + 1}",
+                         [("width", 390), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
+                          ("bitmap", "bitmaps/sel_list_item_bkd_top" if index == 0 else "bitmaps/sel_list_item_bkd"),
+                          ("color", "#FF2896FF")],
+                         ['<on event="a" run="port theater watch"/>', '<on event="start" run="port theater watch"/>',
+                          '<on event="left_mouse" run="mouse emit accept event"/>',
+                          f'<child widget="{base}/theater_replay_name" x="12"/>',
+                          f'<child widget="{base}/theater_replay_length" x="290"/>'])
+    lines += _widget(f"{base}/theater_replay_name",
+                     [("type", "text"), ("controller", 1), ("width", 276), ("height", 22), ("font", "ui\\large_ui"),
+                      ("color", "#FF2896FF"), ("text_y", 4)], [])
+    lines += _widget(f"{base}/theater_replay_length",
+                     [("type", "text"), ("controller", 1), ("width", 90), ("height", 22), ("font", "ui\\large_ui"),
+                      ("color", "#FF2896FF"), ("align", "right"), ("text_y", 4), ("text_flags", "no_focus_test")], [])
+    # (the Switch's and the PS5's: the replay page's QR code, drawn over this
+    # line by menu_functions.c, network_replay_page.c)
+    lines += _widget(f"{base}/theater_qr_text",
+                     [("type", "text"), ("controller", 1), ("left", 20), ("top", 392), ("width", 390), ("height", 18),
+                      ("text", "Scan it to download or upload replays."), ("font", "ui\\small_ui"),
+                      ("color", "#FFFFFFFF"), ("align", "center"), ("text_flags", "no_focus_test")], [])
+    # (in the lobby's frame, sel_list_desc_bkd's, as the mods' details)
+    lines += _widget(f"{base}/theater_details", [("width", 640), ("height", 480)],
+                     [f'<child widget="{base}/theater_details_text"/>'])
+    lines += _widget(f"{base}/theater_details_text",
+                     [("type", "text"), ("controller", 1), ("left", 412), ("top", 84), ("width", 200),
+                      ("height", 318), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/button_bar",
+                     [("type", "column_list"), ("width", 640), ("height", 28),
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     [f'<child widget="{base}/button_record" y="1"/>',
+                      f'<child widget="{base}/button_delete" x="130" y="1"/>',
+                      f'<child widget="{base}/button_export" x="260" y="1" platform="android"/>',
+                      f'<child widget="{base}/button_back" x="510" y="1"/>'])
+    # (its words a string list's, OFF and ON, which "port theater update"
+    # chooses between: a text widget's own words are its string list's again
+    # each time it is drawn, so words set on it would not show)
+    lines += _widget(f"{base}/button_record",
+                     [("type", "text"), ("width", 128), ("height", 24), ("bitmap", "bitmaps/text_button_background"),
+                      ("string_list", f"{base}/record_strings"), ("string_index", 0), ("font", "ui\\small_ui"),
+                      ("color", "#FFFFFFFF"), ("align", "center"), ("text_y", 2)],
+                     ['<on event="a" run="port theater record"/>', '<on event="start" run="port theater record"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _strings(f"{base}/record_strings", ["RECORD: OFF", "RECORD: ON"])
+    lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port theater delete"/>',
+                                                             '<on event="start" run="port theater delete"/>'])
+    lines += _text_button(f"{base}/button_export", "EXPORT", ['<on event="a" run="port theater export"/>',
+                                                             '<on event="start" run="port theater export"/>'])
+    lines += _text_button(f"{base}/button_back", "BACK", ['<on event="a" back="true"/>',
+                                                         '<on event="start" back="true"/>'])
     return lines

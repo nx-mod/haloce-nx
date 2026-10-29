@@ -33,7 +33,7 @@ def generated(fault=None):
     return (('enums.inc', enums), ('under_test.inc', code))
 
 
-CASES = ['source', 'empty_full', 'game_type', 'maps', 'servers_default', 'sort_each_way', 'other_version',
+CASES = ['source', 'empty_full', 'game_type', 'maps', 'servers_order', 'sort_each_way', 'other_version',
          'sort_text']
 
 
@@ -49,7 +49,7 @@ def test_case(case):
     (('game->player_count >= game->maximum_player_count', 'game->player_count > game->maximum_player_count'),
      'empty_full'),
     (('state == P2P_LOBBY_MAP_MISSING))', 'state != P2P_LOBBY_MAP_INSTALLED))'), 'maps'),
-    (('difference = second->dedicated - first->dedicated;', 'difference = 0;'), 'servers_default'),
+    (('difference = second->dedicated - first->dedicated;', 'difference = 0;'), 'servers_order'),
     (('(reverse ? -difference : difference) <= 0', 'difference <= 0'), 'sort_each_way'),
     (('before_other != other_version ? !before_other :', 'before_other != other_version ? before_other :'),
      'other_version'),
