@@ -124,6 +124,14 @@ ULONG WINAPI D3DResource_Release(D3DResource *resource)
 #ifdef HALO_SWITCH
 		if ((fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_VERTEXBUFFER)
 			vertex_buffer_rename_forget((const D3DVertexBuffer *)resource);
+#elif defined(HALO_ANDROID)
+		/* (no longer drawn from its GL buffer, before its memory is reused;
+		the Vulkan image's is a no-op: port/android/guest/d3d8_vk.c) */
+		if ((fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_INDEXBUFFER ||
+			(fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_VERTEXBUFFER)
+		{
+			xgpu_static_buffer_remove(resource, (fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_INDEXBUFFER);
+		}
 #endif
 		if ((fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_INDEXBUFFER)
 			free((void *)fields[1]);

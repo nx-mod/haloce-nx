@@ -61,10 +61,11 @@ image's linker script, guest.ld's .replay_data and .replay_bss), with
 where the file's records were: copied in one go, then compressed in memory
 on a thread of its own (playback_compressor_main) while the game goes on. The d-pad's left puts
 the last one back (the one before it, just after one), as a core is
-loaded (game_state_port_restore), and its right the next, or plays to it
-when it is not yet taken: at 50 times, its records before each tick
-(network_replay_playback_tick), the screen held at a dimmed frame and the
-sound paused (network_replay_frozen), then at normal speed.
+loaded (game_state_port_restore), and its right the next, or with none
+ahead plays ten seconds on: at 50 times, its records before each tick
+(network_replay_playback_tick), the frame it was asked in held, the lines
+over it as they change, and the sound paused (network_replay_frozen,
+rasterizer_port_hold_draw), then at normal speed.
 */
 
 #include "cseries.h"
@@ -231,12 +232,14 @@ the one before it instead */
 #define REPLAY_MAXIMUM_KEYFRAMES 1024
 #define REPLAY_KEYFRAME_MEMORY (256UL * 1024 * 1024)
 #define REPLAY_REWIND_GRACE_TICKS (2 * TICKS_PER_SECOND)
-/* d-pad right to a keyframe not yet taken: the game played there this many
-times as fast, and no more ticks than this a frame (the controls still
-read, and its tick never passed); nothing drawn meanwhile, the screen held
-at a dimmed frame (playback_skip) */
+/* d-pad right with no keyframe ahead: the game played ten seconds on this
+many times as fast, and no more ticks than this a frame (the controls still
+read, and its tick, and a keyframe's, never passed); the frame it was asked
+in held meanwhile (playback_skip), or drawn as it plays if it was not held
+within this many frames */
 #define REPLAY_SKIP_SPEED 50.0f
 #define REPLAY_SKIP_TICKS_PER_FRAME 60
+#define REPLAY_SKIP_HOLD_FRAMES 3
 /* the text on the screen: how far from its top edge the top line is (and
 twice how far from the bottom the hints' bar), the hints' height (a button's
 picture's), the bar's room either side of them and its colour */
@@ -260,6 +263,15 @@ dimmer */
 #define REPLAY_SEEK_HEAD_RADIUS 6
 #define REPLAY_SEEK_COLOR 0xFF2896FF
 #define REPLAY_SEEK_AHEAD_COLOR 0x602896FF
+/* ... while a skip ahead plays: the playhead throbs (its radius up this
+much more, its glow this much wider and its alpha up to this) once in this
+long (milliseconds, the clock's: the game's time races), and where the skip
+goes is a tick on the line */
+#define REPLAY_SEEK_THROB_GROWTH 2
+#define REPLAY_SEEK_GLOW_WIDTH 7
+#define REPLAY_SEEK_GLOW_ALPHA 0x70
+#define REPLAY_SEEK_THROB_MILLISECONDS 700
+#define REPLAY_SEEK_TARGET_COLOR 0xC0FFFFFF
 /* the screen's dimming under the pause menu */
 #define REPLAY_PAUSE_DIM_COLOR 0x80000000
 /* a stick's or a trigger's dead middle, of its whole */
@@ -271,6 +283,14 @@ struct playback_hint
 {
 	short buttons[2];
 	wchar_t const *action;
+};
+
+/* a skip ahead's held frame (skip_hold) */
+enum
+{
+	_replay_hold_wanted,
+	_replay_hold_taken,
+	_replay_hold_none,
 };
 
 /* the views Y goes round */
@@ -377,9 +397,11 @@ static struct
 	the first */
 	long keyframe_frontier;
 	long skip_tick;
-	/* the skip's dimmed frame has been drawn: none is drawn after it until
-	the skip ends (network_replay_frozen) */
-	boolean skip_shown;
+	/* the skip's held frame: to be copied (the frame drawn next, which runs
+	no tick), copied (each frame's view until the skip ends: network_replay_frozen),
+	or not (the game drawn as it plays); and the frames waited for it */
+	short skip_hold;
+	short skip_hold_frames;
 	/* a record's bytes, aligned as the handlers read them */
 	word message[0x10000 / sizeof(word)];
 } playback = { NULL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, FALSE, NONE };
@@ -464,7 +486,8 @@ static void playback_skip_stop(
 	if (playback.skip_tick == NONE)
 		return;
 	playback.skip_tick = NONE;
-	playback.skip_shown = FALSE;
+	playback.skip_hold = _replay_hold_wanted;
+	playback.skip_hold_frames = 0;
 	sound_pause(FALSE);
 }
 
@@ -760,18 +783,44 @@ boolean network_replay_playing(
 	return playback.data != NULL && (playback.starting || playback.playing);
 }
 
+boolean network_replay_hold_wanted(
+	void)
+{
+	return playback.playing && playback.skip_tick != NONE && playback.skip_hold == _replay_hold_wanted;
+}
+
+void network_replay_hold_taken(
+	boolean held)
+{
+	if (network_replay_hold_wanted())
+		playback.skip_hold = held ? _replay_hold_taken : _replay_hold_none;
+}
+
 boolean network_replay_frozen(
 	void)
 {
-	return playback.playing && playback.skip_tick != NONE && playback.skip_shown;
+	return playback.playing && playback.skip_tick != NONE && playback.skip_hold == _replay_hold_taken;
 }
 
 long network_replay_ticks_per_frame(
 	long ticks)
 {
+	long now = game_time_get();
+	long most;
+
 	if (!playback.playing || playback.skip_tick == NONE)
 		return ticks;
-	return MAX(0, MIN(REPLAY_SKIP_TICKS_PER_FRAME, playback.skip_tick - game_time_get()));
+	/* (none until the frame it was asked in is held: it is that frame) */
+	if (playback.skip_hold == _replay_hold_wanted)
+		return 0;
+	most = MIN(REPLAY_SKIP_TICKS_PER_FRAME, playback.skip_tick - now);
+	/* (and none past the next keyframe's tick, taken there) */
+	if (!playback.keyframes_full && playback.keyframe_frontier != NONE &&
+		playback.keyframe_frontier + REPLAY_KEYFRAME_TICKS > now)
+	{
+		most = MIN(most, playback.keyframe_frontier + REPLAY_KEYFRAME_TICKS - now);
+	}
+	return MAX(0, most);
 }
 
 static void playback_feed(struct network_game_client *client);
@@ -1249,13 +1298,14 @@ static void playback_skip(
 			return;
 		}
 	}
-	if (playback.ended || playback.keyframes_full)
+	if (playback.ended)
 		return;
-	playback.skip_tick = playback.keyframes[playback.keyframe_count - 1].tick + REPLAY_KEYFRAME_TICKS;
-	/* (the keyframe is taken there: playback_keyframe_take, as it is
-	reached; played to fast, a dimmed frame held meanwhile and nothing
-	heard: network_replay_frozen, network_replay_ticks_per_frame) */
-	playback.skip_shown = FALSE;
+	/* (ten seconds on from here, played to fast: the frame asked in held
+	and nothing heard, network_replay_frozen; the keyframes on the way taken
+	at their own ticks, network_replay_ticks_per_frame) */
+	playback.skip_tick = now + REPLAY_KEYFRAME_TICKS;
+	playback.skip_hold = _replay_hold_wanted;
+	playback.skip_hold_frames = 0;
 	sound_pause(TRUE);
 	game_time_set_speed(REPLAY_SKIP_SPEED);
 }
@@ -1285,6 +1335,13 @@ boolean network_replay_playback_idle(
 		(playback.keyframe_frontier == NONE || game_time_get() >= playback.keyframe_frontier + REPLAY_KEYFRAME_TICKS))
 	{
 		playback_keyframe_take();
+	}
+	/* (a skip ahead's frame not held in a few frames, as Smooth Motion off
+	can leave it undrawn: the game drawn as it plays) */
+	if (playback.skip_tick != NONE && playback.skip_hold == _replay_hold_wanted &&
+		++playback.skip_hold_frames > REPLAY_SKIP_HOLD_FRAMES)
+	{
+		playback.skip_hold = _replay_hold_none;
 	}
 	/* (a skip ahead there: the game drawn again, at its normal speed) */
 	if (playback.skip_tick != NONE && (game_time_get() >= playback.skip_tick || playback.ended ||
@@ -2178,6 +2235,30 @@ static void playback_time_text(
 	text[size - 1] = 0;
 }
 
+/* a filled circle, a row of pixels at a time */
+static void playback_draw_circle(
+	short x,
+	short y,
+	short radius,
+	pixel32 color)
+{
+	short row;
+
+	for (row = (short)-radius; row < radius; row++)
+	{
+		real across = (real)row + 0.5f;
+		short half = (short)(sqrt((real)(radius * radius) - across * across) + 0.5f);
+		rectangle2d span;
+
+		span.x0 = (short)(x - half);
+		span.x1 = (short)(x + half);
+		span.y0 = (short)(y + row);
+		span.y1 = (short)(span.y0 + 1);
+		if (span.x1 > span.x0)
+			draw_quad(&span, color);
+	}
+}
+
 /* the seek bar, at the screen's foot under the hints: where the replay is
 (the time at the left, its length at the right, and between them the line,
 Halo blue to the playhead, a circle, and dimmer after it). It only shows:
@@ -2197,7 +2278,6 @@ static void playback_draw_seek(
 	real fraction = PIN((real)(game_time_get() - playback.start_tick) / (real)length, 0.0f, 1.0f);
 	short middle;
 	short head;
-	short row;
 
 	box.x0 = (short)(window.x0 + REPLAY_SEEK_INSET);
 	box.x1 = (short)(window.x1 - REPLAY_SEEK_INSET);
@@ -2238,19 +2318,31 @@ static void playback_draw_seek(
 		if (part.x1 > part.x0)
 			draw_quad(&part, REPLAY_SEEK_AHEAD_COLOR);
 	}
-	/* (a circle, a row of pixels at a time) */
-	for (row = -REPLAY_SEEK_HEAD_RADIUS; row < REPLAY_SEEK_HEAD_RADIUS; row++)
+	if (playback.skip_tick == NONE)
 	{
-		real across = (real)row + 0.5f;
-		short half = (short)(sqrt((real)(REPLAY_SEEK_HEAD_RADIUS * REPLAY_SEEK_HEAD_RADIUS) - across * across) + 0.5f);
-		rectangle2d span;
+		playback_draw_circle(head, middle, REPLAY_SEEK_HEAD_RADIUS, REPLAY_SEEK_COLOR);
+		return;
+	}
+	/* (a skip ahead: where it goes, a tick on the line, and the playhead
+	throbbing in a glow of its blue, two rings of it, fainter outside) */
+	{
+		real throb = 0.5f - 0.5f * (real)cos(2.0f * _pi *
+			(real)(system_milliseconds() % REPLAY_SEEK_THROB_MILLISECONDS) / (real)REPLAY_SEEK_THROB_MILLISECONDS);
+		real target = PIN((real)(playback.skip_tick - playback.start_tick) / (real)length, 0.0f, 1.0f);
+		short glow = (short)(REPLAY_SEEK_HEAD_RADIUS + REPLAY_SEEK_GLOW_WIDTH * (0.5f + 0.5f * throb) + 0.5f);
+		pixel32 alpha = (pixel32)(REPLAY_SEEK_GLOW_ALPHA * (0.4f + 0.6f * throb));
+		rectangle2d mark;
 
-		span.x0 = (short)(head - half);
-		span.x1 = (short)(head + half);
-		span.y0 = (short)(middle + row);
-		span.y1 = (short)(span.y0 + 1);
-		if (span.x1 > span.x0)
-			draw_quad(&span, REPLAY_SEEK_COLOR);
+		mark.x0 = (short)(line.x0 + (short)(target * (real)(line.x1 - line.x0) + 0.5f) - 1);
+		mark.x1 = (short)(mark.x0 + 2);
+		mark.y0 = (short)(middle - REPLAY_SEEK_HEAD_RADIUS);
+		mark.y1 = (short)(middle + REPLAY_SEEK_HEAD_RADIUS);
+		draw_quad(&mark, REPLAY_SEEK_TARGET_COLOR);
+		playback_draw_circle(head, middle, glow, (alpha / 2) << 24 | (REPLAY_SEEK_COLOR & 0xFFFFFF));
+		playback_draw_circle(head, middle, (short)((glow + REPLAY_SEEK_HEAD_RADIUS) / 2),
+			alpha << 24 | (REPLAY_SEEK_COLOR & 0xFFFFFF));
+		playback_draw_circle(head, middle, (short)(REPLAY_SEEK_HEAD_RADIUS + REPLAY_SEEK_THROB_GROWTH * throb + 0.5f),
+			REPLAY_SEEK_COLOR);
 	}
 }
 
@@ -2340,27 +2432,6 @@ void network_replay_playback_draw(
 
 	if (!playback.playing)
 		return;
-	/* (a skip ahead: this frame dimmed, SKIPPING over it, and held until the
-	skip is there: network_replay_frozen) */
-	if (playback.skip_tick != NONE)
-	{
-		window = render.camera.window_bounds;
-		draw_quad(&window, REPLAY_PAUSE_DIM_COLOR);
-		font_index = playback_font();
-		if (font_index != NONE)
-		{
-			font = font_definition_get(font_index);
-			height = (short)(font->ascending_height + font->descending_height);
-			color = *global_real_argb_white;
-			bounds = window;
-			bounds.y0 = (short)((window.y0 + window.y1 - height) / 2);
-			bounds.y1 = (short)(bounds.y0 + height + 4);
-			draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
-			rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, L"SKIPPING");
-		}
-		playback.skip_shown = TRUE;
-		return;
-	}
 	player = playback.watched != NONE ? player_try_and_get(playback.watched) : NULL;
 	if (playback.scores && player)
 	{
@@ -2378,7 +2449,7 @@ void network_replay_playback_draw(
 		return;
 	}
 	if (playback.skip_tick != NONE)
-		usnprintf(speed, NUMBEROF(speed) - 1, L"SKIPPING");
+		speed[0] = 0;
 	else if (playback.speed == 0)
 		usnprintf(speed, NUMBEROF(speed) - 1, L"PAUSED");
 	else if (playback.speed == REPLAY_NORMAL_SPEED)

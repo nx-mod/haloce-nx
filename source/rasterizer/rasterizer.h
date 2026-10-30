@@ -934,6 +934,13 @@ void rasterizer_text_cache_flush(
 	void);
 void rasterizer_text_cache_dispose(
 	void);
+/* port: a replay's skip ahead's held frame (rasterizer_xbox_screen_effect.c):
+the 3D view just drawn copied (FALSE if it could not be), and drawn back in
+place of a frame's view */
+boolean rasterizer_port_hold_capture(
+	void);
+void rasterizer_port_hold_draw(
+	void);
 
 /* ---------- globals */
 

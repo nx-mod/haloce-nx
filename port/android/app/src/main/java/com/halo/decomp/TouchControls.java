@@ -174,6 +174,7 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static native int nativeScene();
     private static native int nativeBindings(int[] controls);
     private static native void nativeMenuFingers(int fingers);
+    private static native void nativeDevices(boolean touchscreen, boolean controller);
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final SharedPreferences preferences;
@@ -452,6 +453,8 @@ public final class TouchControls extends View implements SensorEventListener, In
         }
         controllerConnected = controller;
         touchscreen = touch;
+        // (the game's own touchscreen buttons follow the same rule: touch_input.c)
+        nativeDevices(touch, controller);
         updateShowing();
     }
 

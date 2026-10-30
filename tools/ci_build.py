@@ -226,6 +226,12 @@ def main() -> int:
     # (port/assets/icons/lucide, drawn into the menus' bitmaps), whose ISC
     # license asks copies to carry its notice
     shutil.copy2(ROOT / "port/assets/icons/lucide/LICENSE", dist / "lucide-LICENSE.txt")
+    # the controllers of Gamepad Setup's button-layout overlay
+    # (port/assets/menus/controllers, AL2009man's Gamepad Asset Pack, drawn
+    # into the menus' bitmaps), whose MIT license asks copies to carry its
+    # notice
+    shutil.copy2(ROOT / "port/assets/menus/controllers/Gamepad-Asset-Pack-LICENSE.txt",
+                 dist / "Gamepad-Asset-Pack-LICENSE.txt")
     # internet play's MQTT brokers, a file beside the game (network.brokers_file;
     # Android's APK has its own copy)
     if args.platform != "android":

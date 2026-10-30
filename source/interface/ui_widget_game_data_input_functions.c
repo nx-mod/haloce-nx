@@ -2258,10 +2258,13 @@ static void player_profile_edit_select_menu_update_extended_description(
 	{
 		description_definition = ui_widget_definition_get(
 			list_widget->parameters.list.extended_description->definition_tag_index);
+		/* port: the text and the picture first, and after them the port's
+		own (the button-layout overlay shown in the picture's place:
+		tools/port_settings.py's WIDGET_PATCHES), which this leaves alone */
 		match_vassert(
 			"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
 			0x844,
-			description_definition->child_count == 2,
+			description_definition->child_count >= 2,
 			"expected a container widget w/ 2 children for the player profile edit settings list extended description");
 
 		description_child = list_widget->parameters.list.extended_description->child;

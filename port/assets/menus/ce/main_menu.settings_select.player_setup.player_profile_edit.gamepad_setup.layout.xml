@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->
+<menus>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_layout_screen" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="bitmaps/gradient">
+		<on event="b" back="true"/>
+		<on event="back" back="true"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/header_profile_controller_setting"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/options_menu"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay" platform="desktop android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay" platform="ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay" platform="switch"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/header_profile_controller_setting" controller="1" left="35" top="11" width="605" height="59" bitmap="main_menu/settings_select/player_setup/player_profile_edit/controller_edit/header_profile_controller_setting">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help" type="text" controller="1" left="68" top="133" width="482" height="60" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help_strings" font="ui\large_ui" color="#FFFFFFFF">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help">
+		<data input="port settings help"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" x="54" y="73"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_joystick_preset" x="54" y="103"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_bar" y="414"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_defaults" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_ok" x="380" y="1"/>
+		<child widget="common_button_cancel" x="510" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels" string_index="0" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|SWAP TRIGGERS|SWAP A, L TRIGGER|SWAP B, L TRIGGER|SWAP B, R STICK|BOXER|GREEN THUMB|BUMPER JUMPER|RECLAIMER|FISHSTICKS|RECON" setting="profile.button_preset" values="0|1|2|3|4|5|6|7|8|9|10" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="created" run="port setting load"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_joystick_preset" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_spinner" x="320" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels" string_index="1" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|SOUTHPAW|LEGACY|LEGACY SOUTHPAW" setting="profile.joystick_preset" values="0|1|2|3" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
+		<on event="created" run="port setting load"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_defaults" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+		<on event="a" run="port settings defaults"/>
+		<on event="start" run="port settings defaults"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+		<on event="a" run="port settings save" back="true"/>
+		<on event="start" run="port settings save" back="true"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels">
+		<string text="BUTTON LAYOUT:"/>
+		<string text="STICK LAYOUT:"/>
+	</strings>
+	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help_strings">
+		<string text=""/>
+		<string text="Which of the controller's buttons does what (not\nthe keyboard's: Controls Setup sets those)."/>
+		<string text="Which stick moves and which looks."/>
+	</strings>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_a" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_b" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_back" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_black" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_dpad" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_start" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_stick_left" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_stick_right" type="text" width="172" height="67" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_trigger_left" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_trigger_right" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_white" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_x" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_y" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay" left="246" top="172" width="216" height="236" bitmap="controllers/xbox_series_overlay" platform="desktop android web">
+		<data input="port gamepad layout overlay"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_a" x="462" y="335"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_b" x="462" y="289"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_back" x="108" y="194"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_black" x="462" y="243"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_dpad" x="6" y="317"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_start" x="360" y="194"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_stick_left" x="6" y="273"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_stick_right" x="462" y="358"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_trigger_left" x="6" y="220"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_trigger_right" x="462" y="220"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_white" x="6" y="243"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_x" x="462" y="312"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_y" x="462" y="266"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay_small" left="294" top="85" width="266" height="202" bitmap="controllers/xbox_series_overlay_small" platform="desktop android web">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_a" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_b" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_back" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_black" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_dpad" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_start" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_stick_left" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_stick_right" type="text" width="172" height="67" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_trigger_left" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_trigger_right" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_white" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_x" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_y" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay" left="246" top="172" width="216" height="236" bitmap="controllers/dualsense_overlay" platform="ps5">
+		<data input="port gamepad layout overlay"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_a" x="462" y="341"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_b" x="462" y="295"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_back" x="6" y="273"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_black" x="462" y="226"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_dpad" x="6" y="296"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_start" x="462" y="249"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_stick_left" x="6" y="340"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_stick_right" x="462" y="364"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_trigger_left" x="6" y="227"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_trigger_right" x="462" y="203"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_white" x="6" y="250"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_x" x="462" y="318"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay/label_y" x="462" y="272"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay_small" left="294" top="85" width="266" height="202" bitmap="controllers/dualsense_overlay_small" platform="ps5">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_a" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_b" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_back" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_black" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_dpad" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_start" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_stick_left" type="text" width="240" height="67" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_stick_right" type="text" width="172" height="67" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_trigger_left" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_trigger_right" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_white" type="text" width="240" height="25" font="ui\large_ui" color="#FF2896FF" align="right" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_x" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_y" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay" left="246" top="172" width="216" height="236" bitmap="controllers/switch_pro_overlay" platform="switch">
+		<data input="port gamepad layout overlay"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_a" x="462" y="324"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_b" x="462" y="278"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_back" x="108" y="184"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_black" x="462" y="232"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_dpad" x="6" y="299"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_start" x="360" y="184"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_stick_left" x="6" y="255"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_stick_right" x="462" y="347"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_trigger_left" x="6" y="209"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_trigger_right" x="462" y="209"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_white" x="6" y="232"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_x" x="462" y="301"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay/label_y" x="462" y="255"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay_small" left="294" top="85" width="266" height="202" bitmap="controllers/switch_pro_overlay_small" platform="switch">
+	</widget>
+	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/words">
+		<string text="JUMP"/>
+		<string text="SWITCH GRENADE"/>
+		<string text="ACTION / RELOAD"/>
+		<string text="SWITCH WEAPON"/>
+		<string text="MELEE"/>
+		<string text="FLASHLIGHT"/>
+		<string text="THROW GRENADE"/>
+		<string text="FIRE"/>
+		<string text="PAUSE"/>
+		<string text="SCORES"/>
+		<string text="CROUCH"/>
+		<string text="ZOOM"/>
+		<string text="MOVE"/>
+		<string text="LOOK"/>
+		<string text="MOVE / TURN"/>
+		<string text="STRAFE / LOOK"/>
+		<string text="PRESS:"/>
+		<string text="UP:"/>
+		<string text="DOWN:"/>
+		<string text="LEFT:"/>
+		<string text="RIGHT:"/>
+	</strings>
+</menus>

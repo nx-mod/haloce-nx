@@ -82,7 +82,7 @@ jobs:
       - name: Install the toolchain
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-          pacman -Syu --noconfirm --needed git zstd python python-pytest ninja ccache \
+          pacman -Syu --noconfirm --needed git zstd python python-pytest python-pillow python-numpy python-scipy ninja ccache \
             clang lld gcc lib32-glibc lib32-gcc-libs cmake pkgconf wayland
 
       - uses: actions/checkout@v4
@@ -114,11 +114,12 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/harness tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
+          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_static_geometry.py tools/test_android_render_policy.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/harness tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
           # the dedicated server: --version, and --server without maps refused (exit code 2); its cases with
           # clients need the retail maps, and are skipped
           python -m pytest -q tools/test_dedicated_server.py
           python tools/test_light_storage.py
+          python -m pytest -q tools/test_controller_buttons.py tools/test_controller_remap.py tools/test_hud_button_style.py tools/test_hud_corrections.py
 
       - name: Compile cache
         run: ccache --show-stats
@@ -504,6 +505,13 @@ jobs:
           ln -sf /usr/bin/clang-22 /usr/local/bin/clang
 
       - uses: actions/checkout@v4
+
+      # The checkout is the runner's user's and the container runs as root,
+      # so git refuses it after checkout's own step ("dubious ownership"):
+      # the main menu's news (tools/embed_assets.py, the Build N commit's
+      # message) came out empty
+      - name: Let git read the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: actions/cache@v4
         with:

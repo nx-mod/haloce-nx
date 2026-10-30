@@ -104,5 +104,7 @@ Requirements and design: [port/switch/README.md](port/switch/README.md).
   **[musl](https://musl.libc.org)**.
 - **[Kenney](https://kenney.nl/)**'s [Input Prompts](https://kenney.nl/assets/input-prompts)
   (CC0): the controller buttons' pictures.
+- **[AL2009man](https://github.com/AL2009man/Gamepad-Asset-Pack)**'s Gamepad Asset Pack
+  (MIT): the controller pictures of Gamepad Setup's BUTTON LAYOUT.
 
 Not affiliated with Microsoft or Bungie.

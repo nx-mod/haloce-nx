@@ -129,8 +129,11 @@ boolean network_replay_watch(char const *path, char *why, long why_size);
 /* whether a replay is being played (or its game loaded) */
 boolean network_replay_playing(void);
 
-/* whether a skip ahead is under way, its dimmed frame drawn: no frame is
-drawn or shown until it is there, the screen held (main.c) */
+/* a skip ahead's held frame (render.c, rasterizer_xbox_screen_effect.c):
+whether the frame being drawn is the one to hold (its 3D view copied, and
+whether it was), and whether a frame's view is the one held */
+boolean network_replay_hold_wanted(void);
+void network_replay_hold_taken(boolean held);
 boolean network_replay_frozen(void);
 
 /* the most ticks a frame may run (a network client's, ticks, given): more

@@ -406,6 +406,8 @@ RELEASE_LICENSES = (
     ("repo", "port/assets/icons/lucide/LICENSE", "licenses/lucide-LICENSE.txt", None, "Lucide's icons"),
     ("repo", "port/assets/buttons/platforms/Kenney-LICENSE.txt", "licenses/Kenney-LICENSE.txt", None,
      "Kenney's Input Prompts, the controller buttons' pictures"),
+    ("repo", "port/assets/menus/controllers/Gamepad-Asset-Pack-LICENSE.txt", "licenses/Gamepad-Asset-Pack-LICENSE.txt",
+     None, "AL2009man's Gamepad Asset Pack, the button-layout overlay's controller"),
 )
 # the player's README, at the release's top beside the title's folder
 RELEASE_README = PORT_DIR / "release" / "README.txt"

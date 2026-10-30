@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="216" height="236" viewBox="246 172 216 236">
+  <defs><filter id="tint" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0.1276 0.4291 0.0433 0 0.0200 0.1595 0.5364 0.0542 0 0.0900 0.1701 0.5722 0.0578 0 0.2000 0 0 0 1 0"/></filter></defs>
+  <image xlink:href="xbox_series.svg" href="xbox_series.svg" x="254.00" y="227.84" width="200" height="124.32" preserveAspectRatio="none" filter="url(#tint)"/>
+  <line x1="460.00" y1="347.81" x2="407.40" y2="294.72" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="407.40" cy="294.72" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="301.81" x2="421.60" y2="280.80" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="421.60" cy="280.80" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="350.00" y1="217.34" x2="338.40" y2="282.54" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="338.40" cy="282.54" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="255.81" x2="416.00" y2="246.49" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="416.00" cy="246.49" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="248.00" y1="329.52" x2="326.60" y2="313.12" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="326.60" cy="313.12" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="358.00" y1="217.34" x2="369.20" y2="282.54" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="369.20" cy="282.54" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="248.00" y1="285.52" x2="299.80" y2="285.52" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="299.80" cy="285.52" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="370.81" x2="381.20" y2="315.24" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="381.20" cy="315.24" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="248.00" y1="232.81" x2="293.60" y2="232.81" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="293.60" cy="232.81" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="232.81" x2="412.40" y2="232.81" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="412.40" cy="232.81" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="248.00" y1="255.81" x2="292.00" y2="246.49" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="292.00" cy="246.49" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="324.81" x2="393.40" y2="282.17" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="393.40" cy="282.17" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+  <line x1="460.00" y1="278.81" x2="408.00" y2="268.37" stroke="#2896FF" stroke-width="0.75" stroke-linecap="round"/>
+  <circle cx="408.00" cy="268.37" r="1.75" fill="#FFFFFF" stroke="#2896FF" stroke-width="0.75"/>
+</svg>

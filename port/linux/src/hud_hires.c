@@ -272,6 +272,30 @@ static struct
 static long placeholder_count = 0;
 /* counts the placeholders' changes (hud_hires_placeholder_serial) */
 static unsigned long placeholder_serial = 1;
+/* a bit of 1024 for each placeholder's Data (placeholder_filter_bit): a
+texture whose bit is clear is no placeholder, found without searching
+them, as the renderer asks for each texture it binds */
+static unsigned char placeholder_filter[128];
+
+static unsigned long placeholder_filter_bit(unsigned long data)
+{
+	return (unsigned long)((data * 2654435761UL) & 0xFFFFFFFFUL) >> 22;
+}
+
+/* (after a placeholder's Data has changed) */
+static void placeholder_filter_build(void)
+{
+	long index;
+
+	memset(placeholder_filter, 0, sizeof(placeholder_filter));
+	for (index = 0; index < placeholder_count; index++)
+	{
+		unsigned long bit = placeholder_filter_bit(placeholders[index].data);
+
+		if (placeholders[index].data)
+			placeholder_filter[bit >> 3] |= (unsigned char)(1 << (bit & 7));
+	}
+}
 
 /* the sequences whose sprites the texture is drawn for (hud_hires.h), or 0 */
 unsigned long hud_hires_asset_sprites(long asset)
@@ -354,12 +378,16 @@ void hud_hires_register_placeholder(long asset, const unsigned long *texture)
 		placeholders[index].asset = asset;
 		placeholder_serial++;
 	}
+	placeholder_filter_build();
 }
 
 long hud_hires_placeholder_asset(unsigned long data)
 {
+	unsigned long bit = placeholder_filter_bit(data);
 	long index;
 
+	if (!(placeholder_filter[bit >> 3] & 1 << (bit & 7)))
+		return -1;
 	for (index = 0; data && index < placeholder_count; index++)
 	{
 		if (placeholders[index].data == data)

@@ -317,6 +317,77 @@ void halo_screen_ui_offset(unsigned char centered)
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
 }
 
+/* (as d3d8_gl.c's: a split screen's view centres the menus' 640 columns in
+it, a quarter's 320) */
+void halo_screen_ui_offset_view(long view_width)
+{
+	long width = halo_screen_width();
+
+	ui_offset = view_width > 0 && view_width < width ? (view_width > 320 ? (view_width - 320) / 2 : 0) : (width - 640) / 2;
+}
+
+long halo_screen_ui_offset_current(void)
+{
+	return ui_offset;
+}
+
+/* display.reversed_depth is the OpenGL renderer's (d3d8_gl.c): here the
+depth is the Xbox's */
+BOOL xgpu_reversed_depth;
+
+/* HDR Calibration is the desktop's: no HDR display here */
+int halo_hdr_calibration_available(void)
+{
+	return 0;
+}
+
+void halo_hdr_calibration_show(int pattern, int paper_white, int peak_brightness)
+{
+	(void)pattern;
+	(void)paper_white;
+	(void)peak_brightness;
+}
+
+/* the OpenGL renderer's static geometry (d3d8_gl.c's static buffers, an
+Android fix): here the game's vertices and indices are drawn as before
+(d3d8_resources.c forgets a renamed buffer's copy itself) */
+void xgpu_static_buffer_add(const void *resource, unsigned long size, int indices)
+{
+	(void)resource;
+	(void)size;
+	(void)indices;
+}
+
+void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stride, int indices, const void *end)
+{
+	(void)buffers;
+	(void)count;
+	(void)stride;
+	(void)indices;
+	(void)end;
+}
+
+void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices)
+{
+	(void)buffers;
+	(void)count;
+	(void)stride;
+	(void)indices;
+}
+
+void xgpu_static_range_add(const void *start, unsigned long size, int indices)
+{
+	(void)start;
+	(void)size;
+	(void)indices;
+}
+
+void xgpu_static_range_remove(const void *start, int indices)
+{
+	(void)start;
+	(void)indices;
+}
+
 /* display.shadow_resolution, display.per_pixel_lighting and
 display.anti_aliasing are the OpenGL renderer's (d3d8_gl.c): here the shadow
 maps stay the Xbox's 128x128, every draw is lit as its vertex shader lights

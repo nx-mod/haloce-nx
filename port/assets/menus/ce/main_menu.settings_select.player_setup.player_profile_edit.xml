@@ -69,6 +69,9 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_extended_description" controller="1" left="275" top="78" width="320" height="362" bitmap="bitmaps/list_field">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_extended_desc_text"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_extended_desc_pic" x="4"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay_small" x="4" platform="desktop android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/dualsense/overlay_small" x="4" platform="ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/switch_pro/overlay_small" x="4" platform="switch"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_select_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items" description="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_extended_description">
 		<data input="plyr prof edit select menu upd8"/>

@@ -295,9 +295,11 @@ static struct overlay_source overlay_bots_drop = OVERLAY_FOLDER_OF("Drop Bots", 
 
 static struct overlay_entry overlay_bots_skill_entries[] =
 {
+	OVERLAY_SETTING_CHOICE("Recruit", "bots.skill", "recruit"),
 	OVERLAY_SETTING_CHOICE("Easy", "bots.skill", "easy"),
 	OVERLAY_SETTING_CHOICE("Normal", "bots.skill", "normal"),
 	OVERLAY_SETTING_CHOICE("Heroic", "bots.skill", "heroic"),
+	OVERLAY_SETTING_CHOICE("Veteran", "bots.skill", "veteran"),
 	OVERLAY_SETTING_CHOICE("Legendary", "bots.skill", "legendary"),
 };
 static struct overlay_source overlay_bots_skill = OVERLAY_FOLDER_OF("Difficulty", overlay_bots_skill_entries);

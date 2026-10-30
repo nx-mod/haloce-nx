@@ -343,12 +343,15 @@ DELETE (pressed twice), EXPORT (Android) and BACK. A recording shorter than
   (`game_state_port_restore`, its procedures before and after), then the
   block, then sets right what is this machine's rather than the game's
   (the host's last message's time, the frame's interpolation, the
-  first-person weapon, the playback's speed). Going on to a keyframe not
-  yet taken plays to it at 50 times, up to 60 ticks a frame and never past
-  it (`network_replay_ticks_per_frame`), where it is taken: the frame
-  then dimmed with SKIPPING over it and held, nothing drawn and the sound
-  paused until it is there (`network_replay_frozen`), and the playback
-  then at normal speed. The replay's records go to the game before each
+  first-person weapon, the playback's speed). With no keyframe ahead, it
+  plays ten seconds on from where it is (2:34 to 2:44) at 50 times, up to
+  60 ticks a frame and never past it nor past the next keyframe's tick,
+  where that keyframe is taken (2:40: `network_replay_ticks_per_frame`).
+  The frame it was asked in is held: drawn again with no tick run, its 3D
+  view copied (`rasterizer_port_hold_capture`), and drawn back in place of
+  the view each frame until the skip is there (`rasterizer_port_hold_draw`),
+  the replay's lines over it as they change (the seek bar's playhead
+  moving), and the sound paused; then the playback is at normal speed. The replay's records go to the game before each
   tick (`network_replay_playback_tick`), as a client reads its host's
   between ticks, so a frame of many ticks plays as the recording did. They
   take up to 256 MB (a log line says each one's size and how long its

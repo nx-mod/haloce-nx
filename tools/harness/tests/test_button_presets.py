@@ -30,7 +30,9 @@ def generated(fault=None):
         structure(profile, "player_profile_controller_settings"),
         structure(read("source/input/input_abstraction.h"), "game_input_preferences"),
     ]) + "\n"
-    code = function(read("source/interface/player_ui.c"), "set_local_player_controls_from_player_profile")
+    player_ui = read("source/interface/player_ui.c")
+    code = "\n".join(function(player_ui, name) for name in (
+        "player_ui_button_preset_preferences", "set_local_player_controls_from_player_profile"))
     if fault:
         code = mutated(code, *NEGATIVE_CONTROLS[fault][0])
     return (("config.inc", config), ("under_test.inc", code + "\n"))

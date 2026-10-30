@@ -2,12 +2,12 @@
 OBJECT_BOUNDS_CACHE.C
 
 The objects' bounding spheres packed by absolute index, so collision's object
-loop (collisions.c) passes over the far objects of a crowded cluster without
-reading each one. Written by their only writer (object_compute_node_matrices);
-an entry counts only for its datum index and until the game state is next
-replaced (game_state.c). The same test on the same values: the features
-gathered do not change. (Kept out of the game state, whose layout the saved
-games share.)
+loops (collisions.c) pass over the objects of a crowded cluster that are far
+from a sphere, or that a vector misses, without reading each one. Written by
+their only writer (object_compute_node_matrices); an entry counts only for its
+datum index and until the game state is next replaced (game_state.c). The
+same tests on the same values: what the loops find does not change. (Kept out
+of the game state, whose layout the saved games share.)
 */
 
 #include "cseries.h"

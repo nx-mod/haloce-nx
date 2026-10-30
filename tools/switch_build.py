@@ -229,7 +229,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # whatever the runner happens to be called.
     nacp_title = "Halo: Combat Evolved"
     nacp_author = "thelinkin3000, nx-mod"
-    nacp_version = "1.3.0-nx"
+    nacp_version = "1.4.0-nx"
     # The icon does not go in the NACP: it is an asset, embedded by elf2nro
     # below. A 256x256 JPEG, converted from the same master the Android icon
     # comes from (port/android/art/android-icon.png, via tools/android_icon.py),
@@ -529,6 +529,10 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     objects: List[Path] = []
     for source in game_sources(config):
         cflags = game_cflags
+        # (the build's number and repository, as Android's: main_build_identity,
+        # which the main menu's news asks GitHub for this release's notes by)
+        if source.as_posix() == "source/main/main.c":
+            cflags += " " + updater_defines(getattr(sln, "port_release", False))
         if source.as_posix() in VARIADIC_PROTOTYPE_FILES:
             cflags += f" -include {ANDROID_PORT_DIR}/include/halo_android_variadic_prototypes.h"
         objects.append(guest_object(source, cflags))

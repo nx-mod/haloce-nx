@@ -302,11 +302,6 @@
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\controller_edit\config_controller" index="4" width="279" height="279" y="34"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\controller_edit\config_controller" index="5" width="279" height="279" y="34"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\controller_edit\config_controller" index="6" width="279" height="279" y="34"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\controller_edit\config_controller" index="7" width="279" height="279" y="34"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\controller_edit\config_controller" index="8" width="279" height="279" y="34"/>
 	</bitmap>
 	<bitmap name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings">
 		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings__0.png" width="512" height="64"/>
@@ -401,6 +396,24 @@
 		<frame png="ce/port/mods/status_small__0.png" width="16" height="16"/>
 		<frame png="ce/port/mods/status_small__1.png" width="16" height="16"/>
 		<frame png="ce/port/mods/status_small__2.png" width="16" height="16"/>
+	</bitmap>
+	<bitmap name="controllers/xbox_series_overlay">
+		<frame png="ce/port/controllers/xbox_series_overlay__0.png" width="216" height="236"/>
+	</bitmap>
+	<bitmap name="controllers/xbox_series_overlay_small">
+		<frame png="ce/port/controllers/xbox_series_overlay_small__0.png" width="266" height="202"/>
+	</bitmap>
+	<bitmap name="controllers/dualsense_overlay">
+		<frame png="ce/port/controllers/dualsense_overlay__0.png" width="216" height="236"/>
+	</bitmap>
+	<bitmap name="controllers/dualsense_overlay_small">
+		<frame png="ce/port/controllers/dualsense_overlay_small__0.png" width="266" height="202"/>
+	</bitmap>
+	<bitmap name="controllers/switch_pro_overlay">
+		<frame png="ce/port/controllers/switch_pro_overlay__0.png" width="216" height="236"/>
+	</bitmap>
+	<bitmap name="controllers/switch_pro_overlay_small">
+		<frame png="ce/port/controllers/switch_pro_overlay_small__0.png" width="266" height="202"/>
 	</bitmap>
 	<bitmap name="blank">
 		<frame png="ce/port/blank__0.png" width="4" height="4"/>

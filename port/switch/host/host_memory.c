@@ -241,6 +241,10 @@ int host_memory_range_is_reserved(uint64_t address, uint64_t size)
 /* the guest image's range, held from the start until the image claims it
 (host_memory_hold_image_range); 0 to 0 when nothing is held */
 static uint64_t image_hold_base, image_hold_end;
+/* the placeholder mapped over the image's range from the start of main
+(host_memory_hold_image_range), and whether the image's own memory has
+taken its place (host_memory_initialize) */
+static int image_placeholder, image_mapped;
 
 /* The range the largest window can take, held from the start of main too
 (host_memory_hold_window_range) until the window is placed. A window of
@@ -342,8 +346,10 @@ uint64_t host_memory_reserved_region(uint64_t size)
  * 0x30036000, whose 256 MB end at 0x40036000, and the image could never be
  * loaded at 0x40000000. */
 /* (all of the image, which has grown past 32 MB: a hold that stopped short
-of its end let pool 0 be placed across the rest, at the hold's end) */
-#define IMAGE_HOLD_SIZE (48u * 1024 * 1024)
+of its end let pool 0 be placed across the rest, at the hold's end. It grew
+past 48 MB too, to 0x3f1c3000 with its zeroed data, so the hold is now all
+the room it has: up to Custom Edition's tag cache, held as well) */
+#define IMAGE_HOLD_SIZE (HALO_GUEST_CUSTOM_EDITION_BASE - HALO_GUEST_IMAGE_BASE)
 
 void host_memory_hold_image_range(void)
 {
@@ -358,6 +364,24 @@ void host_memory_hold_image_range(void)
 	if (!hold)
 		host_logf(HOST_LOG_ERROR, "libnx would not hold the guest image's range at %08x; a thread's stack may "
 			"land in it", HALO_GUEST_IMAGE_BASE);
+	/* And memory mapped over it, until the image's own takes its place.
+
+	libnx's hold keeps its own placements out - the threads' stacks - and
+	the kernel knows nothing of it. The kernel places a thread's local
+	storage page itself, at a free address of its choosing, whenever a new
+	thread finds the pages it has full, and on one run it put one at
+	0x3d7be000 (type 0c), inside the image's range: every thread made before
+	the image is loaded is a chance of that, the thread lives as long as the
+	game, and the image could not be loaded ("cannot reserve the guest image
+	range"). The kernel does not place anything over a mapping, so the range
+	is mapped from here, before any thread exists. It costs the hold's
+	memory until the image is loaded, a few seconds. */
+	if (mmap((void *)(uintptr_t)HALO_GUEST_IMAGE_BASE, IMAGE_HOLD_SIZE, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == (void *)(uintptr_t)HALO_GUEST_IMAGE_BASE)
+		image_placeholder = 1;
+	else
+		host_logf(HOST_LOG_ERROR, "could not map the guest image's range at %08x ahead of the image; a thread's "
+			"local storage may land in it", HALO_GUEST_IMAGE_BASE);
 
 	/* (and Custom Edition's tag cache's, for the whole run) */
 	custom_edition_hold_base = HALO_GUEST_CUSTOM_EDITION_BASE;
@@ -434,6 +458,8 @@ void host_memory_log_regions(void)
 	}
 }
 
+static int note_reservation(uint64_t address, uint64_t size, int for_a_purpose);
+
 static int reserve(uint64_t address, uint64_t size, int for_a_purpose)
 {
 	/* taken by anything already mapped, or by another reservation */
@@ -442,6 +468,14 @@ static int reserve(uint64_t address, uint64_t size, int for_a_purpose)
 		errno = EEXIST;
 		return -1;
 	}
+	return note_reservation(address, size, for_a_purpose);
+}
+
+/* the range written down as this port's, here and to libnx, without asking
+what is mapped there: reserve's, and the image's, whose own memory is
+already there when it is (host_memory_initialize) */
+static int note_reservation(uint64_t address, uint64_t size, int for_a_purpose)
+{
 	if (reservation_count >= RESERVATION_LIMIT)
 	{
 		errno = ENOMEM;
@@ -673,6 +707,13 @@ uint32_t host_memory_image_base(void)
 	return (uint32_t)image_base;
 }
 
+/* whether the image's memory is mapped already, in the placeholder's place
+(host_memory_initialize), which the loader then only fills */
+int host_memory_image_mapped(void)
+{
+	return image_mapped;
+}
+
 /* A window of size bytes: where the game and its data expect it, but only if
  * that address will actually hold it.
  *
@@ -787,6 +828,20 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	image_end = base + round_up(size);
 	/* (the image's own reservation stands for the hold from here) */
 	image_hold_base = image_hold_end = 0;
+	/* The placeholder held the range (host_memory_hold_image_range): the
+	image's memory takes its place, the one mapped the moment the other is
+	given back, so the range is free for no longer than that. */
+	if (image_placeholder)
+	{
+		image_placeholder = 0;
+		if (munmap((void *)(uintptr_t)HALO_GUEST_IMAGE_BASE, IMAGE_HOLD_SIZE) == 0 &&
+			mmap((void *)(uintptr_t)image_base, image_end - image_base, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == (void *)(uintptr_t)image_base &&
+			note_reservation(image_base, image_end - image_base, 0) == 0)
+			image_mapped = 1;
+		else
+			host_logf(HOST_LOG_WARN, "the guest image's memory could not take the placeholder's place");
+	}
 	/* Claiming the image's fixed address can lose a race with the console's
 	 * own low-memory manager, which places mappings below 4 GB from the
 	 * bottom up and does not know this program wants 0x40000000. Where the
@@ -800,7 +855,7 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	 * reuses its space, so the reservation is retried for a few seconds
 	 * before it is called a failure. Each attempt says what was in the way,
 	 * so a conflict that is permanent looks different from one that clears. */
-	for (attempt = 0; attempt < 20; attempt++)
+	for (attempt = 0; attempt < 20 && !image_mapped; attempt++)
 	{
 		if (reserve(image_base, image_end - image_base, 0) == 0)
 			break;
@@ -812,7 +867,7 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 		log_conflicts(image_base, image_end - image_base);
 		usleep(250000);
 	}
-	if (attempt == 20)
+	if (attempt == 20 && !image_mapped)
 	{
 		host_logf(HOST_LOG_ERROR, "cannot reserve the guest image range at %08llx (%s)",
 			(unsigned long long)image_base, strerror(errno));

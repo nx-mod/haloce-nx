@@ -1457,6 +1457,37 @@ void host_gesture_insets(int *insets)
 	memset(insets, 0, 4 * sizeof(*insets));
 }
 
+/* (the overlay's devices: the Switch has no Android touch overlay to show or
+hide, touch_input.c) */
+int host_touch_devices(void)
+{
+	return 0;
+}
+
+/* (the phone's GPU family, for the GL ES renderer's Android fixes: none on
+the Switch, guest_render_policy.c) */
+int host_android_chip_family(void)
+{
+	return 0;
+}
+
+/* (Android's keyboard for a name typed on the touchscreen, sdl_platform.c:
+the Switch types its names with its own keyboard applet) */
+int host_sdl_text_input(uint32_t window, int type)
+{
+	(void)window;
+	(void)type;
+	return 0;
+}
+
+/* (a page opened in the browser: Discord's link, player_link.c; none on the
+Switch) */
+int host_sdl_open_url(const char *url)
+{
+	(void)url;
+	return 0;
+}
+
 /* (the Theater's EXPORT REPLAYS is the Android app's folder picker: the
 Switch's replays are on the card, port/linux/game/menu_functions.c) */
 void host_android_export_replays(const char *folder)

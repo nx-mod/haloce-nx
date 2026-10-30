@@ -115,6 +115,7 @@ mappings) from pools of address space it reserves below 4 GB on demand. */
 uint32_t host_memory_window_base(void);
 uint32_t host_memory_window_size(void);
 uint32_t host_memory_image_base(void);
+int host_memory_image_mapped(void);
 
 /* The base of the largest range this port has reserved and not yet used,
  * when one is at least `size`; 0 if none is. host_mman's allocator asks

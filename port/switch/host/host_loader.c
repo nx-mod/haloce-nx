@@ -132,7 +132,9 @@ int host_load_image(const void *file, size_t size)
 	}
 	if (host_memory_initialize((uint32_t)low, (uint32_t)(high - low)) != 0)
 		return -1;
-	if (mmap((void *)low, high - low, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != (void *)low)
+	/* (mapped already where it took the placeholder's place, host_memory.c) */
+	if (!host_memory_image_mapped() &&
+		mmap((void *)low, high - low, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != (void *)low)
 		return -1;
 	for (index = 0; index < elf->e_phnum; index++)
 	{

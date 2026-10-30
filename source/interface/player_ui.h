@@ -123,6 +123,11 @@ boolean player_ui_prompt_user_to_rename_edit_profile(
 	void);
 void player0_look_invert_pitch(
 	boolean invert);
+/* port: the buttons of the game's controls in a button preset (player_ui.c) */
+struct game_input_preferences;
+void player_ui_button_preset_preferences(
+	short button_preset,
+	struct game_input_preferences *result);
 /* port: a saved game file deleted (saved_game_files.c) */
 void player_ui_saved_game_file_removed(
 	long removed_index);

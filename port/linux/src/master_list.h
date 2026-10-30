@@ -29,6 +29,17 @@ enum
 	_master_listings_brokers,
 };
 
+/* an HTTPS GET, the way this platform asks the masters (the host's, the
+desktop's or the browser's): 1 with the answer's status and its body (size
+bytes, not always NUL ended; the caller frees it with master_list_https_free),
+0 when no answer came (the main menu's news, menu_functions.c, asks GitHub for
+the build's release notes so) */
+int master_list_https_get(const char *url, int *status, char **body, unsigned long *size);
+/* the body master_list_https_get gave: the C library's, which the game's
+units cannot free themselves (cseries.h makes their free the game's
+allocator's, which stopped the game at the news's "Invalid pointer") */
+void master_list_https_free(char *body);
+
 /* the masters of a masters.txt (the setting's file: beside config.toml
 unless a full path, else beside the executable): their URLs and Ed25519
 keys, up to maximum; how many (none: no file, or one with no master) */
@@ -46,6 +57,17 @@ int master_list_read(const char *setting, char (*urls)[MASTER_LIST_URL_SIZE],
 the web site's) */
 int master_list_read_json(const char *text, unsigned long size, char (*urls)[MASTER_LIST_URL_SIZE],
 	unsigned char (*keys)[MASTER_LIST_KEY_SIZE], int maximum);
+
+/* the masters a player's machine asks (the server browser's, and a Discord
+link's: player_link.c): masters.txt's; else, in the web build, its site's
+masters.json (the page's list of them, which its Servers panel reads too);
+else the official ones. How many */
+int master_list_client_masters(char (*urls)[MASTER_LIST_URL_SIZE], unsigned char (*keys)[MASTER_LIST_KEY_SIZE]);
+/* a GET of the url, as the server browser asks a master on each platform
+(Mbed TLS or WinHTTP, the Android app's host, the page's fetch): 1 if an
+answer came, with its status and its body (malloc'd, NUL terminated after
+its size: the caller frees it; 1 MB at most). Any thread; it may block */
+int master_list_get(const char *url, int *status, char **body, unsigned long *size);
 
 /* the server browser open (asked every 30 seconds) or closed */
 void master_list_browse(int on);

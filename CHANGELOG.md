@@ -1,5 +1,44 @@
 # Changelog
 
+## Build 129
+
+- Network: this build plays with current OpenCE builds and servers (network version 41); it no longer plays with Build 128 or older. (thelinkin3000)
+- Bots: six skill levels, from Recruit to Legendary, in the overlay menu's Difficulty and bots.skill; easy, normal, heroic and legendary keep their numbers. Each level now fights as a player of that level does: how soon it reacts, where it aims, how it paces the pistol and zooms the sniper, its blows, grenades, strafes, halts, jumps and crouches, when it retreats or closes in. Bots holding the hill, a flag or ball, or a vantage point stay put, and Infection zombies fight as before. (PeterRichardsonGolf's levels, ported to our bots by thelinkin3000)
+
+### From OpenCE
+
+- Votes: vote popups, end-of-game and map votes (with the map's picture), AFK kicks and co-op loading zone majorities; vote with the D-pad's left and right, and a host can set the share of votes needed. (MrBruh)
+- Dedicated servers can refuse VPN addresses unless the player shows a Discord account linked under Settings > Network Setup > DISCORD ACCOUNT. (MrBruh)
+- The host's notices show to the players whatever game.console_log says. (MrBruh)
+- Co-op: a network checkpoint saves once one player is safe, a dedicated co-op game gets its settings, a public dedicated server counts as public for team wipes, hosts can choose to rewind to a checkpoint after a team wipe, and clients get the level's surfaces back after a revert. (MrBruh, Steve Rice)
+- Players turn with their aim in every network game, and while in the air, whatever their own setting, so shots go where everyone sees them aimed. (MrBruh, Constantine Luke Matthew Bubar)
+- Custom Edition maps with map protection load. (hispanorum)
+- Split screen: ADD PLAYER is the Xbox's SELECT PROFILE screen, four players at once; quarter-screen menus are centred, and the pause menu's box and dim fit each player's screen. Custom Edition maps' own pause screens are laid out as the Xbox's. (bnunu)
+- Text chat: half its size, scrolls back while you type, and stays in place when you die. (bnunu)
+- Lobby: START NOW starts the match at once, and a dedicated server's director runs its countdown. (medic-code)
+- Server browser: listings it cannot show no longer take queue places, and a host is not timed again right after a probe. (bnunu, medic-code)
+- Android: the keyboard comes up when you type a name on the touchscreen. (Guven)
+- Android: the carnage report has CONTINUE and LEAVE buttons on the touchscreen, and shows its A and B prompt with a controller connected. (Guven)
+- Android (OpenGL): models and level geometry are drawn from GPU buffers of their own and uploads go into pooled buffers, which fixes long spikes on Snapdragon phones; the fixes are chosen by the phone's GPU family. (TwistedFlog, chestahh)
+- Android: FRAME RATE LIMIT in Video Setup. SHOW FRAMES in Graphics draws the frame rate at the bottom right of a game, on every platform. (Kenneth Mosquera)
+- Android: TONE CURVE in Extra Effects picks HDR's curve, Gran Turismo 7's among them. (bnunu)
+- The high-res HUD's reticles and sniper zoom artwork are corrected. (chestahh)
+- Particles are drawn only once their tick's update has run, and widescreen cinematics keep their video margins black. (Steve Rice)
+- Collision tests skip the objects a shot's line misses on a cache of their bounds, and the high-res texture lookups go through a filter: less work each frame. (hkmodd)
+- Mods can say their multipurpose maps are in the Xbox's channel order. (bnunu)
+- display.stats_log writes a line a second to the log (frame rate, game mode, map, GPU and resolution) for bug reports. (JoshRob297)
+- The debug camera's controller fly cam is kept, and it saves and loads the player's camera. (Guven, hispanorum)
+
+## Build 128
+
+- Gamepads: BUTTON LAYOUT, under Settings > Gamepads, has the button and stick layouts on a screen of their own, with a picture of your controller below them showing what each button does in the layout chosen. It changes as you pick another layout: the Xbox controller on PC, Android and the web, the DualSense on the PS5, the Pro Controller on the Switch, tinted blue as the original Xbox's pictures of its controller were. (thelinkin3000)
+- Gamepads: Edit Profile's picture of Gamepads is your platform's controller, for every layout; the port's own layouts (Boxer to Recon) had no picture of their own. (thelinkin3000)
+- Switch: the game no longer fails to start now and then with "cannot load the game image". (thelinkin3000)
+- News: the main menu's NEWS shows the build's release notes from GitHub; on the Switch it said "No news in this build". (thelinkin3000)
+- Voice chat: a controller's D-pad Down talks while held in a game, as D-pad Up opens the text chat; push to talk had no controller button unless you bound one. (thelinkin3000)
+- Replays: skipping ahead with the d-pad's right holds the picture where you pressed it, not a dimmed frame with SKIPPING, and goes ten seconds on; the seek bar's playhead glows while it skips, with a mark where it is going. (thelinkin3000)
+- Credits: AL2009man's Gamepad Asset Pack (MIT), the controller pictures; its license comes with each release. (thelinkin3000)
+
 ## Build 127
 
 - Replays: you can watch through any player's eyes, not only your own; in a replay you recorded as a client, the other players' aim is smoothed between the host's updates and the top line says EYES (SMOOTHED). (thelinkin3000)
