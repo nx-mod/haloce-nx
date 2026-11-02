@@ -34,13 +34,15 @@ The game updates itself from this repository's releases, asking first.
 ## Features
 
 - deko3d renderer at 720 lines by default, with dynamic resolution
-- 60 fps; shaders compiled on two threads, shared shader keys downloaded so a
-  new install has them, and a map's load waits for its shaders
-- online play with OpenCE (network version 39): a server browser with the
+- 60 fps, also at 1080p (`display.resolution_limit = "1080"`); shaders compiled
+  on two threads, shared shader keys downloaded so a new install has them, and
+  a map's load waits for its shaders
+- online play with OpenCE (network version 41): a server browser with the
   fullest games first, internet games through UPnP, an invite link shown
   as a QR code for a phone, up to 128 players, joining a game in progress
-- Theater: games recorded as replays, watched with a free camera, any player's
-  eyes, speed controls and a seek bar
+- Theater: games recorded as replays, watched with a free camera that tracks
+  the player, a cinematic camera, any player's eyes, speed controls and a seek
+  bar the d-pad scrubs
 - OpenCE gametype options (Force Team Spawns, CTF and Slayer variants, more
   than one hill), a match timer on the HUD, co-op cutscene cameras
 - co-op campaign over the network, and bots in multiplayer
@@ -49,7 +51,7 @@ The game updates itself from this repository's releases, asking first.
 - the console's own menu buttons: A confirms, B goes back; no button
   combination quits a match
 - the disc's movies (intro, menus, credits, cutscene sound)
-- gyro aiming, controllers for players 1–4 and handheld
+- gyro aiming (set per profile), controllers for players 1–4 and handheld
 - 4x anisotropic filtering
 
 ## Settings
