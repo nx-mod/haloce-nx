@@ -56,6 +56,8 @@ int config_boolean(char const *name);
 long config_integer(char const *name);
 const char *platform_data_root(void);
 FILE *platform_fopen_host(char const *path, char const *mode);
+int platform_remove_host(char const *path);
+int platform_rename_host(char const *old_path, char const *new_path);
 void platform_log(char const *format, ...);
 void main_build_identity(long *number, char *flavor, size_t flavor_size, char *repository, size_t repository_size,
 	char *version, size_t version_size);
@@ -85,7 +87,7 @@ game's own */
 /* a record's header: its kind, a byte left 0, its size and the tick */
 #define REPLAY_RECORD_HEADER_SIZE 8
 /* a recording shorter than this (ticks) is deleted as it ends */
-#define REPLAY_MINIMUM_TICKS (5 * TICKS_PER_SECOND)
+#define REPLAY_MINIMUM_TICKS (15 * TICKS_PER_SECOND)
 /* the file written out this often (ticks): what a crash loses */
 #define REPLAY_FLUSH_TICKS (5 * TICKS_PER_SECOND)
 /* the file's buffer: on the Switch each write waits for the card, so
@@ -173,7 +175,10 @@ boolean network_replay_delete(
 		return FALSE;
 	network_replay_folder(path, REPLAY_PATH_SIZE);
 	snprintf(path + strlen(path), sizeof(path) - strlen(path), "/%s", name);
-	return DeleteFileA(path) != 0;
+	/* (the path the card's, as it is: DeleteFileA, and the game's remove,
+	take the game's, and put this one under the data folder again, where
+	there is no such file) */
+	return platform_remove_host(path) == 0;
 }
 
 static unsigned long replay_get_long(
@@ -514,7 +519,7 @@ boolean network_replay_info(
 		snprintf(info->why, sizeof(info->why), "Recorded before replays could be played back: it cannot be watched.");
 		return FALSE;
 	}
-	if (network_version != HALO_PORT_NETWORK_VERSION)
+	if (!network_replay_network_version_playable(network_version))
 	{
 		snprintf(info->why, sizeof(info->why), "Recorded by a build of network version %lu: this one plays %d.",
 			network_version, HALO_PORT_NETWORK_VERSION);
@@ -700,9 +705,8 @@ void network_replay_stop(
 		/* (a game of a few seconds, left at once, is no replay) */
 		if (ticks < REPLAY_MINIMUM_TICKS)
 		{
-			DeleteFileA(replay.path);
-			error(_error_log, "replay: %s was %ld ticks long, under %d seconds: deleted", replay.path, ticks,
-				REPLAY_MINIMUM_TICKS / TICKS_PER_SECOND);
+			error(_error_log, "replay: %s was %ld ticks long, under %d seconds: %s", replay.path, ticks,
+				REPLAY_MINIMUM_TICKS / TICKS_PER_SECOND, platform_remove_host(replay.path) == 0 ? "deleted" : "NOT deleted");
 			replay.considered = FALSE;
 			replay.client = FALSE;
 			return;

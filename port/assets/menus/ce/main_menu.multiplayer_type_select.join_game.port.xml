@@ -106,6 +106,30 @@
 	</strings>
 	<widget name="main_menu/multiplayer_type_select/join_game/error_words" type="text" controller="1" width="280" height="159" bitmap="bitmaps/alert_bkd" font="ui\large_ui" color="#FF2896FF" text_x="9" text_y="35" text_flags="no_focus_test">
 	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_join" type="text" controller="1" width="128" height="22" text="%a-button JOIN GAME" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_refresh" type="text" controller="1" width="128" height="22" text="%y-button REFRESH" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_filters" type="text" controller="1" width="128" height="22" text="%x-button FILTERS" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_mode" type="text" controller="1" width="128" height="22" text="MODE" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_sort" type="text" controller="1" width="128" height="22" text="SORT" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_back" type="text" controller="1" width="128" height="22" text="%b-button BACK" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_l_switch" width="14" height="14" bitmap="hints/switch_l">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_r_switch" width="14" height="14" bitmap="hints/switch_r">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_l_ps5" width="14" height="14" bitmap="hints/ps5_l1">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_r_ps5" width="14" height="14" bitmap="hints/ps5_r1">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_dpad_switch" width="14" height="14" bitmap="hints/switch_dpad">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_hint_dpad_ps5" width="14" height="14" bitmap="hints/ps5_dpad">
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/header_server_browser" controller="1" left="35" top="11" width="363" height="59" bitmap="main_menu/multiplayer_type_select/join_game/header_server_browser">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/header_direct_link" controller="1" left="35" top="11" width="363" height="59" bitmap="main_menu/multiplayer_type_select/join_game/header_direct_link">

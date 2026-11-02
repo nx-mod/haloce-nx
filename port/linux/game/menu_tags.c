@@ -397,12 +397,16 @@ static char const *const port_function_names[] =
 	"new campaign decision",
 	/* (the main menu's Mods: menu_functions.c) */
 	"port mods init", "port mods close", "port mods toggle", "port mods move up", "port mods move down",
-	"port mods save",
+	"port mods save", "port mods accept",
 	/* (the main menu's news: menu_functions.c) */
 	"port news init", "port news close", "port news up", "port news down", "port news page up",
 	"port news page down",
 	/* (the main menu's Theater: menu_functions.c) */
 	"port theater record", "port theater export", "port theater watch", "port theater delete",
+	/* (the server browser's buttons' shortcuts: menu_functions.c) */
+	"port browser refresh", "port browser filters", "port browser mode previous", "port browser mode next",
+	"port browser column previous", "port browser column next", "port browser sort decreasing",
+	"port browser sort increasing",
 	/* (a dedicated server's map vote: menu_functions.c) */
 	"port map vote open", "port map vote choose",
 };
@@ -488,6 +492,9 @@ static struct
 	long map_strings;
 	/* a network co-op game's map's: its pause menu gets FRIENDLY FIRE too */
 	boolean coop;
+	/* the profile settings are the campaign pause menu's SETTINGS
+	(pause_settings_patch), which has fewer items */
+	boolean pause_settings;
 } build;
 
 /* ---------- private code */
@@ -2145,6 +2152,16 @@ static char const *const pause_settings_hidden_items[] =
 	"main_menu/settings_select/player_setup/player_profile_edit/about_item",
 };
 
+#if defined(HALO_SWITCH) || defined(HALO_PS5)
+/* the keyboard's and the mouse's, which the Switch and the PS5 have not:
+hidden from the profile settings everywhere (profile_settings_hide) */
+static char const *const platform_hidden_profile_items[] =
+{
+	"main_menu/settings_select/player_setup/player_profile_edit/controller_setup_profile_item",
+	"main_menu/settings_select/player_setup/player_profile_edit/mouse_settings_profile_item",
+};
+#endif
+
 /* the PC version's pause menu's row pitch (30 apart). The pause box's frames
 from the third, and the mission objectives' box's, are the stock 159 grown by
 the 36 that five rows at this pitch add (SETTINGS), then by the 66 that six
@@ -2271,10 +2288,21 @@ static void pause_campaign_grow_box(struct ui_widget_definition *widget, short s
 		widget->bounds.y1 = (short)(widget->bounds.y1 + shift);
 }
 
-static boolean pause_settings_item_hidden(long tag_index)
+static boolean profile_settings_item_hidden(long tag_index)
 {
 	short index;
 
+#if defined(HALO_SWITCH) || defined(HALO_PS5)
+	for (index = 0; index < (short)NUMBEROF(platform_hidden_profile_items); index++)
+	{
+		long widget = widget_named(platform_hidden_profile_items[index]);
+
+		if (widget != NONE && build.widget_tags[widget] == tag_index)
+			return TRUE;
+	}
+#endif
+	if (!build.pause_settings)
+		return FALSE;
 	for (index = 0; index < (short)NUMBEROF(pause_settings_hidden_items); index++)
 	{
 		long widget = widget_named(pause_settings_hidden_items[index]);
@@ -2313,21 +2341,20 @@ static void pause_network_patch(void)
 	}
 }
 
-/* the hidden items stay in the list, empty and taking no events (which it
-passes over), as an item's description is the one at its place in the list;
-the others move up into the first places */
-static void pause_settings_patch(void)
+/* the profile settings' hidden items (profile_settings_item_hidden: the
+platform's, and the pause menu's) stay in the list, empty and taking no
+events (which it passes over), as an item's description is the one at its
+place in the list; the others move up into the first places. Once a build,
+after pause_settings_patch */
+static void profile_settings_hide(void)
 {
 	long list_widget = widget_named(PAUSE_SETTINGS_LIST);
-	long ok_widget = widget_named(PAUSE_SETTINGS_GAMEPADS_OK);
-	long settings_save = function_index("port settings save", "pause", 0);
-	struct ui_widget_definition *list, *ok;
+	struct ui_widget_definition *list;
 	struct ui_widget_child_reference *children;
-	struct ui_widget_event_handler_reference *handlers;
 	short places[16];
-	long child, handler, place_count = 0, place = 0;
+	long child, place_count = 0, place = 0;
 
-	if (list_widget == NONE || ok_widget == NONE)
+	if (list_widget == NONE)
 		return;
 	list = tag_get(UI_WIDGET_DEFINITION_TAG, build.widget_tags[list_widget]);
 	children = list->child_widgets.address;
@@ -2344,7 +2371,7 @@ static void pause_settings_patch(void)
 
 		if (item->type != _widget_type_text_box)
 			continue;
-		if (pause_settings_item_hidden(children[child].widget_tag.index))
+		if (profile_settings_item_hidden(children[child].widget_tag.index))
 		{
 			item->event_handlers.count = 0;
 			reference_clear(&item->background_bitmap, BITMAP_GROUP_TAG);
@@ -2358,6 +2385,21 @@ static void pause_settings_patch(void)
 			children[child].vertical_offset = (short)(places[place++] - item->bounds.y0);
 		}
 	}
+}
+
+/* Settings in the campaign's pause menu: the items that work in a game
+(profile_settings_hide), and Gamepads' OK saving the profile itself */
+static void pause_settings_patch(void)
+{
+	long ok_widget = widget_named(PAUSE_SETTINGS_GAMEPADS_OK);
+	long settings_save = function_index("port settings save", "pause", 0);
+	struct ui_widget_definition *ok;
+	struct ui_widget_event_handler_reference *handlers;
+	long handler;
+
+	if (ok_widget == NONE)
+		return;
+	build.pause_settings = TRUE;
 	ok = tag_get(UI_WIDGET_DEFINITION_TAG, build.widget_tags[ok_widget]);
 	handlers = ok->event_handlers.address;
 	for (handler = 0; handler < ok->event_handlers.count; handler++)
@@ -2620,6 +2662,7 @@ void menu_tags_loaded(
 		if (campaign)
 			pause_campaign_patch(instances);
 		pause_network_patch();
+		profile_settings_hide();
 		if (build.failed)
 			goto failed;
 		/* (those it made) */
@@ -2627,6 +2670,7 @@ void menu_tags_loaded(
 	}
 	else if (widget_named(menus->root) != NONE)
 	{
+		profile_settings_hide();
 		snprintf(menu_tags.root, sizeof(menu_tags.root), "%s%s", PC_MENU_TAG_PREFIX, menus->root);
 		for (index = 0; menu_tags.root[index]; index++)
 		{

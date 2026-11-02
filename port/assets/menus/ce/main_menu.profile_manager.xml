@@ -23,6 +23,10 @@
 		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
 		<child widget="main_menu/profile_manager/profile_manager_select_list_2"/>
 		<child widget="main_menu/player_profiles_select/header_select_profile"/>
+		<child widget="main_menu/profile_manager/profile_hint_select" x="8" y="415" platform="switch ps5"/>
+		<child widget="main_menu/profile_manager/profile_hint_new" x="92" y="415" platform="switch ps5"/>
+		<child widget="main_menu/profile_manager/profile_hint_delete" x="214" y="415" platform="switch ps5"/>
+		<child widget="main_menu/profile_manager/profile_hint_back" x="510" y="415" platform="switch ps5"/>
 	</widget>
 	<widget name="main_menu/profile_manager/pm_empty_creating_profile" width="640" height="480" flags="pass_unhandled_to_focused_child no_history" auto_close="1">
 		<on event="deleted" run="new campaign decision" open="main_menu/profile_manager/pm_empty_saving_profile"/>
@@ -57,10 +61,10 @@
 	</widget>
 	<widget name="main_menu/profile_manager/profile_manager_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_new" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_delete" x="130" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="380" y="1"/>
-		<child widget="common_button_back" x="510" y="1"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_new" y="1" platform="desktop android web"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_delete" x="130" y="1" platform="desktop android web"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="380" y="1" platform="desktop android web"/>
+		<child widget="common_button_back" x="510" y="1" platform="desktop android web"/>
 	</widget>
 	<widget name="main_menu/profile_manager/profile_manager_button_delete" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="5" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="mouse emit x event"/>

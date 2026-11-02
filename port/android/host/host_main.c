@@ -394,6 +394,12 @@ struct host_settings
 	int gpu_stats; /* debug.gpu_stats */
 	int vk_present_marker; /* debug.vk_present_marker */
 	int vk_self_test; /* debug.vk_self_test */
+	/* debug.window_base: the window's address, where it will go there (for
+	trying saved games across windows); 0 for the usual placement */
+	uint32_t window_base;
+	/* debug.image_base: the same for the guest image (its pointers are moved
+	as where the Java runtime holds its linked address) */
+	uint32_t image_base;
 };
 
 static void config_read(const char *path, struct host_settings *settings)
@@ -420,6 +426,8 @@ static void config_read(const char *path, struct host_settings *settings)
 		toml_datum_t profile_run = toml_seek(result.toptab, "debug.profile_run");
 		toml_datum_t split = toml_seek(result.toptab, "debug.gpu_split_parts");
 		toml_datum_t multisample = toml_seek(result.toptab, "debug.original_multisample");
+		toml_datum_t window = toml_seek(result.toptab, "debug.window_base");
+		toml_datum_t image = toml_seek(result.toptab, "debug.image_base");
 
 		if (hz.type == TOML_INT64 && hz.u.int64 > 0)
 			settings->profile_hz = hz.u.int64 > 10000 ? 10000 : (int)hz.u.int64;
@@ -436,6 +444,10 @@ static void config_read(const char *path, struct host_settings *settings)
 		settings->profile_run = profile_run.type == TOML_BOOLEAN && profile_run.u.boolean;
 		settings->gpu_split_parts = split.type == TOML_BOOLEAN && split.u.boolean;
 		settings->original_multisample = multisample.type == TOML_BOOLEAN && multisample.u.boolean;
+		if (window.type == TOML_INT64 && window.u.int64 > 0 && window.u.int64 < 0x100000000LL)
+			settings->window_base = (uint32_t)window.u.int64;
+		if (image.type == TOML_INT64 && image.u.int64 > 0 && image.u.int64 < 0x100000000LL)
+			settings->image_base = (uint32_t)image.u.int64;
 	}
 	toml_free(result);
 }
@@ -560,6 +572,8 @@ static void *game_main(void *unused)
 	}
 	if (want_vulkan && host_image_span(vk_image, vk_image_size) > span)
 		span = host_image_span(vk_image, vk_image_size);
+	host_memory_window_wanted = settings.window_base;
+	host_memory_image_wanted = settings.image_base;
 	if (!span)
 		host_fatal("cannot load the game image; see logcat (tag \"halo\") for details");
 	if (host_memory_initialize(HALO_GUEST_IMAGE_BASE, span, &image_base) != 0)

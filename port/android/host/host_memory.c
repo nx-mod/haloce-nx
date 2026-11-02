@@ -299,12 +299,24 @@ static int crosses_custom_edition(uint64_t address, uint64_t size)
 #ifdef __ANDROID__
 /* the window of size at the place the game data was linked for, else the
 first free range that starts on a whole number of the alignment */
+uint32_t host_memory_window_wanted;
+uint32_t host_memory_image_wanted;
+
 static uint64_t place_window(uint64_t size)
 {
 	uint64_t alignment = size > HALO_GUEST_WINDOW_ALIGNMENT ? size : HALO_GUEST_WINDOW_ALIGNMENT;
 	uint64_t minimum = LOW_START;
 	int attempt;
 
+	/* (debug.window_base: tried first, at each size) */
+	if (host_memory_window_wanted)
+	{
+		if (host_memory_window_wanted % alignment == 0 && !crosses_custom_edition(host_memory_window_wanted, size) &&
+			reserve(host_memory_window_wanted, size) == 0)
+			return host_memory_window_wanted;
+		host_logf(HOST_LOG_INFO, "debug.window_base %08x will not take %u MB", host_memory_window_wanted,
+			(unsigned int)(size / (1024 * 1024)));
+	}
 	if (reserve(HALO_GUEST_WINDOW_BASE, size) == 0)
 		return HALO_GUEST_WINDOW_BASE;
 	for (attempt = 0; attempt < 128; attempt++)
@@ -415,7 +427,26 @@ int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *bas
 		munmap((void *)(uintptr_t)early_hold_base, early_hold_size);
 		early_hold_base = early_hold_size = 0;
 	}
-	image_placed = reserve(image_base, image_end - image_base) == 0;
+	image_placed = 0;
+#ifdef __ANDROID__
+	/* (debug.image_base: tried first, as if the linked address were taken) */
+	if (host_memory_image_wanted)
+	{
+		if (host_memory_image_wanted % IMAGE_ALIGNMENT == 0 &&
+			!crosses_custom_edition(host_memory_image_wanted, round_up(size)) &&
+			reserve(host_memory_image_wanted, round_up(size)) == 0)
+		{
+			image_base = host_memory_image_wanted;
+			image_end = image_base + round_up(size);
+			image_placed = 1;
+			host_logf(HOST_LOG_INFO, "debug.image_base: the guest image at %08llx", (unsigned long long)image_base);
+		}
+		else
+			host_logf(HOST_LOG_INFO, "debug.image_base %08x will not take the image", host_memory_image_wanted);
+	}
+#endif
+	if (!image_placed)
+		image_placed = reserve(image_base, image_end - image_base) == 0;
 #ifndef __ANDROID__
 	/* (the desktop guests, 64-bit ARM Linux's and the x32 one, are built
 	for the window and the image where they were linked, and are never

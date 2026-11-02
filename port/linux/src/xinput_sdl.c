@@ -442,9 +442,10 @@ input.gyro_invert_vertical); the web's overlay has its own. Nothing but on
 Android, the web and the Switch, and the PS5, whose DualSense's gyroscope
 takes the Switch's controller's place. */
 #if defined(HALO_ANDROID) || defined(HALO_PS5)
-/* input.gyro_aim and the rest, read again when the settings change: "true"
-aims with the gyroscope, "zoom" only while zoomed (halo_linux_gyro_zoom_only) */
-static struct
+/* input.gyro_aim and the rest, each local player's (its profile's own:
+port_config.h), read again when the settings change: "true" aims with the
+gyroscope, "zoom" only while zoomed (halo_linux_gyro_zoom_only) */
+struct gyro_settings
 {
 	int enabled;
 	int zoom_only;
@@ -453,38 +454,51 @@ static struct
 	float sensitivity_horizontal;
 	float sensitivity_vertical;
 	unsigned long read_at;
-} gyro = { 0, 0, 0, 0, 1.0f, 1.0f, (unsigned long)-1 };
+};
 
-static void gyro_settings_read(void)
+static struct gyro_settings gyros[PORT_COUNT] =
 {
+	{ 0, 0, 0, 0, 1.0f, 1.0f, (unsigned long)-1 },
+	{ 0, 0, 0, 0, 1.0f, 1.0f, (unsigned long)-1 },
+	{ 0, 0, 0, 0, 1.0f, 1.0f, (unsigned long)-1 },
+	{ 0, 0, 0, 0, 1.0f, 1.0f, (unsigned long)-1 },
+};
+
+static const struct gyro_settings *gyro_settings_read(short gamepad_index)
+{
+	struct gyro_settings *gyro = &gyros[gamepad_index >= 0 && gamepad_index < PORT_COUNT ? gamepad_index : 0];
+	int player = (int)(gyro - gyros);
 	const char *aim;
 
-	if (gyro.read_at == config_changes())
-		return;
-	gyro.read_at = config_changes();
-	aim = config_string("input.gyro_aim");
-	gyro.zoom_only = !strcmp(aim, "zoom");
-	gyro.enabled = gyro.zoom_only || !strcmp(aim, "true");
-	gyro.invert_horizontal = config_boolean("input.gyro_invert_horizontal");
-	gyro.invert_vertical = config_boolean("input.gyro_invert_vertical");
-	gyro.sensitivity_horizontal = (float)config_real("input.gyro_sensitivity_horizontal");
-	gyro.sensitivity_vertical = (float)config_real("input.gyro_sensitivity_vertical");
+	if (gyro->read_at == config_changes())
+		return gyro;
+	gyro->read_at = config_changes();
+	aim = config_player_string(player, "input.gyro_aim");
+	gyro->zoom_only = !strcmp(aim, "zoom");
+	gyro->enabled = gyro->zoom_only || !strcmp(aim, "true");
+	gyro->invert_horizontal = config_player_boolean(player, "input.gyro_invert_horizontal");
+	gyro->invert_vertical = config_player_boolean(player, "input.gyro_invert_vertical");
+	gyro->sensitivity_horizontal = (float)config_player_real(player, "input.gyro_sensitivity_horizontal");
+	gyro->sensitivity_vertical = (float)config_player_real(player, "input.gyro_sensitivity_vertical");
 #if !defined(HALO_SWITCH) && !defined(HALO_PS5)
-	/* (the overlay runs the phone's gyroscope only while it is wanted) */
-	touch_input_gyro_mode(!gyro.enabled ? 0 : gyro.zoom_only ? 2 : 1);
+	/* (the overlay runs the phone's gyroscope only while it is wanted: port
+	0's player's, who has the phone) */
+	if (player == 0)
+		touch_input_gyro_mode(!gyro->enabled ? 0 : gyro->zoom_only ? 2 : 1);
 #endif
+	return gyro;
 }
 #endif
 
-/* whether the gyroscope (the controller's on the Switch, the phone's on
-Android) aims only while the player is zoomed in (input.gyro_aim = "zoom"):
-player_control.c drops its turn otherwise */
-int halo_linux_gyro_zoom_only(void)
+/* whether the player's gyroscope (the controller's on the Switch, the
+phone's on Android) aims only while it is zoomed in (input.gyro_aim =
+"zoom"): player_control.c drops its turn otherwise */
+int halo_linux_gyro_zoom_only(short gamepad_index)
 {
 #if defined(HALO_ANDROID) || defined(HALO_PS5)
-	gyro_settings_read();
-	return gyro.zoom_only;
+	return gyro_settings_read(gamepad_index)->zoom_only;
 #else
+	(void)gamepad_index;
 	return FALSE;
 #endif
 }
@@ -499,21 +513,21 @@ int halo_linux_touch_look(short gamepad_index, float *yaw, float *pitch, float *
 	{
 		SDL_Gamepad *gamepads[PORT_COUNT];
 		SDL_Gamepad *gamepad;
+		const struct gyro_settings *gyro = gyro_settings_read(gamepad_index);
 		int count;
 		float turn_yaw;
 		float turn_pitch;
 
-		gyro_settings_read();
 		/* (nor while the chat's on-screen keyboard or the overlay menu is up) */
-		if (!gyro.enabled || gamepad_index < 0 || network_chat_keyboard_open() || overlay_menu_open())
+		if (!gyro->enabled || gamepad_index < 0 || network_chat_keyboard_open() || overlay_menu_open())
 			return FALSE;
 		count = sdl_gamepads(gamepads);
 		gamepad = port_gamepad(gamepads, count, gamepad_index);
 		if (!gamepad)
 			return FALSE;
 		host_sdl_gamepad_gyro((unsigned int)gamepad, &turn_yaw, &turn_pitch);
-		*gyro_yaw = (gyro.invert_horizontal ? -turn_yaw : turn_yaw) * gyro.sensitivity_horizontal;
-		*gyro_pitch = (gyro.invert_vertical ? -turn_pitch : turn_pitch) * gyro.sensitivity_vertical;
+		*gyro_yaw = (gyro->invert_horizontal ? -turn_yaw : turn_yaw) * gyro->sensitivity_horizontal;
+		*gyro_pitch = (gyro->invert_vertical ? -turn_pitch : turn_pitch) * gyro->sensitivity_vertical;
 		if (*gyro_yaw == 0.0f && *gyro_pitch == 0.0f)
 			return FALSE;
 		return TRUE;
@@ -524,14 +538,17 @@ int halo_linux_touch_look(short gamepad_index, float *yaw, float *pitch, float *
 	touch_input_look(0.0022f, yaw, pitch, gyro_yaw, gyro_pitch);
 #ifdef HALO_ANDROID
 	/* the phone's gyroscope, its own turn: Gyro Aim's on, sensitivity and invert */
-	gyro_settings_read();
-	if (!gyro.enabled)
 	{
-		*gyro_yaw = 0.0f;
-		*gyro_pitch = 0.0f;
+		const struct gyro_settings *gyro = gyro_settings_read(0);
+
+		if (!gyro->enabled)
+		{
+			*gyro_yaw = 0.0f;
+			*gyro_pitch = 0.0f;
+		}
+		*gyro_yaw = (gyro->invert_horizontal ? -*gyro_yaw : *gyro_yaw) * gyro->sensitivity_horizontal;
+		*gyro_pitch = (gyro->invert_vertical ? -*gyro_pitch : *gyro_pitch) * gyro->sensitivity_vertical;
 	}
-	*gyro_yaw = (gyro.invert_horizontal ? -*gyro_yaw : *gyro_yaw) * gyro.sensitivity_horizontal;
-	*gyro_pitch = (gyro.invert_vertical ? -*gyro_pitch : *gyro_pitch) * gyro.sensitivity_vertical;
 #endif
 	/* (none while the chat's on-screen keyboard is up: what was swiped is
 	dropped, not saved for after) */
@@ -1075,8 +1092,13 @@ int halo_push_to_talk_held(void)
 	}
 	/* (and the first controller's D-pad Down, the touch controls' too, in
 	the game: as its D-pad Up opens the text chat's keyboard, not a binding,
-	and the game still gets it, network_chat.c) */
-	return !input.menus && (chat_pad[0] & (1UL << HALO_CHAT_PAD_DOWN)) != 0;
+	and the game still gets it, network_chat.c; not in a replay's playback,
+	whose D-pad Down is its camera's: network_replay_playback.c) */
+	{
+		extern unsigned char network_replay_playing(void);
+
+		return !input.menus && !network_replay_playing() && (chat_pad[0] & (1UL << HALO_CHAT_PAD_DOWN)) != 0;
+	}
 }
 
 /* A scroll of the wheel switches weapons once: it holds Y for WHEEL_PRESS_MS

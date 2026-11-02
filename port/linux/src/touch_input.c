@@ -36,12 +36,14 @@ void host_touch_gyro_mode(int mode);
 #endif
 #ifdef HALO_ANDROID
 int host_touch_devices(void);
+void host_touch_targets(const int *targets, int count);
 #endif
 
 /* the game's (port/linux/game/touch_game.c) */
 int touch_game_cinematic_skippable(void);
 int touch_game_cinematic_playing(void);
 int touch_game_playing(void);
+int touch_game_replay_playing(void);
 void touch_game_button_controls(int *controls);
 
 /* the gamepad's buttons (input.h), which the touch controls are named by */
@@ -279,6 +281,9 @@ enum
 	device has a touchscreen and no controller) */
 	_touch_scene_on = 1 << 2,
 	_touch_scene_off = 1 << 3,
+	/* a replay plays: the overlay shows its stick and the replay's own
+	buttons (touch_input_replay_targets), not the game's */
+	_touch_scene_replay = 1 << 4,
 };
 
 /* the bit of the menu fingers on the touch controls in their buttons
@@ -313,6 +318,21 @@ static int touch_controls_setting(void)
 HOST_TOUCH_DEVICE_*) */
 #define TOUCH_DEVICE_TOUCHSCREEN 1
 #define TOUCH_DEVICE_CONTROLLER 2
+
+void touch_input_replay_targets(const int *targets, int count)
+{
+	static int sent[TOUCH_REPLAY_MAXIMUM_TARGETS * TOUCH_REPLAY_TARGET_FIELDS];
+	static int sent_count = -1;
+
+	if (count > TOUCH_REPLAY_MAXIMUM_TARGETS)
+		count = TOUCH_REPLAY_MAXIMUM_TARGETS;
+	/* (only when they change: the overlay polls a count of changes) */
+	if (count == sent_count && !memcmp(targets, sent, (size_t)count * TOUCH_REPLAY_TARGET_FIELDS * sizeof(*targets)))
+		return;
+	memcpy(sent, targets, (size_t)count * TOUCH_REPLAY_TARGET_FIELDS * sizeof(*targets));
+	sent_count = count;
+	host_touch_targets(targets, count);
+}
 
 int touch_input_screen_buttons(void)
 {
@@ -352,7 +372,8 @@ void touch_input_controls(XINPUT_GAMEPAD *pad, int menus)
 	on-screen keyboard is up, whose keys the fingers then tap) */
 	host_touch_scene(_touch_scene_known | touch_controls_setting() |
 		(menus || !touch_game_playing() || touch_game_cinematic_playing() || (network_chat_controller() == 0) ?
-			_touch_scene_menus : 0));
+			_touch_scene_menus : 0) |
+		(touch_game_replay_playing() ? _touch_scene_replay : 0));
 	/* (the profile's mapping, for the buttons' names; only when it changes) */
 	touch_game_button_controls(bindings);
 	if (!bindings_known || memcmp(bindings, bindings_sent, sizeof(bindings)))

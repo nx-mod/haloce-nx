@@ -603,6 +603,35 @@ void hud_messaging_initialize_for_new_map(
 	return;
 }
 
+/* port: the help message, the objective and each state message are the
+map's tag data, and so is a state message's icon where its bit in
+is_text_flags is clear (game_state.c's game_state_image_relocate). An icon
+left from a text message is an address as well, or nothing: only moved if
+it is one */
+boolean hud_messaging_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	struct hud_messaging_globals_definition *globals = game_state_relocation_pointer(relocation, hud_messaging_globals);
+	long datum_index;
+
+	for (datum_index = 0; datum_index < NUMBER_OF_HUD_MESSAGING_DATUMS; datum_index++)
+	{
+		struct hud_state_message_runtime_definition *state = &globals->message_data[datum_index].state_message;
+		long info_index;
+
+		for (info_index = 0; info_index < NUMBEROF(state->info); info_index++)
+		{
+			if (!(state->is_text_flags & FLAG(info_index)))
+				game_state_relocate(relocation, &state->info[info_index].icon);
+		}
+		game_state_relocate(relocation, &state->state_message);
+	}
+	game_state_relocate(relocation, &globals->help_message);
+	game_state_relocate(relocation, &globals->objective.message);
+
+	return TRUE;
+}
+
 void hud_messaging_dispose_from_old_map(
 	void)
 {

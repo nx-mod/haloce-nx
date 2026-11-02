@@ -877,6 +877,109 @@ void hs_runtime_dispose(
 	return;
 }
 
+/* port: a string value is an address: of the scenario's string constants
+(the map's tag data) or of the empty string (the game's image). A global's
+type says whether it holds one; a stack frame's data does not, so a value
+there is only taken for a string if it is one of those exactly, the start
+of a constant (game_state.c's game_state_image_relocate) */
+struct hs_runtime_relocation_strings
+{
+	unsigned long first;
+	unsigned long size;
+	char const *constants;
+	unsigned long empty;
+};
+
+static boolean hs_runtime_relocate_string(
+	struct game_state_relocation const *relocation,
+	struct hs_runtime_relocation_strings const *strings,
+	byte *field)
+{
+	unsigned long value;
+	unsigned long offset;
+
+	csmemcpy(&value, field, sizeof(value));
+	offset = value - strings->first;
+	if (value == strings->empty)
+		value = (unsigned long)_hs_type_string_default;
+	else if (offset < strings->size && (!offset || !strings->constants[offset - 1]))
+		value += relocation->window_delta;
+	else
+		return FALSE;
+	csmemcpy(field, &value, sizeof(value));
+
+	return TRUE;
+}
+
+/* port: a script thread's stack is frames packed at any byte of its
+stack_data, each with the address of the one below and of where its value
+goes (in its caller's frame, the thread, or a global); a sleeping thread's
+are in the saved game. Walked from the top (frame sizes are not kept once a
+thread resumes) */
+boolean hs_runtime_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	struct scenario *scenario = global_scenario_get();
+	struct hs_runtime_relocation_strings strings;
+	long index;
+
+	strings.constants = scenario ? (char const *)TAG_DATA_ADDRESS(scenario->hs_string_constants) : NULL;
+	strings.size = strings.constants ? (unsigned long)scenario->hs_string_constants.size : 0;
+	strings.first = (unsigned long)strings.constants - relocation->window_delta;
+	strings.empty = (unsigned long)_hs_type_string_default - relocation->image_delta;
+	for (index = 0; index < hs_thread_data->maximum_count; index++)
+	{
+		struct hs_thread_datum *thread = game_state_relocation_element(relocation, hs_thread_data, index);
+		byte const *live_first;
+		byte const *live_end;
+		byte const *above;
+		struct hs_stack_frame *frame_live;
+		long count;
+
+		if (!thread)
+			continue;
+		live_first = ((struct hs_thread_datum const *)((byte const *)hs_thread_data->data +
+			index * hs_thread_data->size))->stack_data;
+		live_end = live_first + sizeof(thread->stack_data);
+		hs_runtime_relocate_string(relocation, &strings, (byte *)&thread->result);
+		game_state_relocate(relocation, &thread->stack);
+		above = live_end;
+		for (frame_live = thread->stack, count = 0;
+			frame_live && (byte const *)frame_live >= live_first &&
+				(byte const *)frame_live + sizeof(struct hs_stack_frame) <= above && count < 256;
+			count++)
+		{
+			byte *frame = game_state_relocation_pointer(relocation, frame_live);
+			byte *data;
+
+			game_state_relocate(relocation, frame + offsetof(struct hs_stack_frame, previous));
+			game_state_relocate(relocation, frame + offsetof(struct hs_stack_frame, result));
+			/* (past a value moved, so that its new bytes are not read again
+			as part of another) */
+			for (data = frame + offsetof(struct hs_stack_frame, data);
+				data + sizeof(long) <= (byte *)game_state_relocation_pointer(relocation, above);
+				data += hs_runtime_relocate_string(relocation, &strings, data) ? sizeof(long) : 1)
+			{
+			}
+			above = (byte const *)frame_live;
+			csmemcpy(&frame_live, frame + offsetof(struct hs_stack_frame, previous), sizeof(frame_live));
+		}
+	}
+	for (index = hs_external_global_count; index < hs_global_data->maximum_count; index++)
+	{
+		struct hs_global_datum *global = game_state_relocation_element(relocation, hs_global_data, index);
+
+		if (global && scenario && index - hs_external_global_count < scenario->hs_globals.count &&
+			TAG_BLOCK_GET_ELEMENT(&scenario->hs_globals, index - hs_external_global_count, struct hs_global)->type ==
+				_hs_type_string)
+		{
+			hs_runtime_relocate_string(relocation, &strings, (byte *)&global->value);
+		}
+	}
+
+	return TRUE;
+}
+
 void hs_runtime_dispose_from_old_map(
 	void)
 {

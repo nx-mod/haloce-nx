@@ -229,7 +229,8 @@ backtrace to the standard error. To find the function at the address, enter
 
 The keyboard and the mouse are a control scheme of their own for the player
 of controller 1: each action has up to two keys or mouse buttons, which
-Settings > Controls Setup (or `[controls]` in `config.toml`) changes. The
+Settings > Controls Setup changes, for each profile (its `settings.toml`; `[controls]` in `config.toml`
+for those it has not changed). The
 game adds the input of the first gamepad to controller 1. The other
 gamepads operate controllers 2 to 4. With two or more players on this
 computer (co-op, or split screen in a network game) and only one gamepad,
@@ -356,7 +357,7 @@ opened by other apps. On the Switch and the PS5 the Theater shows a QR
 code and an address instead: a page on the local network, while the
 Theater is open, that downloads the replays and uploads others
 (`network.link_page` turns it off, with Direct Link's). The folder keeps
-the newest `network.replays_kept`, and a recording shorter than 5 seconds
+the newest `network.replays_kept`, and a recording shorter than 15 seconds
 is deleted as it ends.
 
 The menus' text is in the language of the Custom Edition whose `loc.map` is
@@ -542,8 +543,20 @@ changes the useful settings, writes them into the file (only their lines
 change) and applies them at once, but `audio.enabled`, and `display.menus`
 from the next main menu.
 
+Each profile keeps some settings of its own, in `settings.toml` in its folder
+(beside its `blam.sav`): its keys (`[controls]`, Controls Setup), its mouse's
+(`input.mouse_sensitivity`, `input.mouse_vertical_sensitivity`,
+`input.invert_mouse`, `input.mouse_aim_assist`) and its gyroscope's
+(`input.gyro_aim` and the four after it, Gyro Aim). Those menus write them
+there, for the profile they were opened from. A setting the profile's file
+does not have is `config.toml`'s, which is also the setting of a game played
+with no profile. The keys and the mouse are player 1's profile's; with the
+gyroscope, each local player has their own profile's. A profile renamed keeps
+its file, and one deleted takes it with it.
+
 Each setting has an environment variable. The environment variable changes
-the setting for one start of the game. It has priority over the file.
+the setting for one start of the game. It has priority over the file, and
+over a profile's own `settings.toml`.
 
 | Setting | Default | Environment variable | Function |
 | --- | --- | --- | --- |
@@ -695,6 +708,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
 | `network.client_timeout_seconds` | `15` | `HALO_NET_CLIENT_TIMEOUT_SECONDS` | Hosting: the seconds the host waits for a machine it hears nothing from before it drops it (5 to 300; the stock game waits 15). The same seconds are how long each machine's reliable stream waits for its peer to read before it gives up, and how long a host in a game waits for its own network to come back (an address renewed, a wifi drop) before it ends the game; each machine reads its own setting. A longer wait keeps players whose connection stalls (a browser tab in the background), but a machine that is really gone leaves its players frozen for longer. |
 | `network.record_replays` | `false` | `HALO_NET_RECORD_REPLAYS` | `true` records each network game to `replays/` in the data folder, one `.ocreplay` file a game. A host records all of it: what a client that sees every player is sent (a player's game or a dedicated server's). A client records what its host sends it (the players far from its own, or out of sight, less often; only the events the host sends it) and its own players' input. The main menu's Theater plays them; `tools/replay_stats.py` measures them. It is read when a game starts, so turning it on during a game (the overlay's System folder has Record Replays) records from the next one. Refer to [REPLAY.md](REPLAY.md). |
+| `network.replay_hints` | `true` | `HALO_NET_REPLAY_HINTS` | Watching a replay with a controller: `true` shows the bars of the buttons and of the camera's controls over the seek bar; `false` hides them, the seek bar and the top line kept. The replay's pause menu turns them on and off with the north button (Y; the Switch's X, the PS5's triangle). A touchscreen's boxes stay: they are its controls. |
 | `network.replays_kept` | `30` | `HALO_NET_REPLAYS_KEPT` | How many replays `replays/` keeps: as a recording starts, the oldest past this many are deleted. `0` keeps them all. |
 | `network.full_detail_to_clients` | `false` | `HALO_NET_FULL_DETAIL_TO_CLIENTS` | Hosting: `true` sends every client every player every tick (not those far from its own players, or out of their sight, less often) and every damage event (not only those near its players), as a host's replay recorder is sent, so that a client's replay holds all of the game. A client downloads more, the more players there are. The objects and the AI's units are sent as before. |
 | `network.public_address` | `""` | `HALO_NET_PUBLIC_ADDRESS` | Hosting: the internet address the joiners reach this machine at, `host[:port]` (the port forwarded to `network.tunnel_port`), for a server behind a NAT with one forwarded port. It is offered first, and its name is looked up again every 5 minutes. Empty: what STUN and UPnP find. |
@@ -779,6 +793,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.menu_open` | `""` | `HALO_MENU_OPEN` | Start on this screen of the menus (`main_menu/settings_select/...`, as `port/assets/menus` names it), a player profile being edited, to look at it. |
 | `debug.gpu_skip_vertex_shaders`, `debug.gpu_debug_expression`, `debug.gpu_debug_flat`, `debug.gpu_debug_texture0` | off | `HALO_GPU_SKIP_VS`, `HALO_GPU_DEBUG_EXPR`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | Tools to find problems in the graphics: skip the draws of a vertex shader, or replace the output of all pixel shaders with a GLSL expression (for example `t0.rgb`). |
 | `debug.benchmark`, `debug.benchmark_bots`, `debug.benchmark_quit` | `""`, `63`, `true` | `HALO_BENCHMARK`, `HALO_BENCHMARK_BOTS`, `HALO_BENCHMARK_QUIT` | A benchmark run that is the same each time (`game/benchmark.c`). `"standard"` plays The Pillar of Autumn (from the waking up in the cryo bay), Halo (the waterfall), The Silent Cartographer, 343 Guilty Spark and The Library (its crowd of enemies) for 30 seconds each, and Blood Gulch, Damnation, Sidewinder and Chill Out for 15 seconds each as local Slayer games with `debug.benchmark_bots` computer players (63 by default: 64 players with the player). The player cannot be hurt and the view turns at a fixed rate. A list such as `"a30:30,bloodgulch:15"` plays other maps. The frame rates of each map (the average, the 1% low, the median, the 99th percentile and the longest frame) go to `benchmark.txt` in the data folder, or in the profile folder of the run on Android (`debug.profile_run`), and the game then quits (`debug.benchmark_quit`). |
+| `debug.core_dump_tick`, `debug.core_load` | `0`, `""` | `HALO_CORE_DUMP_TICK`, `HALO_CORE_LOAD` | For trying saved games across memory windows (`docs/saved_game_relocation.md`). At this game tick of the first level played, a core of the game state goes to `d:\core\game_state_<address>.bin`, named for where the game state is; with `debug.core_load`, the core of that name in `d:\core` is loaded at the tick instead. `tools/game_state_compare.py` compares two cores. `0`: none. |
 | `debug.network_test`, `debug.network_test_start`, `debug.network_test_kill`, `debug.network_test_score`, `debug.network_test_shoot`, `debug.network_test_vehicle`, `debug.network_test_pickup`, `debug.network_test_pickup_weapon`, `debug.network_test_chat`, `debug.network_test_name`, `debug.network_test_public`, `debug.test_input` | off | `HALO_NETWORK_TEST`, `HALO_NETWORK_TEST_START`, `HALO_NETWORK_TEST_KILL`, `HALO_NETWORK_TEST_SCORE`, `HALO_NETWORK_TEST_SHOOT`, `HALO_NETWORK_TEST_VEHICLE`, `HALO_NETWORK_TEST_PICKUP`, `HALO_NETWORK_TEST_PICKUP_WEAPON`, `HALO_NETWORK_TEST_CHAT`, `HALO_NETWORK_TEST_NAME`, `HALO_NETWORK_TEST_PUBLIC`, `HALO_TEST_INPUT` | Automatic tests of system link, or (`log`) a log of the game one machine plays (`game/network_test.c`). Refer to `NETCODE.md`. `debug.test_input = "menu:a down down a"` presses menu buttons one a second (`a`, `b`, `x`, `y`, `up`, `down`, `left`, `right`, `start`, `back` or `wait`), for testing the menus. |
 | `debug.virtual_gamepads`, `debug.virtual_gamepad_script` | `0`, empty | `HALO_VIRTUAL_GAMEPADS`, `HALO_VIRTUAL_GAMEPAD_SCRIPT` | Desktop: attach this many SDL virtual gamepads (`0` to `4`), which the game takes for gamepads plugged in, and press their buttons from a script of `<seconds> <pad> <what>` entries separated by semicolons: the seconds from when the network lobby first opens, the pad `1` to `4` (`0`: the keyboard, whose `a` is SPACE and `start` Enter), and a button (`a`, `b`, `x`, `y`, `start`, `back`, `up`, `down`, `left`, `right`, `lb`, `rb`, `lt`, `rt`), `walk` (the sticks move from then on) or `still`. For testing split screen without four controllers, for example `"3 2 start; 6 2 a; 8 0 a; 10 1 a; 11 1 a; 14 0 start"` with `debug.network_test = "host:bloodgulch"`. |
 | `debug.network_test_cues`, `debug.network_test_cue_players` | none, `1` | `HALO_NETWORK_TEST_CUES`, `HALO_NETWORK_TEST_CUE_PLAYERS` | Console lines a test runs at their seconds, from the first tick that many players are in (`"<second> <line>\|..."`; not on the web). |

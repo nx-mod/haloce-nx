@@ -253,6 +253,10 @@ void structure_detail_objects_flush(
 	void)
 {
 	detail_object_global_runtime_data->local_player_data[0].cell_coordinate.initialized = FALSE;
+	/* port: the second player's too: a game state loaded from a saved game
+	written with the window elsewhere has its cells' addresses in that
+	window (game_state.c's game_state_image_relocate leaves them to this) */
+	detail_object_global_runtime_data->local_player_data[1].cell_coordinate.initialized = FALSE;
 
 	return;
 }

@@ -149,6 +149,22 @@ void rasterizer_screen_effects_initialize_for_new_map(
 	return;
 }
 
+/* port: the video effect's two bitmaps, in the map's tag data
+(game_state.c's game_state_image_relocate) */
+boolean rasterizer_cinematics_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	struct rasterizer_cinematic_screen_effect_state *state;
+
+	if (!cinematic_screen_effect_globals)
+		return TRUE;
+	state = game_state_relocation_pointer(relocation, cinematic_screen_effect_globals);
+	game_state_relocate(relocation, &state->parameters.video_scanline_map);
+	game_state_relocate(relocation, &state->parameters.video_noise_map);
+
+	return TRUE;
+}
+
 void rasterizer_screen_effects_dispose_from_old_map(
 	void)
 {

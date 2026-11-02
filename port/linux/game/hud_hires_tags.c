@@ -140,7 +140,8 @@ static short hud_buttons_style;
 /* a replay's button prompts (hud_hires_prompt_draw): the port's own bitmaps,
 ui\hud\buttons\prompt_*, which no map has */
 static char const *const hud_prompt_names[] = {
-	"a", "b", "x", "y", "black", "white", "dpad_horizontal", "back", "start", "stick_right_press"
+	"a", "b", "x", "y", "black", "white", "dpad_horizontal", "back", "start", "stick_right_press",
+	"stick_left_press", "stick_left", "stick_right", "dpad_up", "dpad_down"
 };
 static struct
 {

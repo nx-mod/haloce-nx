@@ -136,7 +136,9 @@ CONTROL_BUTTONS = [dict(name=f"{name}__0", tag=f"ui\\hud\\buttons\\{name}",
 PROMPT_ART = {"a": "xbox_button_color_a", "b": "xbox_button_color_b", "x": "xbox_button_color_x",
               "y": "xbox_button_color_y", "black": "xbox_rb", "white": "xbox_lb",
               "dpad_horizontal": "xbox_dpad_horizontal", "back": "xbox_button_view", "start": "xbox_button_menu",
-              "stick_right_press": "xbox_stick_r_press"}
+              "stick_right_press": "xbox_stick_r_press", "stick_left_press": "xbox_stick_l_press",
+              "stick_left": "xbox_stick_l", "stick_right": "xbox_stick_r",
+              "dpad_up": "xbox_dpad_up", "dpad_down": "xbox_dpad_down"}
 PROMPT_BUTTONS = [dict(name=f"prompt_{button}__0", tag=f"ui\\hud\\buttons\\prompt_{button}",
                        bitmap=0, width=64, height=64, format="a8r8g8b8", scale=8, crc=0, kenney=art)
                   for button, art in PROMPT_ART.items()]
@@ -504,14 +506,16 @@ CONTEXT_MENUS_SWAPPED, CONTEXT_MENUS, CONTEXT_GAME = 1, 2, 4
 PLATFORM_ART = {
     "switch": {"a": "switch_button_b", "b": "switch_button_a", "x": "switch_button_y", "y": "switch_button_x",
                "black": "switch_button_r", "white": "switch_button_l",
-               "dpad_horizontal": "switch_dpad_horizontal", "back": "switch_button_minus",
+               "dpad_horizontal": "switch_dpad_horizontal", "dpad_up": "switch_dpad_up",
+               "dpad_down": "switch_dpad_down", "back": "switch_button_minus",
                "start": "switch_button_plus",
                "trigger_left": "switch_button_zl", "trigger_right": "switch_button_zr",
                "stick_left": "switch_stick_l", "stick_right": "switch_stick_r",
                "stick_left_press": "switch_stick_l_press", "stick_right_press": "switch_stick_r_press"},
     "ps5": {"a": "playstation_button_cross", "b": "playstation_button_circle", "x": "playstation_button_square",
             "y": "playstation_button_triangle", "black": "playstation_trigger_r1", "white": "playstation_trigger_l1",
-            "dpad_horizontal": "playstation_dpad_horizontal", "back": "playstation5_button_create",
+            "dpad_horizontal": "playstation_dpad_horizontal", "dpad_up": "playstation_dpad_up",
+            "dpad_down": "playstation_dpad_down", "back": "playstation5_button_create",
             "start": "playstation5_button_options",
             "trigger_left": "playstation_trigger_l2", "trigger_right": "playstation_trigger_r2",
             "stick_left": "playstation_stick_l", "stick_right": "playstation_stick_r",

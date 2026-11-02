@@ -30,6 +30,8 @@ int config_boolean(char const *name);
 void platform_log(char const *format, ...);
 unsigned long system_milliseconds(void);
 FILE *platform_fopen_host(char const *path, char const *mode);
+int platform_remove_host(char const *path);
+int platform_rename_host(char const *old_path, char const *new_path);
 
 #if defined(HALO_SWITCH) || defined(HALO_PS5)
 
@@ -136,7 +138,7 @@ static void replay_page_close_client(
 	page.chunk_length = page.chunk_sent = 0;
 	/* (an upload not finished is no replay) */
 	if (page.state == _replay_page_receiving && page.part_path[0])
-		DeleteFileA(page.part_path);
+		platform_remove_host(page.part_path);
 	page.part_path[0] = 0;
 	page.state = _replay_page_reading;
 }
@@ -450,14 +452,18 @@ static void replay_page_upload_end(
 	page.state = _replay_page_reading;
 	if (!written || page.first_length < 8 || memcmp(page.first_bytes, "OCREPLAY", 8))
 	{
-		DeleteFileA(page.part_path);
+		platform_remove_host(page.part_path);
 		page.part_path[0] = 0;
 		replay_page_text("400 Bad Request", "That file is not a replay.");
 		return;
 	}
-	if (!MoveFileA(page.part_path, page.final_path))
+	/* (the paths are the card's as they are, not the game's: DeleteFileA,
+	MoveFileA and the game's remove and rename would put them under the data
+	folder again. A replay of
+	that name was refused as the upload began) */
+	if (platform_rename_host(page.part_path, page.final_path) != 0)
 	{
-		DeleteFileA(page.part_path);
+		platform_remove_host(page.part_path);
 		page.part_path[0] = 0;
 		replay_page_text("500 Internal Server Error", "The replay cannot be kept.");
 		return;

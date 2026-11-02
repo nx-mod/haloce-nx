@@ -5093,6 +5093,10 @@ void network_distributed_handle_message(
 	{
 		return;
 	}
+	/* (a replay of an older network version: the kinds whose layout has
+	changed since, not read: network_replay_playback.c) */
+	if (network_replay_skips_message(header.type))
+		return;
 	/* (the kinds whose handlers read one entry: not without it) */
 	switch (header.type)
 	{

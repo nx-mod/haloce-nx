@@ -47,6 +47,9 @@ void game_state_save(
 	void);
 void game_state_revert(
 	void);
+/* port: where the game state is in this run (main.c's core dump) */
+void *game_state_port_base_address(
+	void);
 /* port: network co-op's (game_state.c) */
 boolean game_state_port_saved_game_valid(
 	void);
@@ -63,6 +66,40 @@ this build's (game_state.c) */
 boolean game_state_image_accept(
 	void *image,
 	long size);
+
+/* port: an image written where the Xbox memory window, and so the game state
+in it, lay elsewhere, or with the game's image moved by another shift, has
+its addresses moved to this run's before it is checked and taken
+(game_state_image_accept). The game state's own containers are moved there;
+what else holds an address is moved by the module that owns it, in the image,
+through these */
+struct game_state_relocation
+{
+	byte *image;
+	/* where the saved game's window began, and how far this run's is from
+	it (modulo 2^32) */
+	unsigned long window_from;
+	unsigned long window_delta;
+	/* this run's PORT_IMAGE_SHIFT less the saved game's */
+	unsigned long image_delta;
+};
+
+/* where the image holds what this run's game state has at live */
+void *game_state_relocation_pointer(
+	struct game_state_relocation const *relocation,
+	void const *live);
+/* the 4 bytes at field, at any alignment: moved to this run's window if they
+are an address in the saved game's, else left as they are (NULL, NONE, a
+field that holds something else) */
+void game_state_relocate(
+	struct game_state_relocation const *relocation,
+	void *field);
+/* the image's element of live (a game state data array), or NULL if it is
+free there or past the image's count */
+void *game_state_relocation_element(
+	struct game_state_relocation const *relocation,
+	struct data_array *live,
+	long index);
 void game_state_save_core(
 	const char *name);
 boolean game_state_reverted(

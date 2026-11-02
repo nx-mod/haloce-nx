@@ -1224,7 +1224,7 @@ static void get_local_player_input_blob(
 						and vertical invert */
 						extern int halo_linux_touch_look(short gamepad_index, real *yaw, real *pitch, real *gyro_yaw,
 							real *gyro_pitch);
-						extern int halo_linux_gyro_zoom_only(void);
+						extern int halo_linux_gyro_zoom_only(short gamepad_index);
 						real touch_yaw;
 						real touch_pitch;
 						real gyro_yaw;
@@ -1240,7 +1240,7 @@ static void get_local_player_input_blob(
 							/* (input.gyro_aim = "zoom": the gyroscope's turn only
 							while zoomed in, for fine aiming; read and dropped
 							otherwise, so that zooming in does not jump) */
-							if (control->zoom_level == NONE && halo_linux_gyro_zoom_only())
+							if (control->zoom_level == NONE && halo_linux_gyro_zoom_only(gamepad_index))
 							{
 								gyro_yaw = 0.f;
 								gyro_pitch = 0.f;

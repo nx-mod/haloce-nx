@@ -587,7 +587,8 @@ def widget_xml(tag: str, widget: dict, tags: Tags, functions: list, inputs: list
         name = patch.get("swap", {}).get(our_name(child_tag), our_name(child_tag))
         lines += [f"{inner}{line}" for line in patch.get("insert_before", {}).get(our_name(child_tag), [])]
         pairs = [("widget", name), ("x", x or None), ("y", y or None),
-                 ("controller", str(child["custom controller index"] + 1) if child["flags"] & 1 else None)]
+                 ("controller", str(child["custom controller index"] + 1) if child["flags"] & 1 else None),
+                 ("platform", patch.get("child_platforms", {}).get(name))]
         lines.append(f"{inner}<child{attributes(pairs)}/>")
     lines += [f"{inner}{line}" for line in patch.get("children", [])]
     lines.append(f"{indent}</widget>")
@@ -707,6 +708,7 @@ def main() -> None:
     for controller in port_settings.CONTROLLERS:
         shutil.copy2(MENUS / "controllers" / f"{controller}.svg", MENUS / "port_svg/controllers" / f"{controller}.svg")
     lines += [art.port_picture(name, frames) for name, frames in port_settings.layout_overlay_pictures()]
+    lines += [art.port_picture(name, frames) for name, frames in port_settings.browser_hint_pictures()]
     # (nothing: what a game map draws for a frame of ui.map's it has not,
     # menu_tags.c)
     lines.append(art.port_picture("blank", [

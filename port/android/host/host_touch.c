@@ -60,6 +60,13 @@ its changes, which the overlay polls */
 #define TOUCH_BUTTONS 16
 static int32_t touch_bindings[TOUCH_BUTTONS];
 static int touch_bindings_serial;
+/* a replay's buttons on the screen (host_touch_targets): their count, then
+TOUCH_TARGET_FIELDS each, and a count of their changes, which the overlay
+polls */
+#define TOUCH_MAXIMUM_TARGETS 16
+#define TOUCH_TARGET_FIELDS 5
+static int32_t touch_targets[1 + TOUCH_MAXIMUM_TARGETS * TOUCH_TARGET_FIELDS];
+static int touch_targets_serial;
 
 static int64_t now_ns(void)
 {
@@ -257,6 +264,40 @@ JNIEXPORT jint JNICALL Java_com_halo_decomp_TouchControls_nativeBindings(JNIEnv 
 	pthread_mutex_unlock(&touch_lock);
 	if (controls && (*env)->GetArrayLength(env, controls) >= TOUCH_BUTTONS)
 		(*env)->SetIntArrayRegion(env, controls, 0, TOUCH_BUTTONS, (const jint *)copy);
+	return serial;
+}
+
+/* the guest's, when a replay's buttons change: count of them, each x0, y0,
+x1, y1 (ten-thousandths of the screen) and the game's controller button
+(port/linux/game/network_replay_playback.c) */
+void host_touch_targets(const int32_t *targets, int count)
+{
+	if (count < 0)
+		count = 0;
+	if (count > TOUCH_MAXIMUM_TARGETS)
+		count = TOUCH_MAXIMUM_TARGETS;
+	pthread_mutex_lock(&touch_lock);
+	touch_targets[0] = count;
+	memcpy(touch_targets + 1, targets, (size_t)count * TOUCH_TARGET_FIELDS * sizeof(*targets));
+	touch_targets_serial++;
+	pthread_mutex_unlock(&touch_lock);
+}
+
+/* the replay's buttons into targets (when it is not null: their count, then
+TOUCH_TARGET_FIELDS each); returns their count of changes */
+JNIEXPORT jint JNICALL Java_com_halo_decomp_TouchControls_nativeTargets(JNIEnv *env, jclass cls,
+	jintArray targets)
+{
+	int32_t copy[1 + TOUCH_MAXIMUM_TARGETS * TOUCH_TARGET_FIELDS];
+	int serial;
+
+	(void)cls;
+	pthread_mutex_lock(&touch_lock);
+	memcpy(copy, touch_targets, sizeof(copy));
+	serial = touch_targets_serial;
+	pthread_mutex_unlock(&touch_lock);
+	if (targets && (*env)->GetArrayLength(env, targets) >= (jsize)(sizeof(copy) / sizeof(copy[0])))
+		(*env)->SetIntArrayRegion(env, targets, 0, (jsize)(sizeof(copy) / sizeof(copy[0])), (const jint *)copy);
 	return serial;
 }
 

@@ -184,6 +184,31 @@
    "name": "prompt_stick_right_press__0",
    "png": "prompt_stick_right_press__0.png",
    "contexts": 0
+  },
+  {
+   "name": "prompt_stick_left_press__0",
+   "png": "prompt_stick_left_press__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_stick_left__0",
+   "png": "prompt_stick_left__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_stick_right__0",
+   "png": "prompt_stick_right__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_dpad_up__0",
+   "png": "prompt_dpad_up__0.png",
+   "contexts": 0
+  },
+  {
+   "name": "prompt_dpad_down__0",
+   "png": "prompt_dpad_down__0.png",
+   "contexts": 0
   }
  ]
 }

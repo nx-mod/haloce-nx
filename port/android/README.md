@@ -219,8 +219,9 @@ Switch: open a profile, **GAMEPADS**, then **GYRO AIM**. ON aims with it all
 the time, ONLY ON ZOOM only while you are zoomed in (a scope), for fine
 aiming; OFF (the default) is the swipe and the stick only. The same screen
 sets its sensitivity and invert each way (`1` is the phone's own turn).
-These are `input.gyro_aim` and the four after it in `config.toml`. The
-gyroscope aims while the touch controls show.
+These are `input.gyro_aim` and the four after it, which each profile keeps in
+the `settings.toml` in its folder (`config.toml`'s are those of a profile that
+has not set them). The gyroscope aims while the touch controls show.
 - "Options" opens these items:
   - "General": the phone's vibration (on by default; it follows the
     vibration setting of the game's profile), a floating move stick (off by default: the stick goes

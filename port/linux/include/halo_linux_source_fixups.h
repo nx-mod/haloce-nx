@@ -169,6 +169,9 @@ menus' pointer is its own, and it is drawn over the screen (interface.c) */
 /* TRUE when B steps out of a custom-map folder or the Map screen's
 difficulties and the screen stays (port/linux/game/menu_functions.c) */
 unsigned char menu_port_back(void *widget);
+/* TRUE when a list's d-pad up and down are its own handlers', not a step
+through its rows (the server browser's sort: port/linux/game/menu_functions.c) */
+unsigned char ui_widget_port_dpad_updown_taken(void *widget);
 /* the Switch GPU, waited on before a map's memory goes
 (port/switch/guest/d3d8_dk.c) */
 #ifdef HALO_SWITCH

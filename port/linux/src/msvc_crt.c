@@ -644,6 +644,18 @@ FILE *platform_fopen_host(const char *path, const char *mode)
 	return fopen(path, mode);
 }
 
+/* ... and removed or renamed by them (remove and rename in the game's code
+are halo_linux_remove's and halo_linux_rename's, which translate) */
+int platform_remove_host(const char *path)
+{
+	return remove(path);
+}
+
+int platform_rename_host(const char *old_path, const char *new_path)
+{
+	return rename(old_path, new_path);
+}
+
 FILE *halo_linux_freopen(const char *path, const char *mode, FILE *stream)
 {
 	char host_path[1024];

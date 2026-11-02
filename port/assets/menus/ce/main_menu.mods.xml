@@ -12,6 +12,14 @@
 		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
 		<child widget="main_menu/mods/mods_list"/>
 		<child widget="main_menu/mods/header_mods"/>
+		<child widget="main_menu/mods/mod_hint_save" x="8" y="415" platform="switch ps5"/>
+		<child widget="main_menu/mods/mod_hint_toggle" x="80" y="415" platform="switch ps5"/>
+		<child widget="main_menu/mods/mod_hint_l_switch" x="184" y="418" platform="switch"/>
+		<child widget="main_menu/mods/mod_hint_r_switch" x="200" y="418" platform="switch"/>
+		<child widget="main_menu/mods/mod_hint_l_ps5" x="184" y="418" platform="ps5"/>
+		<child widget="main_menu/mods/mod_hint_r_ps5" x="200" y="418" platform="ps5"/>
+		<child widget="main_menu/mods/mod_hint_move" x="218" y="415" platform="switch ps5"/>
+		<child widget="main_menu/mods/mod_hint_cancel" x="510" y="415" platform="switch ps5"/>
 	</widget>
 	<widget name="main_menu/mods/header_mods" controller="1" left="35" top="11" width="363" height="59" bitmap="main_menu/mods/header_mods">
 	</widget>
@@ -19,6 +27,9 @@
 		<data input="port mods update"/>
 		<on event="created" run="port mods init"/>
 		<on event="deleted" run="port mods close"/>
+		<on event="y" run="port mods toggle"/>
+		<on event="white" run="port mods move up"/>
+		<on event="black" run="port mods move down"/>
 		<child widget="main_menu/mods/op_mod_1" x="20" y="73"/>
 		<child widget="main_menu/mods/op_mod_2" x="20" y="103"/>
 		<child widget="main_menu/mods/op_mod_3" x="20" y="133"/>
@@ -33,8 +44,8 @@
 		<child widget="main_menu/mods/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_1" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd_top" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -43,8 +54,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_2" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -53,8 +64,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_3" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -63,8 +74,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_4" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -73,8 +84,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_5" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -83,8 +94,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_6" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -93,8 +104,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_7" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -103,8 +114,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_8" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -113,8 +124,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_9" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -123,8 +134,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_10" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -133,8 +144,8 @@
 		<child widget="main_menu/mods/mod_state" x="318"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_11" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd" color="#FF2896FF">
-		<on event="a" run="port mods toggle"/>
-		<on event="start" run="port mods toggle"/>
+		<on event="a" run="port mods accept"/>
+		<on event="start" run="port mods accept"/>
 		<on event="left" run="port mods move up"/>
 		<on event="right" run="port mods move down"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -160,10 +171,10 @@
 	<widget name="main_menu/mods/mod_details_text" type="text" controller="1" left="412" top="130" width="200" height="272" font="ui\small_ui" color="#FF2896FF">
 	</widget>
 	<widget name="main_menu/mods/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<child widget="main_menu/mods/button_up" y="1"/>
-		<child widget="main_menu/mods/button_down" x="130" y="1"/>
-		<child widget="main_menu/mods/button_ok" x="380" y="1"/>
-		<child widget="common_button_cancel" x="510" y="1"/>
+		<child widget="main_menu/mods/button_up" y="1" platform="desktop android web"/>
+		<child widget="main_menu/mods/button_down" x="130" y="1" platform="desktop android web"/>
+		<child widget="main_menu/mods/button_ok" x="380" y="1" platform="desktop android web"/>
+		<child widget="common_button_cancel" x="510" y="1" platform="desktop android web"/>
 	</widget>
 	<widget name="main_menu/mods/button_up" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="MOVE UP" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port mods move up"/>
@@ -179,5 +190,21 @@
 		<on event="a" run="port mods save" back="true"/>
 		<on event="start" run="port mods save" back="true"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/mods/mod_hint_save" type="text" controller="1" width="160" height="24" text="%a-button SAVE" font="ui\small_ui" color="#FFFFFFFF" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_toggle" type="text" controller="1" width="160" height="24" text="%y-button ON / OFF" font="ui\small_ui" color="#FFFFFFFF" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_move" type="text" controller="1" width="160" height="24" text="MOVE" font="ui\small_ui" color="#FFFFFFFF" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_cancel" type="text" controller="1" width="160" height="24" text="%b-button CANCEL" font="ui\small_ui" color="#FFFFFFFF" text_y="2" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_l_switch" width="14" height="14" bitmap="hints/switch_l">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_r_switch" width="14" height="14" bitmap="hints/switch_r">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_l_ps5" width="14" height="14" bitmap="hints/ps5_l1">
+	</widget>
+	<widget name="main_menu/mods/mod_hint_r_ps5" width="14" height="14" bitmap="hints/ps5_r1">
 	</widget>
 </menus>

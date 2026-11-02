@@ -85,6 +85,13 @@ mappings) from pools of address space it reserves below 4 GB on demand. */
 uint32_t host_memory_window_base(void);
 uint32_t host_memory_window_size(void);
 
+/* where the window is to go (debug.window_base), if it will go there; 0
+for the usual placement */
+extern uint32_t host_memory_window_wanted;
+/* and the image (debug.image_base): tried before its linked address, so the
+image's shift can be tried on any device; 0 for the usual placement */
+extern uint32_t host_memory_image_wanted;
+
 /* claims the image's range (at preferred_base if it is free, else wherever
 there is room: *base says where) and the Xbox window */
 int host_memory_initialize(uint32_t preferred_base, uint32_t image_size, uint32_t *base);

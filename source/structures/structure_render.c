@@ -695,6 +695,16 @@ void structure_render_preprocess(
 	return;
 }
 
+/* port: structure_render.h */
+void structure_render_port_forget_fog_offset(
+	void)
+{
+	structure_render_globals.fog_offset_valid = FALSE;
+	structure_render_globals.fog_offset_vector = *global_zero_vector3d;
+
+	return;
+}
+
 void structure_render_lightmaps(
 	void)
 {

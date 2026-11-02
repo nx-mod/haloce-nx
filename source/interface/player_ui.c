@@ -218,6 +218,8 @@ static void generate_default_player_profile(
 	struct player_profile *profile);
 static void reset_local_player_profile(
 	short local_player_index);
+static void local_player_profile_settings(
+	short local_player_index);
 static void clear_profile_edit_data(
 	void);
 
@@ -255,6 +257,7 @@ static void reset_local_player_profile(
 	generate_default_player_profile(&player_ui_globals.local_players[local_player_index].profile);
 	player_ui_globals.local_players[local_player_index].active_profile_index = NONE;
 	player_ui_globals.single_player_controller[local_player_index] = NONE;
+	local_player_profile_settings(local_player_index);
 
 	return;
 }
@@ -372,6 +375,49 @@ long player_ui_get_edit_profile_index(
 	void)
 {
 	return player_ui_globals.edit_profile_index;
+}
+
+boolean player_ui_get_profile_settings_folder(
+	long profile_index,
+	char *folder,
+	unsigned long size)
+{
+	extern void platform_translate_path(char const *xbox_path, char *host_path, unsigned long host_path_size);
+	/* (as long as saved_game_files.c's MAXIMUM_FILENAME_LENGTH) */
+	char path[0x100];
+
+	if (profile_index == NONE ||
+		saved_game_file_get_type(profile_index) != _saved_game_file_type_player_profile ||
+		!saved_game_file_get_path_to_enclosing_directory(profile_index, path) ||
+		!path[0])
+	{
+		return FALSE;
+	}
+	platform_translate_path(path, folder, size);
+	return TRUE;
+}
+
+/* port: the settings the local player's profile keeps itself (its keys, its
+mouse's and its gyroscope's: port/linux/src/port_config.h), read again
+whenever the player's profile changes */
+static void local_player_profile_settings(
+	short local_player_index)
+{
+	extern void config_profile_use(int player, char const *folder);
+	char folder[1024];
+
+	if (player_ui_get_profile_settings_folder(
+		player_ui_globals.local_players[local_player_index].active_profile_index,
+		folder,
+		sizeof(folder)))
+	{
+		config_profile_use(local_player_index, folder);
+	}
+	else
+	{
+		config_profile_use(local_player_index, NULL);
+	}
+	return;
 }
 
 struct game_variant *player_ui_get_edit_playlist_profile(
@@ -1380,6 +1426,7 @@ void player_ui_set_active_player_profile(
 		profile,
 		sizeof(*profile));
 	set_local_player_controls_from_player_profile(local_player_index);
+	local_player_profile_settings(local_player_index);
 	return;
 }
 
@@ -1427,6 +1474,7 @@ void player_ui_saved_game_file_removed(
 			saved_game_file_index_after_removal(
 				player_ui_globals.local_players[local_player_index].active_profile_index,
 				removed_index);
+		local_player_profile_settings(local_player_index);
 	}
 	player_ui_globals.edit_profile_index = saved_game_file_index_after_removal(
 		player_ui_globals.edit_profile_index,

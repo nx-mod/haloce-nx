@@ -40,11 +40,11 @@
 		<child widget="main_menu/multiplayer_type_select/join_game/ticker_rules_info" x="80"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/join_game_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_refresh" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_refresh" y="1" platform="desktop android web"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/button_clipboard" x="128" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_filters" x="256" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_join" x="384" y="1"/>
-		<child widget="common_button_back" x="512" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_filters" x="256" y="1" platform="desktop android web"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/join_game_button_join" x="384" y="1" platform="desktop android web"/>
+		<child widget="common_button_back" x="512" y="1" platform="desktop android web"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/join_game_button_filters" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="main_menu/multiplayer_type_select/join_game/join_game_buttons" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="gamespy select button"/>
@@ -78,6 +78,14 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/join_game_items_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" bitmap="bitmaps/join_game_border" description="main_menu/multiplayer_type_select/join_game/screen_stats_container">
 		<data input="gamespy screen update"/>
+		<on event="y" run="port browser refresh"/>
+		<on event="x" run="port browser filters"/>
+		<on event="white" run="port browser mode previous"/>
+		<on event="black" run="port browser mode next"/>
+		<on event="left" run="port browser column previous"/>
+		<on event="right" run="port browser column next"/>
+		<on event="up" run="port browser sort increasing"/>
+		<on event="down" run="port browser sort decreasing"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/op_browser_mode" x="10" y="55"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/join_game_header" y="83"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/scroll_up_button" x="20" y="102"/>
@@ -110,6 +118,18 @@
 		<child widget="main_menu/multiplayer_type_select/join_game/join_game_items_list"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/gamespy_error_fullscreen"/>
 		<child widget="main_menu/multiplayer_type_select/join_game/filters/filters_screen"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_join" x="24" y="452" platform="switch ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_refresh" x="135" y="452" platform="switch ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_filters" x="229" y="452" platform="switch ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_l_switch" x="327" y="455" platform="switch"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_r_switch" x="343" y="455" platform="switch"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_l_ps5" x="327" y="455" platform="ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_r_ps5" x="343" y="455" platform="ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_mode" x="361" y="452" platform="switch ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_dpad_switch" x="417" y="455" platform="switch"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_dpad_ps5" x="417" y="455" platform="ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_sort" x="435" y="452" platform="switch ps5"/>
+		<child widget="main_menu/multiplayer_type_select/join_game/browser_hint_back" x="540" y="452" platform="switch ps5"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/op_browser_mode" width="150" height="28" flags="pass_unhandled_to_focused_child" color="#FF2896FF">
 		<child widget="main_menu/multiplayer_type_select/join_game/browser_mode_spinner" x="16" y="1"/>

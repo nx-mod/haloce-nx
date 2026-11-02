@@ -1,5 +1,34 @@
 # Changelog
 
+## Build 131
+
+- Saved games: a checkpoint or Save and Quit made on Android, Switch or PS5 is no longer lost between runs. The game's memory can land somewhere else each time it starts, and a save made with it elsewhere was refused; such saves now load, and so do saves made before this build. (thelinkin3000)
+- Profiles: each player profile keeps its own Controls Setup, Mouse Settings and Gyro Aim, saved in its folder beside its saved games. Profiles start with the settings you had before, until you change them. In split screen on Switch and PS5, each player uses their own profile's gyro settings. (thelinkin3000)
+- Profiles: on Switch and PS5, the profile settings no longer list Controls Setup and Mouse Settings, which are for keyboard and mouse; gamepads' BUTTON LAYOUT is in their place. (thelinkin3000)
+- Replays: a new view, CINEMATIC, after the free camera (Y). It is the free camera with no controls: it starts behind the player and follows them, zooming in as they get farther away, and moves back behind them whenever a wall or scenery hides them for a moment, or at once as they respawn out of sight. (thelinkin3000)
+- Replays: the free camera zooms in on the player you're watching about twice as far as before. (thelinkin3000)
+- Replays: when a replay ends you're back in the Theater half a second later, instead of at the main menu four seconds later, and without the notice that the game's server couldn't be reached. Leaving a replay from its pause menu goes back to the Theater too. (thelinkin3000)
+
+## Build 130
+
+- Replays: the D-pad scrubs. A tap of left or right skips 10 seconds and taps add up; held, it slides a marker along the seek bar, and the playback catches up to it. (thelinkin3000)
+- Replays: replays recorded on network versions 39 and 40 (Build 128 and earlier) play again. (thelinkin3000)
+- Replays: the free camera is a tripod. It follows the player you're watching and zooms in on them until you move it. (thelinkin3000)
+- Replays: D-pad Up switches the free camera between following the player and holding still, as R3 does; D-pad Down or L3 puts it back behind the player, following them. (thelinkin3000)
+- Replays: with a controller, a second bar above the buttons shows the camera's controls: in the free camera, move, aim, track and follow player; in the behind view, zoom, orbit and reset. The north button in the pause menu (X on Switch, triangle on PS5) hides or shows the hints, and the choice is remembered. (thelinkin3000)
+- Replays: on a touchscreen, the buttons sit in two rows and are pressed where they are drawn; they used to answer below themselves, near the seek bar. New UP, DOWN and PLAYER buttons on the right raise and lower the free camera and put it behind the player. (thelinkin3000)
+- Replays: skipping ahead in a foggy part of a level (Chill Out) no longer crashes the game. (thelinkin3000)
+- Replays: a recording shorter than 15 seconds is deleted as the game ends; the limit was 5 seconds. (thelinkin3000)
+- Theater: deleting a replay works; it always said the replay could not be deleted. Short recordings are now really deleted, and replays uploaded from the replay page are kept. (thelinkin3000)
+- Theater: on Switch and PS5, Y (square on PS5) deletes the chosen replay after asking and X (triangle on PS5) turns RECORD on or off; the bottom bar shows button hints, with RECORD showing ON or OFF. (thelinkin3000)
+- Theater: the replay list no longer reads the SD card every frame, which kept the CPU busy while the screen was open. (thelinkin3000)
+- Server browser: on Switch and PS5, X (triangle on PS5) refreshes, Y (square on PS5) opens the filters and the shoulder buttons change between all, dedicated and P2P games, from any row; the bottom bar shows button hints. (thelinkin3000)
+- Server browser: the D-pad sorts the list. Left and right highlight a column; up sorts it A to Z or fewest first, as the column's arrow shows, and down sorts it the other way. The left stick still moves through the servers. (thelinkin3000)
+- Mods: on Switch and PS5, A saves, X (triangle on PS5) turns the selected mod on or off, the shoulder buttons move it up or down and B cancels; the bottom bar shows button hints. (thelinkin3000)
+- Select Profile: on Switch and PS5 the bottom bar shows button hints for SELECT, CREATE NEW, DELETE and BACK. (thelinkin3000)
+
+Thanks to puginatux for helping design and test Theater mode.
+
 ## Build 129
 
 - Network: this build plays with current OpenCE builds and servers (network version 41); it no longer plays with Build 128 or older. (thelinkin3000)

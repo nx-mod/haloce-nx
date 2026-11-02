@@ -22,6 +22,11 @@ void structure_render_set_fog_offset(
 	real_vector3d *vector_offset);
 void structure_render_preprocess(
 	void);
+/* port: the planar fog's offset forgotten, as structure_render_preprocess
+does at its end, for a window that draws no structure (a replay's held
+frame: source/render/render.c) */
+void structure_render_port_forget_fog_offset(
+	void);
 void structure_render_lightmaps(
 	void);
 void structure_render_diffuse_texture(

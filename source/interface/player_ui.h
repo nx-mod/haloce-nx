@@ -46,6 +46,12 @@ struct player_profile *player_ui_get_edit_player_profile(
 /* port: the saved game file being edited (NONE for none) */
 long player_ui_get_edit_profile_index(
 	void);
+/* port: a player profile's folder on this machine, where it keeps its own
+settings (port/linux/src/port_config.h's settings.toml); FALSE for none */
+boolean player_ui_get_profile_settings_folder(
+	long profile_index,
+	char *folder,
+	unsigned long size);
 struct game_variant *player_ui_get_edit_playlist_profile(
 	void);
 /* port: the PC options (game_engine.h) of the gametype being edited, and of

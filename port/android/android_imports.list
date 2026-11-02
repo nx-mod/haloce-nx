@@ -12,6 +12,9 @@ host_touch_gyro_mode
 host_touch_menu_fingers
 # the overlay's devices: a touchscreen, a controller (host_touch.c; touch_input.c)
 host_touch_devices
+# a replay's buttons on the screen, for the overlay to press (host_touch.c;
+# touch_input.c, port/linux/game/network_replay_playback.c)
+host_touch_targets
 # the phone's GPU family, for the GL ES renderer's fixes (host_render_policy.c; guest_render_policy.c)
 host_android_chip_family
 # the Theater's EXPORT REPLAYS (port/android/host/host_main.c; port/linux/game/menu_functions.c)

@@ -1137,6 +1137,16 @@ boolean synchronize_metadata_display_name_with_profile_name(
 										save_game_directory, game_state_get_persistent_storage_filename());
 									success = (boolean)CopyFileA(
 										old_persistent_storage_path, new_persistent_storage_path, TRUE);
+									/* port: and the settings the profile keeps
+									itself (port/linux/src/port_config.h), if it
+									has any: the old folder is deleted below */
+									*filename = 0;
+									csstrncat(old_persistent_storage_path, "settings.toml", MAXIMUM_FILENAME_LENGTH);
+									old_persistent_storage_path[MAXIMUM_FILENAME_LENGTH] = 0;
+									_snprintf(new_persistent_storage_path, MAXIMUM_FILENAME_LENGTH, "%s%s",
+										save_game_directory, "settings.toml");
+									if (success == TRUE)
+										CopyFileA(old_persistent_storage_path, new_persistent_storage_path, TRUE);
 								}
 								else
 								{

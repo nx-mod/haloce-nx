@@ -41,6 +41,29 @@ int config_default(const char *name, char *text, size_t size);
 it again when this moves */
 unsigned long config_changes(void);
 
+/* A player profile's own settings: settings.toml in its folder, beside its
+blam.sav, holds those each profile keeps (Controls Setup's keys, Mouse
+Settings' and Gyro Aim's); config.toml's are those it has not set, and a
+game's with no profile. config_boolean and the rest give player 1's
+profile's, and config_write writes a setting into it while there is one */
+#define CONFIG_PROFILE_PLAYERS 4
+/* whether a profile keeps the setting for itself */
+int config_setting_per_profile(const char *name);
+/* the profile local player 0 to 3 plays with: its folder (on this machine,
+with or without its separator), NULL for none; its file read again */
+void config_profile_use(int player, const char *folder);
+/* a setting as that player has it */
+int config_player_boolean(int player, const char *name);
+double config_player_real(int player, const char *name);
+const char *config_player_string(int player, const char *name);
+/* a setting as the profile in the folder has it, as config_text gives it
+(config.toml's, where it has not set it, or the setting is not a profile's) */
+int config_profile_text(const char *folder, const char *name, char *text, size_t size);
+/* writes a setting into the profile's file, and sets it for the players
+playing with it (config_write's, for a setting that is not a profile's or
+no folder) */
+int config_profile_write(const char *folder, const char *name, const char *value);
+
 /* whether this is a dedicated server (server.enabled, --server,
 HALO_SERVER: port/linux/src/server_mode.c), whose settings the file holds */
 int config_server_mode_enabled(void);

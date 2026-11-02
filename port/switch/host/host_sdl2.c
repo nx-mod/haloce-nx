@@ -1531,3 +1531,10 @@ int host_touch_menu_fingers(void)
 {
 	return 3;
 }
+
+/* (a replay's buttons for the overlay to press: none to press them) */
+void host_touch_targets(const int32_t *targets, int count)
+{
+	(void)targets;
+	(void)count;
+}

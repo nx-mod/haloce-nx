@@ -749,6 +749,11 @@ static const struct config_setting config_settings[] =
 		"it (what a client that sees everything is sent); a client's, what its\n"
 		"host sends it (far players less often) and its own input. Read at a\n"
 		"game's start; the overlay's System folder has it too." },
+	{ "network.replay_hints", _config_boolean, "true", "HALO_NET_REPLAY_HINTS", _environment_value,
+		_platform_all,
+		"Watching a replay with a controller: the bars of the buttons and of the\n"
+		"camera's controls over the seek bar. The replay's pause menu turns them\n"
+		"on and off (the north button: Y, the Switch's X, the PS5's triangle)." },
 	{ "network.full_detail_to_clients", _config_boolean, "false", "HALO_NET_FULL_DETAIL_TO_CLIENTS",
 		_environment_value, _platform_all,
 		"Hosting: send every client every player every tick (not those far\n"
@@ -1268,6 +1273,15 @@ static const struct config_setting config_settings[] =
 	{ "debug.benchmark_quit", _config_boolean, "true", "HALO_BENCHMARK_QUIT", _environment_value, _platform_all,
 		"Quit the game once the benchmark is done; false goes back to the main\n"
 		"menu." },
+	{ "debug.core_dump_tick", _config_integer, "0", "HALO_CORE_DUMP_TICK", _environment_value, _platform_all,
+		"A core of the first level played (d:\\core\\game_state_<address>.bin,\n"
+		"named for where the game state is) written at this game tick, for\n"
+		"comparing saved games across runs; 0 for none." },
+	{ "debug.core_load", _config_string, "\"\"", "HALO_CORE_LOAD", _environment_value, _platform_all,
+		"A core (a file in d:\\core, as debug.core_dump_tick writes) loaded into\n"
+		"the first level played at debug.core_dump_tick, in place of writing\n"
+		"one: a core of a run whose window lay elsewhere, for trying saved games\n"
+		"across windows; empty for none." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"local:<map>\" plays a local (split\n"
@@ -2911,6 +2925,8 @@ static void config_ensure_loaded(void)
 	pthread_mutex_unlock(&config_lock);
 }
 
+static const struct config_value *config_profile_value(int player, long index);
+
 static const struct config_value *config_value(const char *name, enum config_type type)
 {
 	static const struct config_value none = { 0, 0, 0.0, "" };
@@ -2922,6 +2938,14 @@ static const struct config_value *config_value(const char *name, enum config_typ
 	{
 		platform_log("settings: no %s setting %s", type == _config_string ? "string" : "such", name);
 		return &none;
+	}
+	/* (a setting each profile keeps: player 1's profile's, if it has set
+	it) */
+	{
+		const struct config_value *own = config_profile_value(0, index);
+
+		if (own)
+			return own;
 	}
 	return &config_values[index];
 }
@@ -3217,59 +3241,29 @@ static char *config_repair_unreadable_lines(const char *text, const char *messag
 /* the longest string config_write takes */
 #define CONFIG_MAXIMUM_WRITTEN_STRING 4096
 
-/* sets a setting, for now and in config.toml, from its value as text
-("true", "60", "1.5", "all"): its line there is changed (or added), the rest
-of the file kept as it is */
-int config_write(const char *name, const char *value)
+/* the setting's line as a file holds it ("key = value\n", the key without
+its section), for its value; NULL if it cannot be made. free() it */
+static char *config_value_line(long index, const struct config_value *value)
 {
-	const char *dot = strchr(name, '.');
-	long index = config_setting_index(name);
-	char section[64], key[64], wanted[80], current[64] = "", path[1024];
-	struct config_text out = { 0 };
-	size_t size = 0, line_size;
-	char *text, *line_text;
-	const char *line;
-	int written = 0, in_section = 0, succeeded;
+	const char *key = strchr(config_settings[index].name, '.') + 1;
+	const char *string = value->string ? value->string : "";
+	/* (its value with each character escaped as \uXXXX at most) */
+	size_t line_size = strlen(key) + 6 * strlen(string) + 64;
+	char *line_text = malloc(line_size);
 
-	/* (a string as long as a server's rotation, server_rotation.h's
-	SERVER_ROTATION_MAXIMUM_TEXT; any other value is a word or a number) */
-	if (index < 0 || !dot || (size_t)(dot - name) >= sizeof(section) ||
-		strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
-	{
-		return 0;
-	}
-	/* (the line: its key, and its value with each character escaped as
-	\uXXXX at most) */
-	line_size = strlen(dot + 1) + 6 * strlen(value) + 64;
-	line_text = malloc(line_size);
 	if (!line_text)
-		return 0;
-	/* (the file read first, as the other settings are) */
-	config_value(name, config_settings[index].type);
-	pthread_mutex_lock(&config_lock);
-	config_set_from_text(&config_values[index], config_settings[index].type, value);
-	/* (a run that only answers its command line, a probe's too, writes
-	nothing: the value is this run's alone) */
-	if (config_answer_only)
-	{
-		config_change_count++;
-		pthread_mutex_unlock(&config_lock);
-		free(line_text);
-		return 1;
-	}
-	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
-	snprintf(key, sizeof(key), "%s", dot + 1);
+		return NULL;
 	switch (config_settings[index].type)
 	{
 	case _config_boolean:
-		snprintf(line_text, line_size, "%s = %s\n", key, config_values[index].boolean ? "true" : "false");
+		snprintf(line_text, line_size, "%s = %s\n", key, value->boolean ? "true" : "false");
 		break;
 	case _config_integer:
-		snprintf(line_text, line_size, "%s = %ld\n", key, config_values[index].integer);
+		snprintf(line_text, line_size, "%s = %ld\n", key, value->integer);
 		break;
 	case _config_real:
 		/* (with its point: TOML reads 1 as an integer) */
-		snprintf(line_text, line_size, "%s = %.15g", key, config_values[index].real);
+		snprintf(line_text, line_size, "%s = %.15g", key, value->real);
 		if (!strpbrk(line_text + strlen(key) + 3, ".en"))
 			strcat(line_text, ".0");
 		strcat(line_text, "\n");
@@ -3281,7 +3275,7 @@ int config_write(const char *name, const char *value)
 
 		/* (a TOML basic string: quotes and backslashes escaped, and control
 		characters, so that a value cannot end its line) */
-		for (character = config_values[index].string; *character; character++)
+		for (character = string; *character; character++)
 		{
 			if ((unsigned char)*character < 0x20 || *character == 0x7F)
 			{
@@ -3296,9 +3290,28 @@ int config_write(const char *name, const char *value)
 		break;
 	}
 	}
-	snprintf(wanted, sizeof(wanted), "%s", section);
-	config_path(path, sizeof(path));
+	return line_text;
+}
+
+/* the setting's line in the file at path changed to line_text (or added, at
+the end of its section, which is opened if the file has none), the rest of
+the file kept as it is; a file that is not there is begun with preamble */
+static int config_file_set_line(const char *path, long index, const char *line_text, const char *preamble)
+{
+	const char *name = config_settings[index].name;
+	const char *dot = strchr(name, '.');
+	char section[64], key[64], current[64] = "";
+	struct config_text out = { 0 };
+	size_t size = 0;
+	char *text;
+	const char *line;
+	int written = 0, in_section = 0, succeeded;
+
+	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
+	snprintf(key, sizeof(key), "%s", dot + 1);
 	text = config_read_file(path, &size);
+	if (!text && preamble)
+		config_append(&out, preamble);
 	for (line = text ? text : ""; *line;)
 	{
 		const char *end = line + strcspn(line, "\n");
@@ -3312,7 +3325,7 @@ int config_write(const char *name, const char *value)
 				config_append(&out, line_text);
 				written = 1;
 			}
-			in_section = !strcmp(current, wanted);
+			in_section = !strcmp(current, section);
 		}
 		else if (in_section && !written && config_line_key(line, end, key))
 		{
@@ -3340,16 +3353,308 @@ int config_write(const char *name, const char *value)
 		{
 			char header[80];
 
-			snprintf(header, sizeof(header), "\n[%s]\n", section);
+			snprintf(header, sizeof(header), "%s[%s]\n", out.length ? "\n" : "", section);
 			config_append(&out, header);
 		}
 		config_append(&out, line_text);
 	}
 	succeeded = out.buffer && config_write_file(path, out.buffer);
-	config_change_count++;
-	pthread_mutex_unlock(&config_lock);
 	free(out.buffer);
 	free(text);
+	return succeeded;
+}
+
+/* ---------- a profile's own settings */
+
+static void config_value_text(long index, const struct config_value *value, char *text, size_t size);
+
+/* the settings each player profile keeps for itself, in settings.toml
+beside its blam.sav: Controls Setup's keys, Mouse Settings' and Gyro Aim's.
+config.toml's are those a profile has not set, and a game's with no profile;
+an environment variable still sets one for every profile */
+static const char *const config_profile_names[] =
+{
+	"controls.move_forward", "controls.move_backward", "controls.strafe_left", "controls.strafe_right",
+	"controls.jump", "controls.crouch", "controls.fire", "controls.throw_grenade", "controls.melee",
+	"controls.reload", "controls.zoom", "controls.switch_weapon", "controls.switch_grenade", "controls.action",
+	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
+	"controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.vote_yes", "controls.vote_no",
+	"input.mouse_sensitivity", "input.mouse_vertical_sensitivity", "input.invert_mouse", "input.mouse_aim_assist",
+	"input.gyro_aim", "input.gyro_sensitivity_horizontal", "input.gyro_sensitivity_vertical",
+	"input.gyro_invert_horizontal", "input.gyro_invert_vertical",
+};
+#define NUMBER_OF_CONFIG_PROFILE_SETTINGS (sizeof(config_profile_names) / sizeof(config_profile_names[0]))
+
+/* (written at the top of a profile's file, the first time it has one) */
+static const char config_profile_preamble[] =
+	"# This profile's own settings: its keys (Controls Setup), its mouse's and\n"
+	"# its gyroscope's (Gyro Aim). Those not here are config.toml's.\n\n";
+
+/* the profile each local player plays with: its folder, with its
+separator ("" for none), and the settings its file sets */
+static struct
+{
+	char folder[1024];
+	struct config_value values[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+	unsigned char set[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+} config_profiles[CONFIG_PROFILE_PLAYERS];
+
+/* the setting's place in config_profile_names, or -1 for one config.toml
+keeps for everyone */
+static int config_profile_slot(long index)
+{
+	size_t slot;
+
+	if (index < 0)
+		return -1;
+	for (slot = 0; slot < NUMBER_OF_CONFIG_PROFILE_SETTINGS; slot++)
+	{
+		if (!strcmp(config_profile_names[slot], config_settings[index].name))
+			return (int)slot;
+	}
+	return -1;
+}
+
+static void config_profile_path(const char *folder, char *path, size_t size)
+{
+	size_t length = strlen(folder);
+	int separated = length && (folder[length - 1] == '/' || folder[length - 1] == '\\');
+
+	snprintf(path, size, "%s%ssettings.toml", folder, separated ? "" : "/");
+}
+
+/* the profile's file's settings into values, those it has marked in set */
+static void config_profile_read(const char *folder, struct config_value *values, unsigned char *set)
+{
+	char path[1100];
+	size_t size = 0, slot;
+	char *text;
+	toml_result_t result;
+
+	memset(set, 0, NUMBER_OF_CONFIG_PROFILE_SETTINGS);
+	config_profile_path(folder, path, sizeof(path));
+	text = config_read_file(path, &size);
+	if (!text)
+		return;
+	result = toml_parse(text, (int)size);
+	if (!result.ok)
+	{
+		platform_log("settings: %s cannot be read (%s); config.toml's are used", path, result.errmsg);
+		toml_free(result);
+		free(text);
+		return;
+	}
+	for (slot = 0; slot < NUMBER_OF_CONFIG_PROFILE_SETTINGS; slot++)
+	{
+		long index = config_setting_index(config_profile_names[slot]);
+		toml_datum_t datum = toml_seek(result.toptab, config_profile_names[slot]);
+		enum config_type type = config_settings[index].type;
+
+		if (datum.type == TOML_UNKNOWN)
+			continue;
+		/* (of its type, as config_set_from_file takes it: otherwise that
+		reports it, and config.toml's is used) */
+		set[slot] = (type == _config_boolean && datum.type == TOML_BOOLEAN) ||
+			(type == _config_integer && datum.type == TOML_INT64) ||
+			(type == _config_real && (datum.type == TOML_FP64 || datum.type == TOML_INT64)) ||
+			(type == _config_string && (datum.type == TOML_STRING || datum.type == TOML_BOOLEAN));
+		/* (a string read before is kept, not freed, as config_set_from_text
+		keeps them) */
+		values[slot].string = NULL;
+		config_set_from_file(&values[slot], &config_settings[index], result.toptab);
+	}
+	toml_free(result);
+	free(text);
+}
+
+/* the player's profile's value of the setting, NULL if it has none (no
+profile, a setting config.toml keeps for everyone or the profile has not
+set, or one its environment variable sets) */
+static const struct config_value *config_profile_value(int player, long index)
+{
+	int slot = config_profile_slot(index);
+
+	if (player < 0 || player >= CONFIG_PROFILE_PLAYERS || slot < 0 || !config_profiles[player].folder[0] ||
+		!config_profiles[player].set[slot] || config_environment(&config_settings[index]))
+	{
+		return NULL;
+	}
+	return &config_profiles[player].values[slot];
+}
+
+static int config_same_folder(const char *a, const char *b)
+{
+	return a && b && *a && !strcmp(a, b);
+}
+
+/* (with config_lock held) the setting written into the profile's file, and
+set for the players playing with it */
+static int config_profile_write_locked(const char *folder, long index, const char *value)
+{
+	int slot = config_profile_slot(index);
+	struct config_value written = { 0, 0, 0.0, NULL };
+	char path[1100];
+	char *line_text;
+	int player, succeeded;
+
+	config_set_from_text(&written, config_settings[index].type, value);
+	for (player = 0; player < CONFIG_PROFILE_PLAYERS; player++)
+	{
+		if (config_same_folder(config_profiles[player].folder, folder))
+		{
+			config_profiles[player].values[slot] = written;
+			config_profiles[player].set[slot] = 1;
+		}
+	}
+	config_change_count++;
+	if (config_answer_only)
+		return 1;
+	line_text = config_value_line(index, &written);
+	config_profile_path(folder, path, sizeof(path));
+	succeeded = line_text && config_file_set_line(path, index, line_text, config_profile_preamble);
+	if (!succeeded)
+		platform_log("settings: cannot write %s", path);
+	free(line_text);
+	return succeeded;
+}
+
+int config_setting_per_profile(const char *name)
+{
+	return config_profile_slot(config_setting_index(name)) >= 0;
+}
+
+void config_profile_use(int player, const char *folder)
+{
+	if (player < 0 || player >= CONFIG_PROFILE_PLAYERS)
+		return;
+	config_ensure_loaded();
+	pthread_mutex_lock(&config_lock);
+	if (folder && *folder)
+	{
+		snprintf(config_profiles[player].folder, sizeof(config_profiles[player].folder), "%s", folder);
+		config_profile_read(folder, config_profiles[player].values, config_profiles[player].set);
+	}
+	else
+	{
+		config_profiles[player].folder[0] = 0;
+		memset(config_profiles[player].set, 0, sizeof(config_profiles[player].set));
+	}
+	config_change_count++;
+	pthread_mutex_unlock(&config_lock);
+}
+
+int config_profile_text(const char *folder, const char *name, char *text, size_t size)
+{
+	long index = config_setting_index(name);
+	int slot = config_profile_slot(index);
+	struct config_value values[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+	unsigned char set[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+
+	size_t each;
+
+	if (index < 0)
+		return 0;
+	config_ensure_loaded();
+	if (slot < 0 || !folder || !*folder || config_environment(&config_settings[index]))
+	{
+		config_value_text(index, &config_values[index], text, size);
+		return 1;
+	}
+	memset(values, 0, sizeof(values));
+	config_profile_read(folder, values, set);
+	config_value_text(index, set[slot] ? &values[slot] : &config_values[index], text, size);
+	for (each = 0; each < NUMBER_OF_CONFIG_PROFILE_SETTINGS; each++)
+		free(values[each].string);
+	return 1;
+}
+
+int config_profile_write(const char *folder, const char *name, const char *value)
+{
+	long index = config_setting_index(name);
+	int succeeded;
+
+	if (config_profile_slot(index) < 0 || !folder || !*folder)
+		return config_write(name, value);
+	if (strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
+		return 0;
+	config_ensure_loaded();
+	pthread_mutex_lock(&config_lock);
+	succeeded = config_profile_write_locked(folder, index, value);
+	pthread_mutex_unlock(&config_lock);
+	return succeeded;
+}
+
+static const struct config_value *config_player_value(int player, const char *name, enum config_type type)
+{
+	const struct config_value *base = config_value(name, type);
+	long index = config_setting_index(name);
+	const struct config_value *own;
+
+	if (index < 0 || config_settings[index].type != type)
+		return base;
+	own = config_profile_value(player, index);
+	return own ? own : &config_values[index];
+}
+
+int config_player_boolean(int player, const char *name)
+{
+	return config_player_value(player, name, _config_boolean)->boolean;
+}
+
+double config_player_real(int player, const char *name)
+{
+	return config_player_value(player, name, _config_real)->real;
+}
+
+const char *config_player_string(int player, const char *name)
+{
+	const char *string = config_player_value(player, name, _config_string)->string;
+
+	return string ? string : "";
+}
+
+/* sets a setting, for now and in config.toml, from its value as text
+("true", "60", "1.5", "all"): its line there is changed (or added), the rest
+of the file kept as it is. A setting each profile keeps (config_setting_per_profile)
+goes into player 1's profile's instead, while it plays with one */
+int config_write(const char *name, const char *value)
+{
+	const char *dot = strchr(name, '.');
+	long index = config_setting_index(name);
+	char path[1024];
+	char *line_text;
+	int succeeded;
+
+	/* (a string as long as a server's rotation, server_rotation.h's
+	SERVER_ROTATION_MAXIMUM_TEXT; any other value is a word or a number) */
+	if (index < 0 || !dot || (size_t)(dot - name) >= 64 ||
+		strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
+	{
+		return 0;
+	}
+	/* (the file read first, as the other settings are) */
+	config_value(name, config_settings[index].type);
+	pthread_mutex_lock(&config_lock);
+	if (config_profile_slot(index) >= 0 && config_profiles[0].folder[0])
+	{
+		succeeded = config_profile_write_locked(config_profiles[0].folder, index, value);
+		pthread_mutex_unlock(&config_lock);
+		return succeeded;
+	}
+	config_set_from_text(&config_values[index], config_settings[index].type, value);
+	/* (a run that only answers its command line, a probe's too, writes
+	nothing: the value is this run's alone) */
+	if (config_answer_only)
+	{
+		config_change_count++;
+		pthread_mutex_unlock(&config_lock);
+		return 1;
+	}
+	line_text = config_value_line(index, &config_values[index]);
+	config_path(path, sizeof(path));
+	succeeded = line_text && config_file_set_line(path, index, line_text, NULL);
+	config_change_count++;
+	pthread_mutex_unlock(&config_lock);
 	free(line_text);
 	return succeeded;
 }
@@ -3426,16 +3731,9 @@ int config_set_text(const char *name, const char *value, char *error, size_t err
 	return 1;
 }
 
-/* a setting's value as text ("true", "60", "1.5", "all"): 0 if there is no
-such setting */
-int config_text(const char *name, char *text, size_t size)
+/* the value as text ("true", "60", "1.5", "all") */
+static void config_value_text(long index, const struct config_value *value, char *text, size_t size)
 {
-	long index = config_setting_index(name);
-	const struct config_value *value;
-
-	if (index < 0)
-		return 0;
-	value = config_value(name, config_settings[index].type);
 	switch (config_settings[index].type)
 	{
 	case _config_boolean:
@@ -3451,6 +3749,17 @@ int config_text(const char *name, char *text, size_t size)
 		snprintf(text, size, "%s", value->string ? value->string : "");
 		break;
 	}
+}
+
+/* a setting's value as text ("true", "60", "1.5", "all"): 0 if there is no
+such setting */
+int config_text(const char *name, char *text, size_t size)
+{
+	long index = config_setting_index(name);
+
+	if (index < 0)
+		return 0;
+	config_value_text(index, config_value(name, config_settings[index].type), text, size);
 	return 1;
 }
 
@@ -3800,6 +4109,58 @@ int main(void)
 			return config_fail("a setting before the line cut short was lost");
 		toml_free(parsed);
 		free(repaired);
+	}
+
+	/* a profile's own settings: its file's over config.toml's, written there
+	while player 1 plays with it, and config.toml's where it has none */
+	{
+		char root[] = "/tmp/halo_config_profileXXXXXX";
+		char profile[64], path[128], text[64];
+		char *written;
+		size_t size;
+
+		if (!mkdtemp(root))
+			return config_fail("no folder for the profile test");
+		setenv("HALO_DATA_ROOT", root, 1);
+		unsetenv("HALO_GYRO_SENSITIVITY_HORIZONTAL");
+		snprintf(profile, sizeof(profile), "%s/profile/", root);
+		mkdir(profile, 0700);
+		if (!config_setting_per_profile("controls.jump") || config_setting_per_profile("display.fov") ||
+			config_setting_per_profile("controls.nintendo_menu_buttons"))
+			return config_fail("the wrong settings are a profile's");
+		config_profile_use(0, profile);
+		if (config_real("input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("a profile with no file did not take config.toml's");
+		if (!config_write("input.gyro_sensitivity_horizontal", "2.5") ||
+			config_real("input.gyro_sensitivity_horizontal") != 2.5)
+			return config_fail("player 1's profile's setting was not written");
+		if (config_player_real(1, "input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("player 2, with no profile, did not keep config.toml's");
+		config_profile_text(NULL, "input.gyro_sensitivity_horizontal", text, sizeof(text));
+		if (strcmp(text, "1"))
+			return config_fail("config.toml's was written over");
+		config_profile_text(profile, "controls.jump", text, sizeof(text));
+		if (strcmp(text, "Space"))
+			return config_fail("a key the profile has not set is not config.toml's");
+		config_profile_use(1, profile);
+		if (config_player_real(1, "input.gyro_sensitivity_horizontal") != 2.5)
+			return config_fail("the profile's file was not read");
+		if (!config_profile_write(profile, "controls.jump", "J") || strcmp(config_player_string(1, "controls.jump"), "J") ||
+			strcmp(config_string("controls.jump"), "J"))
+			return config_fail("a write to the profile did not reach its players");
+		snprintf(path, sizeof(path), "%ssettings.toml", profile);
+		written = config_read_file(path, &size);
+		if (!written || strncmp(written, "# This profile's own settings", 29) ||
+			!strstr(written, "[input]\ngyro_sensitivity_horizontal = 2.5\n") || !strstr(written, "[controls]\njump = \"J\"\n"))
+			return config_fail(written ? written : "the profile's file was not written");
+		parsed = toml_parse(written, (int)size);
+		if (!parsed.ok)
+			return config_fail("the profile's file does not parse");
+		toml_free(parsed);
+		free(written);
+		config_profile_use(0, NULL);
+		if (config_real("input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("no profile did not go back to config.toml's");
 	}
 	printf("PASS\n");
 	return 0;

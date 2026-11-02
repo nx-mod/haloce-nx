@@ -20,7 +20,7 @@ them. The client sends nothing (network_game_client_write).
 
 The view (network_replay_camera, made once a frame by
 network_replay_playback_frame: main.c's window and the sound's listener)
-is one of three, Y going round them: behind the player watched (or the
+is one of four, Y going round them: behind the player watched (or the
 vehicle they ride), drawn where the frame draws them (render
 interpolation), kept on this side of walls, turning with them until the
 right stick flies it round them (playback_behind_camera; its click turns
@@ -33,8 +33,17 @@ camera, as the game's debug flying camera: the left stick moving it level
 slowly, its speed eased up and down: playback_free_camera_speed), the right
 one turning it and the triggers taking it down (left) and up (right), eased
 up from still (the Switch's are buttons: playback_free_camera_rise),
-following the player as behind does until one of them is touched,
-sliding along walls rather than through them (playback_free_camera_move).
+sliding along walls rather than through them (playback_free_camera_move);
+a tripod, placed where behind's would be when it is chosen, tracking the
+player (playback_free_camera_track) as it moves until the right stick takes
+the aim (R3 or D-pad Up tracks again, or stops; D-pad Down or L3 puts it
+behind the player again, tracking them, as when it was chosen), and zooming on them
+as they go further until it first moves (playback_free_camera_zoom); or a
+cinematic one, the free camera with no controls: placed and tracking as it,
+and placed behind the player again whenever the level hides them from it
+for CINEMATIC_HIDDEN_TIME (playback_cinematic_sight), at once in the
+CINEMATIC_SPAWN_TIME after they spawn. D-pad
+Up turns behind with the player again too, as R3 does.
 Through the eyes, the aim turns smoothly between the facings the replay
 has of the player (playback_index_facings, playback_eyes_aim) and the host's
 corrections of where they are are glided over (playback_eyes_glide): a
@@ -45,27 +54,33 @@ button (RB, the Switch's R, the PS5's R1) plays faster and the left one
 slower, to a pause (game_time_set_speed); Back held shows the scores (the
 watched's row as a player's own); B hides the lines over the screen. Start
 puts up the pause menu (the game stopped, the camera kept): B in it leaves,
-Start resumes. A line at the top says who is
+Start resumes, the north button (Y) hides the hints' bars or shows them
+again (network.replay_hints, kept in config.toml). A line at the top says who is
 watched, the view and the speed, a dark bar near the bottom edge the
 buttons, each as Kenney's picture of the controller's
 (hud_hires_prompt_draw), and under it the seek bar: the time, a Halo blue
 line with the playhead a circle on it, and the replay's length
 (playback_draw_seek)
 (network_replay_playback_draw). The game's end, or the replay's, returns
-to the main menu a few seconds later.
+to the Theater half a second later (the main menu opens it:
+network_replay_theater_wanted).
 
 Keyframes (playback_keyframe_take): every 10 seconds of the game, as the
 playback first reaches them, the game state's parts in use and the
 simulation's and the netcode's variables outside it (gathered by the guest
 image's linker script, guest.ld's .replay_data and .replay_bss), with
 where the file's records were: copied in one go, then compressed in memory
-on a thread of its own (playback_compressor_main) while the game goes on. The d-pad's left puts
-the last one back (the one before it, just after one), as a core is
-loaded (game_state_port_restore), and its right the next, or with none
-ahead plays ten seconds on: at 50 times, its records before each tick
-(network_replay_playback_tick), the frame it was asked in held, the lines
-over it as they change, and the sound paused (network_replay_frozen,
-rasterizer_port_hold_draw), then at normal speed.
+on a thread of its own (playback_compressor_main) while the game goes on. A tap of
+the d-pad's left puts the last one back (the one before it, just after
+one), as a core is loaded (game_state_port_restore), and of its right the
+next, or with none ahead sets a target ten seconds on and plays to it: at
+50 times, its records before each tick (network_replay_playback_tick), the
+frame it was asked in held, the lines over it as they change, and the
+sound paused (network_replay_frozen, rasterizer_port_hold_draw), then at
+normal speed. Taps add up, each from the last's target. Held, a direction
+scrubs (playback_scrub): the target, a marker on the seek bar, slides that
+way, faster as it is held, and the playback chases it, the keyframes on
+the way put back (playback_seek_chase); back, once it is let go.
 */
 
 #include "cseries.h"
@@ -105,8 +120,24 @@ rasterizer_port_hold_draw), then at normal speed.
 
 #include "zlib.h" /* source/memory/zlib */
 
+/* the touch controls (port/linux/src/touch_input.c): whether they show, and
+the replay's buttons for them to press, each TOUCH_TARGET_FIELDS ints (x0,
+y0, x1, y1 in ten-thousandths of the screen, and its controller button: its
+touch_input.h's TOUCH_REPLAY_*); and the view swipe, as port 0's player's
+(xinput_sdl.c). The Switch has the Android guest, and no touchscreen */
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+#define REPLAY_TOUCH 1
+int touch_input_screen_buttons(void);
+void touch_input_replay_targets(const int *targets, int count);
+int touch_input_move(float *forward, float *strafe);
+#endif
+int halo_linux_touch_look(short gamepad_index, real *yaw, real *pitch, real *gyro_yaw, real *gyro_pitch);
+#define REPLAY_TOUCH_MAXIMUM_TARGETS 16
+#define REPLAY_TOUCH_TARGET_FIELDS 5
+
 FILE *platform_fopen_host(char const *path, char const *mode);
 int config_boolean(char const *name);
+int config_write_boolean(const char *name, int value);
 void network_distributed_handle_message(long machine_index, word const *message, word size);
 void network_connection_port_set_last_read_unreliable(boolean unreliable);
 boolean network_game_client_port_replay_begin(struct network_game const *game);
@@ -159,10 +190,26 @@ struct replay_facing
 and the first whose records are one zlib stream after the header */
 #define REPLAY_PLAYABLE_FORMAT 2
 #define REPLAY_COMPRESSED_FORMAT 3
+/* the oldest network version played (the first whose replays could be:
+format 2), and the distributed messages whose layout changed since, not
+read from a replay older than the version that changed them
+(port/linux/network_format.txt's fingerprints; 40 changed only a client's
+join request, which no replay has) */
+#define REPLAY_OLDEST_NETWORK_VERSION 39
+static struct
+{
+	unsigned long changed_in;
+	byte type;
+} const replay_changed_messages[] = {
+	/* (41: a vote's status, with the vote to end the game's) */
+	{ 41, _distributed_message_votekick_status },
+};
 /* the largest replay read (all of it, at once) */
 #define REPLAY_MAXIMUM_FILE_SIZE (256 * 1024 * 1024)
 /* how long the main menu waits after the replay's end, or the game's */
-#define REPLAY_END_MILLISECONDS 4000
+#define REPLAY_END_MILLISECONDS 500
+/* the least time between two of D-pad Down's resets of the free camera */
+#define REPLAY_CAMERA_RESET_MILLISECONDS 150
 
 /* the camera: how far behind and above what it watches (a unit on foot, or
 the vehicle it rides), its pitch, and how much of its turn toward the
@@ -224,6 +271,20 @@ them it keeps; and how many walls a frame's move slides along */
 	FLAG(_collision_test_objects_machines_bit))
 #define FREE_CAMERA_WALL_MARGIN 0.15f
 #define FREE_CAMERA_SLIDES 3
+/* the free camera tracking the player, as on a tripod: how long its aim
+lags theirs (seconds, the time it takes to make most of a turn toward
+them); and, while it has not moved since it was placed, its zoom: the view
+narrowed as they go further than this (world units), down to this, so they
+stay the size they were, eased over this long (seconds) */
+#define FREE_CAMERA_TRACK_TIME 0.15f
+#define FREE_CAMERA_ZOOM_DISTANCE 5.0f
+#define FREE_CAMERA_NARROWEST DEGREES_TO_RADIANS(8.0f)
+#define FREE_CAMERA_ZOOM_TIME 0.3f
+/* the cinematic camera: how long the player may be hidden from it (seconds)
+before it is placed behind them again, and how long after they spawn it is
+placed at once if they are (seconds) */
+#define CINEMATIC_HIDDEN_TIME 0.2f
+#define CINEMATIC_SPAWN_TIME 0.5f
 /* the keyframes: one every 10 seconds of the game, as the playback first
 reaches it, compressed in memory (zlib's fastest level), up to this much
 memory in all (and this many); and how long after one d-pad left goes to
@@ -240,6 +301,14 @@ within this many frames */
 #define REPLAY_SKIP_SPEED 50.0f
 #define REPLAY_SKIP_TICKS_PER_FRAME 60
 #define REPLAY_SKIP_HOLD_FRAMES 3
+/* a d-pad direction held this long (milliseconds) scrubs: the skip's
+target, the marker on the seek bar, slides that way, this many ticks of the
+game a second at first, faster over this long (milliseconds) until it
+crosses the whole bar in this many seconds (never slower than at first) */
+#define REPLAY_SCRUB_HOLD_MILLISECONDS 300
+#define REPLAY_SCRUB_SLOW_TICKS (10 * TICKS_PER_SECOND)
+#define REPLAY_SCRUB_RAMP_MILLISECONDS 1500
+#define REPLAY_SCRUB_CROSSING_SECONDS 4.0f
 /* the text on the screen: how far from its top edge the top line is (and
 twice how far from the bottom the hints' bar), the hints' height (a button's
 picture's), the bar's room either side of them and its colour */
@@ -247,6 +316,8 @@ picture's), the bar's room either side of them and its colour */
 #define REPLAY_HINT_HEIGHT 26
 #define REPLAY_HINT_PADDING 10
 #define REPLAY_HINT_BAR_COLOR 0xA0000000
+/* the room between the buttons' bar and the camera's above it */
+#define REPLAY_HINT_ROW_GAP 4
 /* a button's picture's size, the room after it, and between two hints */
 #define REPLAY_HINT_ICON_SIZE 18
 #define REPLAY_HINT_ICON_GAP 3
@@ -274,6 +345,16 @@ goes is a tick on the line */
 #define REPLAY_SEEK_TARGET_COLOR 0xC0FFFFFF
 /* the screen's dimming under the pause menu */
 #define REPLAY_PAUSE_DIM_COLOR 0x80000000
+/* on a touchscreen, the buttons are boxes a finger presses (the touch
+controls press the controller's button under it): their height, the room
+between two and how wide one is at most; and their fill, held */
+#define REPLAY_TOUCH_HEIGHT 40
+#define REPLAY_TOUCH_GAP 4
+#define REPLAY_TOUCH_MAXIMUM_WIDTH 130
+/* ... and in two rows past this many (one row of them all left each too
+narrow for its word) */
+#define REPLAY_TOUCH_ONE_ROW 6
+#define REPLAY_TOUCH_HELD_COLOR 0xC02896FF
 /* a stick's or a trigger's dead middle, of its whole */
 #define STICK_DEAD_ZONE 0.15f
 
@@ -283,6 +364,13 @@ struct playback_hint
 {
 	short buttons[2];
 	wchar_t const *action;
+};
+
+/* the sticks, in a hint (no button: past the gamepad's) */
+enum
+{
+	_replay_hint_stick_left = NUMBER_OF_GAMEPAD_BUTTONS,
+	_replay_hint_stick_right,
 };
 
 /* a skip ahead's held frame (skip_hold) */
@@ -299,6 +387,7 @@ enum
 	_replay_view_behind,
 	_replay_view_eyes,
 	_replay_view_free,
+	_replay_view_cinematic,
 	NUMBER_OF_REPLAY_VIEWS
 };
 
@@ -331,6 +420,8 @@ static struct
 	boolean synchronized;
 	/* the player watched (a datum index), NONE before one is */
 	long watched;
+	/* the network version it was recorded in (older ones: replay_changed_messages) */
+	unsigned long network_version;
 	/* a client's recording, and its own players (by absolute index): only
 	theirs is a view through the eyes, the others' it never had */
 	boolean client;
@@ -363,9 +454,26 @@ static struct
 	behind's turn; the free camera's place and its turns */
 	boolean camera_valid;
 	boolean first_person;
-	/* the free camera follows the player as behind does until a stick or a
-	trigger is touched */
-	boolean free_following;
+	/* the free camera: chosen and not yet placed (it is placed behind the
+	player, as behind's would be); turning to keep the player in sight
+	(R3 toggles it; the right stick takes the aim); not moved since it was
+	placed (zooming on the player as they go further); its view's width;
+	and where the player is aimed at (kept once they die), if anywhere */
+	boolean free_placing;
+	boolean free_tracking;
+	boolean free_still;
+	/* the cinematic camera: how long the player has been hidden from it
+	(seconds), whether they have died since it was placed, and what is left
+	of the CINEMATIC_SPAWN_TIME after they spawned (seconds) */
+	real cinematic_hidden;
+	boolean cinematic_died;
+	real cinematic_spawned;
+	/* when D-pad Down last put the free camera back behind the
+	player (system_milliseconds: REPLAY_CAMERA_RESET_MILLISECONDS) */
+	unsigned long free_reset_at;
+	real free_field_of_view;
+	boolean free_focus_valid;
+	real_point3d free_focus;
 	/* behind: flown round the player (the right stick touched since the
 	view was chosen), its pitch then, and the left stick's zoom (a scale of
 	the distance behind) */
@@ -383,10 +491,14 @@ static struct
 	real free_move_y;
 	real free_rise;
 	struct observer_result camera;
+	/* the touch controls' view swipe this frame (radians: the free camera's
+	aim, behind's orbit) */
+	real touch_yaw;
+	real touch_pitch;
 	/* the keyframes, by their ticks; the memory they take; where a
 	keyframe is compressed (as large as the largest it can be); and the
-	tick d-pad right plays to, fast, for the next keyframe (NONE when not
-	skipping) */
+	skip's target, the tick the playback goes to, fast (the marker on the
+	seek bar; NONE when not skipping) */
 	struct replay_keyframe keyframes[REPLAY_MAXIMUM_KEYFRAMES];
 	long keyframe_count;
 	unsigned long keyframe_memory;
@@ -402,6 +514,15 @@ static struct
 	or not (the game drawn as it plays); and the frames waited for it */
 	short skip_hold;
 	short skip_hold_frames;
+	/* the d-pad's direction held (NONE when neither is: the other is not
+	heard meanwhile) and when it was pressed (the clock's milliseconds);
+	whether it is held long enough to scrub, the marker where it has slid
+	to (a tick, in part) and when it last slid */
+	short scrub_button;
+	unsigned long scrub_pressed;
+	boolean scrubbing;
+	real scrub_marker;
+	unsigned long scrub_moved;
 	/* a record's bytes, aligned as the handlers read them */
 	word message[0x10000 / sizeof(word)];
 } playback = { NULL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, FALSE, NONE };
@@ -491,6 +612,16 @@ static void playback_skip_stop(
 	sound_pause(FALSE);
 }
 
+/* a skip and a scrub ended where the playback is, the d-pad held or not
+(Start, the speed buttons): a press again starts anew */
+static void playback_seek_stop(
+	void)
+{
+	playback_skip_stop();
+	playback.scrub_button = NONE;
+	playback.scrubbing = FALSE;
+}
+
 /* every keyframe let go */
 static void playback_keyframes_free(
 	void)
@@ -506,7 +637,7 @@ static void playback_keyframes_free(
 	playback.keyframe_memory = 0;
 	playback.keyframe_frontier = NONE;
 	playback.keyframes_full = FALSE;
-	playback_skip_stop();
+	playback_seek_stop();
 }
 
 static void playback_free(
@@ -731,13 +862,14 @@ boolean network_replay_watch(
 		playback_free();
 		return FALSE;
 	}
-	if (network_version != HALO_PORT_NETWORK_VERSION)
+	if (!network_replay_network_version_playable(network_version))
 	{
 		snprintf(why, (size_t)why_size, "This replay is of network version %lu; this build plays %d.",
 			network_version, HALO_PORT_NETWORK_VERSION);
 		playback_free();
 		return FALSE;
 	}
+	playback.network_version = network_version;
 	if (format >= REPLAY_COMPRESSED_FORMAT && !playback_inflate(header_size))
 	{
 		snprintf(why, (size_t)why_size, "The replay cannot be read.");
@@ -775,6 +907,30 @@ boolean network_replay_watch(
 	playback.starting = TRUE;
 	error(_error_log, "replay: playing %s (%s), from tick %ld", path, game.map.name, playback.start_tick);
 	return TRUE;
+}
+
+boolean network_replay_network_version_playable(
+	unsigned long network_version)
+{
+	return network_version >= REPLAY_OLDEST_NETWORK_VERSION && network_version <= HALO_PORT_NETWORK_VERSION;
+}
+
+boolean network_replay_skips_message(
+	byte type)
+{
+	short index;
+
+	if (!network_replay_playing())
+		return FALSE;
+	for (index = 0; index < (short)NUMBEROF(replay_changed_messages); index++)
+	{
+		if (replay_changed_messages[index].type == type &&
+			playback.network_version < replay_changed_messages[index].changed_in)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
 }
 
 boolean network_replay_playing(
@@ -849,14 +1005,30 @@ void network_replay_playback_started(
 	error(_error_log, "replay: the game is loaded; playing from tick %ld", playback.start_tick);
 }
 
+/* a replay stopped, for the main menu to open the Theater again
+(network_replay_theater_wanted) */
+static boolean playback_theater_wanted;
+
 void network_replay_playback_stop(
 	void)
 {
 	if (playback.setting_up)
 		return;
 	if (playback.data)
+	{
 		error(_error_log, "replay: stopped");
+		playback_theater_wanted = TRUE;
+	}
 	playback_free();
+}
+
+boolean network_replay_theater_wanted(
+	void)
+{
+	boolean wanted = playback_theater_wanted;
+
+	playback_theater_wanted = FALSE;
+	return wanted;
 }
 
 /* whether the button was pressed on any controller since the last idle */
@@ -937,6 +1109,12 @@ static void playback_feed(
 			break;
 		}
 		if (tick > game_time_get())
+			break;
+		/* (the game over: none of the records after it, the host's
+		switch to the next game's pregame among them, which a client with
+		no host to talk to takes for the host gone. A keyframe put back
+		has the client in the game again) */
+		if (network_game_client_port_in_postgame(client))
 			break;
 		playback.next += REPLAY_RECORD_HEADER_SIZE + size;
 		if (size < sizeof(message_header))
@@ -1232,9 +1410,11 @@ static void playback_keyframe_read_game_state(
 then the variables beside it (after the load's procedures, which reset
 some of them), the file where it was then, and what is kept of this
 machine rather than of the game made right again: the clock's times, the
-frame's interpolation, the first-person weapon; the playback's speed */
+frame's interpolation, the first-person weapon; the playback's speed, or a
+skip's (seeking: the skip goes on from it, its frame still held) */
 static void playback_keyframe_restore(
-	long keyframe_index)
+	long keyframe_index,
+	boolean seeking)
 {
 	struct replay_keyframe const *keyframe = &playback.keyframes[keyframe_index];
 	struct playback_keyframe_reading reading;
@@ -1259,21 +1439,55 @@ static void playback_keyframe_restore(
 	}
 	playback.next = keyframe->next;
 	playback.ended = 0;
-	playback_skip_stop();
+	if (!seeking)
+		playback_skip_stop();
 	network_distributed_replay_restored();
 	render_interpolation_reset();
 	first_person_weapons_initialize_for_new_map();
-	game_time_set_speed(replay_speeds[playback.speed]);
-	error(_error_log, "replay: back to keyframe %ld, tick %ld", keyframe_index, keyframe->tick);
+	game_time_set_speed(seeking ? REPLAY_SKIP_SPEED : replay_speeds[playback.speed]);
+	error(_error_log, "replay: to keyframe %ld, tick %ld", keyframe_index, keyframe->tick);
 }
 
-/* d-pad left: back to the last keyframe (the one before it, just after
-one); d-pad right: on to the next, put back if it was taken already, else
-played to, fast */
+/* the keyframe latest at or before the tick, NONE if none is */
+static long playback_keyframe_before(
+	long tick)
+{
+	long index;
+
+	for (index = playback.keyframe_count - 1; index >= 0; index--)
+	{
+		if (playback.keyframes[index].tick <= tick)
+			return index;
+	}
+	return NONE;
+}
+
+/* the skip's target set, the skip started if it was not: the frame it is
+asked in held (network_replay_frozen) and nothing heard; the keyframes on
+the way taken at their own ticks (network_replay_ticks_per_frame) */
+static void playback_skip_to(
+	long target)
+{
+	if (playback.skip_tick == NONE)
+	{
+		playback.skip_hold = _replay_hold_wanted;
+		playback.skip_hold_frames = 0;
+		sound_pause(TRUE);
+	}
+	playback.skip_tick = target;
+	game_time_set_speed(REPLAY_SKIP_SPEED);
+}
+
+/* a tap of the d-pad. Left: back to the last keyframe (the one before it,
+just after one). Right: on to the keyframe ahead, put back at once, else
+the target ten seconds on, played to fast. Taps add up: during a skip each
+goes on from its target, not from where the playback is */
 static void playback_skip(
 	boolean forward)
 {
 	long now = game_time_get();
+	long from = playback.skip_tick != NONE ? playback.skip_tick : now;
+	long target;
 	long index;
 
 	/* (one still being compressed waited for: it may be the one wanted) */
@@ -1282,32 +1496,105 @@ static void playback_skip(
 		return;
 	if (!forward)
 	{
-		for (index = playback.keyframe_count - 1; index > 0; index--)
-		{
-			if (playback.keyframes[index].tick <= now - REPLAY_REWIND_GRACE_TICKS)
-				break;
-		}
-		playback_keyframe_restore(index);
+		index = playback_keyframe_before(from - REPLAY_REWIND_GRACE_TICKS);
+		playback_keyframe_restore(index != NONE ? index : 0, FALSE);
 		return;
 	}
 	for (index = 0; index < playback.keyframe_count; index++)
 	{
-		if (playback.keyframes[index].tick > now)
+		if (playback.keyframes[index].tick > from)
+			break;
+	}
+	if (index < playback.keyframe_count)
+	{
+		/* (not skipping: there at once, as before. Skipping: the skip's
+		new target, put back by playback_seek_chase) */
+		if (playback.skip_tick == NONE)
 		{
-			playback_keyframe_restore(index);
+			playback_keyframe_restore(index, FALSE);
 			return;
 		}
+		target = playback.keyframes[index].tick;
 	}
-	if (playback.ended)
+	else
+	{
+		if (playback.ended)
+			return;
+		target = MIN(from + REPLAY_KEYFRAME_TICKS, playback.end_tick);
+		if (target <= now)
+			return;
+	}
+	playback_skip_to(target);
+}
+
+/* a d-pad direction held: past REPLAY_SCRUB_HOLD_MILLISECONDS it scrubs,
+the marker sliding from the skip's target (or from where the playback is)
+that way, slowly at first and faster as it is held; the skip's target is
+the marker. Let go, the skip goes on to it */
+static void playback_scrub(
+	unsigned long now)
+{
+	real length = (real)(playback.end_tick - playback.start_tick);
+	real seconds;
+	real ramp;
+	real fast;
+	real speed;
+
+	if (playback.scrub_button == NONE)
 		return;
-	/* (ten seconds on from here, played to fast: the frame asked in held
-	and nothing heard, network_replay_frozen; the keyframes on the way taken
-	at their own ticks, network_replay_ticks_per_frame) */
-	playback.skip_tick = now + REPLAY_KEYFRAME_TICKS;
-	playback.skip_hold = _replay_hold_wanted;
-	playback.skip_hold_frames = 0;
-	sound_pause(TRUE);
-	game_time_set_speed(REPLAY_SKIP_SPEED);
+	if (!playback.held[playback.scrub_button])
+	{
+		playback.scrub_button = NONE;
+		playback.scrubbing = FALSE;
+		return;
+	}
+	if (!playback.scrubbing)
+	{
+		if (now - playback.scrub_pressed < REPLAY_SCRUB_HOLD_MILLISECONDS)
+			return;
+		/* (the replay over: nothing ahead to scrub to) */
+		if (playback.scrub_button == _gamepad_binary_button_dpad_right && playback.ended)
+			return;
+		playback.scrubbing = TRUE;
+		playback.scrub_moved = now;
+		playback.scrub_marker = (real)(playback.skip_tick != NONE ? playback.skip_tick : game_time_get());
+		playback_skip_to((long)playback.scrub_marker);
+		return;
+	}
+	seconds = (real)(now - playback.scrub_moved) / 1000.0f;
+	playback.scrub_moved = now;
+	ramp = MIN(1.0f, (real)(now - playback.scrub_pressed - REPLAY_SCRUB_HOLD_MILLISECONDS) /
+		(real)REPLAY_SCRUB_RAMP_MILLISECONDS);
+	fast = MAX((real)REPLAY_SCRUB_SLOW_TICKS, length / REPLAY_SCRUB_CROSSING_SECONDS);
+	speed = (real)REPLAY_SCRUB_SLOW_TICKS + (fast - (real)REPLAY_SCRUB_SLOW_TICKS) * ramp;
+	if (playback.scrub_button == _gamepad_binary_button_dpad_left)
+		speed = -speed;
+	playback.scrub_marker = PIN(playback.scrub_marker + speed * seconds,
+		(real)playback.start_tick, (real)playback.end_tick);
+	playback.skip_tick = (long)playback.scrub_marker;
+}
+
+/* a skip on its way to its target over what has been played already: the
+latest keyframe before the target put back when it is ahead of the
+playback, or when the target is behind it (once left is let go: a scrub
+back freezes the playback until then), and played on from there. Not
+before the skip's frame is held: the frame put back would be the one held */
+static void playback_seek_chase(
+	void)
+{
+	long now = game_time_get();
+	long index;
+
+	if (playback.skip_tick == NONE || playback.skip_hold == _replay_hold_wanted ||
+		playback.scrub_button == _gamepad_binary_button_dpad_left)
+	{
+		return;
+	}
+	index = playback_keyframe_before(playback.skip_tick);
+	if (index == NONE)
+		return;
+	if (playback.keyframes[index].tick > now || playback.skip_tick < now)
+		playback_keyframe_restore(index, TRUE);
 }
 
 boolean network_replay_playback_idle(
@@ -1343,9 +1630,14 @@ boolean network_replay_playback_idle(
 	{
 		playback.skip_hold = _replay_hold_none;
 	}
-	/* (a skip ahead there: the game drawn again, at its normal speed) */
-	if (playback.skip_tick != NONE && (game_time_get() >= playback.skip_tick || playback.ended ||
-		playback.keyframes_full))
+	/* (a skip on its way: a keyframe on the way put back) */
+	playback_seek_chase();
+	if (playback.leaving)
+		return TRUE;
+	/* (a skip there, not scrubbing still: the game drawn again, at its
+	normal speed. The keyframes' memory full, it goes on, taking none) */
+	if (playback.skip_tick != NONE && !playback.scrubbing &&
+		(game_time_get() >= playback.skip_tick || playback.ended))
 	{
 		playback_skip_stop();
 		playback.speed = REPLAY_NORMAL_SPEED;
@@ -1357,8 +1649,12 @@ boolean network_replay_playback_idle(
 	resume) */
 	if (playback_pressed(_gamepad_binary_button_start))
 	{
+		/* (a skip or a scrub ended where the playback is, which resumes at
+		normal speed) */
+		if (playback.skip_tick != NONE)
+			playback.speed = REPLAY_NORMAL_SPEED;
 		playback.paused = !playback.paused;
-		playback_skip_stop();
+		playback_seek_stop();
 		playback.scores = FALSE;
 		game_time_set_speed(playback.paused ? 0.0f : replay_speeds[playback.speed]);
 		if (!playback.paused && playback.ended)
@@ -1366,6 +1662,10 @@ boolean network_replay_playback_idle(
 	}
 	if (playback.paused)
 	{
+		/* (the north button: the hints' bars shown or hidden, kept in
+		config.toml: network.replay_hints) */
+		if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
+			config_write_boolean("network.replay_hints", !config_boolean("network.replay_hints"));
 		if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b))
 		{
 			error(_error_log, "replay: left at tick %ld", game_time_get());
@@ -1378,42 +1678,67 @@ boolean network_replay_playback_idle(
 		playback.watched = playback_next_player(playback.watched, FALSE);
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_x))
 		playback.watched = playback_next_player(playback.watched, TRUE);
-	if (playback_pressed(_gamepad_binary_button_dpad_left))
+	/* (the d-pad: a tap skips, held it scrubs; while one way is held the
+	other is not heard) */
 	{
-		playback_skip(FALSE);
-		if (playback.leaving)
-			return TRUE;
+		boolean left = playback_pressed(_gamepad_binary_button_dpad_left);
+		boolean right = playback_pressed(_gamepad_binary_button_dpad_right);
+
+		if (playback.scrub_button == NONE && (left || right))
+		{
+			playback_skip(right);
+			if (playback.leaving)
+				return TRUE;
+			playback.scrub_button = right ? _gamepad_binary_button_dpad_right : _gamepad_binary_button_dpad_left;
+			playback.scrub_pressed = now;
+		}
+		playback_scrub(now);
 	}
-	if (playback_pressed(_gamepad_binary_button_dpad_right))
-		playback_skip(TRUE);
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
 	{
 		playback.view = (short)((playback.view + 1) % NUMBER_OF_REPLAY_VIEWS);
 		/* (the free camera follows the player until it is flown; behind
 		turns with them until it is, at its distance) */
-		if (playback.view == _replay_view_free)
-			playback.free_following = TRUE;
+		if (playback.view == _replay_view_free || playback.view == _replay_view_cinematic)
+			playback.free_placing = TRUE;
 		if (playback.view == _replay_view_behind)
 		{
 			playback.behind_orbiting = FALSE;
 			playback.behind_zoom = 1.0f;
 		}
 	}
-	/* (the right stick's click: behind turns with the player again, at its
-	zoom) */
-	if (playback_pressed(_gamepad_binary_button_right_thumb) && playback.view == _replay_view_behind)
-		playback.behind_orbiting = FALSE;
+	/* (the right stick's click, or D-pad Up: behind turns with the player
+	again, at its zoom; the free camera tracks them from where it is, or
+	holds its aim. Both asked, so each one's press is seen) */
+	if (playback_pressed(_gamepad_binary_button_right_thumb) | playback_pressed(_gamepad_binary_button_dpad_up))
+	{
+		if (playback.view == _replay_view_behind)
+			playback.behind_orbiting = FALSE;
+		else if (playback.view == _replay_view_free && !playback.free_placing)
+			playback.free_tracking = !playback.free_tracking;
+	}
+	/* (D-pad Down, or L3: the free camera placed behind the player again, as when
+	it is chosen, and left there tracking them, whether it tracked them or
+	held its aim; once a press, the next heard no sooner than
+	REPLAY_CAMERA_RESET_MILLISECONDS after) */
+	if ((playback_pressed(_gamepad_binary_button_dpad_down) | playback_pressed(_gamepad_binary_button_left_thumb)) &&
+		playback.view == _replay_view_free && !playback.free_placing &&
+		now - playback.free_reset_at >= REPLAY_CAMERA_RESET_MILLISECONDS)
+	{
+		playback.free_placing = TRUE;
+		playback.free_reset_at = now;
+	}
 	/* (the right shoulder faster, the left slower: the Xbox's black and
 	white, xinput_sdl.c) */
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_black) &&
 		playback.speed < (short)NUMBEROF(replay_speeds) - 1)
 	{
-		playback_skip_stop();
+		playback_seek_stop();
 		game_time_set_speed(replay_speeds[++playback.speed]);
 	}
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_white) && playback.speed > 0)
 	{
-		playback_skip_stop();
+		playback_seek_stop();
 		game_time_set_speed(replay_speeds[--playback.speed]);
 	}
 	playback_pressed(_gamepad_binary_button_back);
@@ -1491,7 +1816,9 @@ static real playback_axis(
 }
 
 /* every controller's sticks (the left's, the right's) and triggers (the
-right's less the left's), each 0 in its dead middle, added together */
+right's less the left's), each 0 in its dead middle, added together; and
+the touch controls' stick, the left's (it moves a player as their input,
+touch_input_move, not as the controller's stick) */
 static void playback_sticks(
 	real *move_x,
 	real *move_y,
@@ -1515,6 +1842,17 @@ static void playback_sticks(
 		*rise += playback_axis(gamepad->analog_buttons[_gamepad_analog_button_right_trigger] / 255.0f) -
 			playback_axis(gamepad->analog_buttons[_gamepad_analog_button_left_trigger] / 255.0f);
 	}
+#ifdef REPLAY_TOUCH
+	{
+		float forward, strafe;
+
+		if (touch_input_move(&forward, &strafe))
+		{
+			*move_x -= strafe;
+			*move_y += forward;
+		}
+	}
+#endif
 }
 
 /* the free camera's move from the left stick: its tilt to
@@ -1644,10 +1982,113 @@ static void playback_free_camera_move(
 	}
 }
 
-/* the free camera, moved by the controllers' sticks and triggers; FALSE,
-the camera left alone, while it still follows the player (none touched yet
-since it was chosen), from where it then is once one is */
+static void playback_focus(long unit_index, real_point3d *focus);
+static void playback_behind_camera(long unit_index, real seconds);
+
+/* how much of the way to where it is going a value eased over time
+(seconds) goes in seconds */
+static real playback_ease(
+	real seconds,
+	real time)
+{
+	return 1.0f - (real)exp(-seconds / time);
+}
+
+/* the free camera's aim eased toward the player's focus, as a tripod's
+turned by hand: FREE_CAMERA_TRACK_TIME behind it */
+static void playback_free_camera_track(
+	real seconds)
+{
+	real_vector3d to;
+	real across;
+	real yaw, pitch, turn;
+	real ease = playback_ease(seconds, FREE_CAMERA_TRACK_TIME);
+
+	to.i = playback.free_focus.x - playback.free_position.x;
+	to.j = playback.free_focus.y - playback.free_position.y;
+	to.k = playback.free_focus.z - playback.free_position.z;
+	across = (real)sqrt(to.i * to.i + to.j * to.j);
+	if (across < 0.01f && (real)fabs(to.k) < 0.01f)
+		return;
+	yaw = (real)atan2(to.j, to.i);
+	pitch = PIN((real)atan2(to.k, across), -FREE_CAMERA_MAXIMUM_PITCH, FREE_CAMERA_MAXIMUM_PITCH);
+	turn = yaw - playback.free_yaw;
+	while (turn > _pi)
+		turn -= 2.0f * _pi;
+	while (turn < -_pi)
+		turn += 2.0f * _pi;
+	playback.free_yaw += turn * ease;
+	playback.free_pitch += (pitch - playback.free_pitch) * ease;
+}
+
+/* the free camera's view's width: while it has not moved since it was
+placed and tracks the player, narrowed as they go further than
+FREE_CAMERA_ZOOM_DISTANCE so they stay the size they were (to
+FREE_CAMERA_NARROWEST); held while it has not moved but does not track;
+moved, eased back to the camera's own, and never narrowed again until it is
+placed anew */
+static void playback_free_camera_zoom(
+	real seconds)
+{
+	real wanted = playback.free_field_of_view;
+
+	if (!playback.free_still)
+		wanted = CAMERA_FIELD_OF_VIEW;
+	else if (playback.free_tracking && playback.free_focus_valid)
+	{
+		real_vector3d to;
+		real distance;
+
+		to.i = playback.free_focus.x - playback.free_position.x;
+		to.j = playback.free_focus.y - playback.free_position.y;
+		to.k = playback.free_focus.z - playback.free_position.z;
+		distance = (real)sqrt(to.i * to.i + to.j * to.j + to.k * to.k);
+		wanted = CAMERA_FIELD_OF_VIEW;
+		if (distance > FREE_CAMERA_ZOOM_DISTANCE)
+		{
+			wanted = 2.0f * (real)atan(tan(CAMERA_FIELD_OF_VIEW / 2.0f) * FREE_CAMERA_ZOOM_DISTANCE / distance);
+			wanted = MAX(wanted, FREE_CAMERA_NARROWEST);
+		}
+	}
+	playback.free_field_of_view += (wanted - playback.free_field_of_view) *
+		playback_ease(seconds, FREE_CAMERA_ZOOM_TIME);
+}
+
+/* the cinematic camera's sight of the player: hidden from it by the level,
+its scenery or its doors for CINEMATIC_HIDDEN_TIME (at all, in the
+CINEMATIC_SPAWN_TIME after they spawn), it is placed behind them again, as
+L3 places the free camera */
+static void playback_cinematic_sight(
+	long unit_index,
+	real seconds)
+{
+	real_point3d focus;
+	real_vector3d to;
+	struct collision_result collision;
+
+	playback_focus(unit_index, &focus);
+	to.i = focus.x - playback.free_position.x;
+	to.j = focus.y - playback.free_position.y;
+	to.k = focus.z - playback.free_position.z;
+	if (collision_test_vector(FREE_CAMERA_COLLISION_FLAGS, &playback.free_position, &to, NONE, &collision))
+	{
+		playback.cinematic_hidden += seconds;
+		if (playback.cinematic_spawned > 0.0f || playback.cinematic_hidden >= CINEMATIC_HIDDEN_TIME)
+			playback.free_placing = TRUE;
+	}
+	else
+		playback.cinematic_hidden = 0.0f;
+	playback.cinematic_spawned = MAX(playback.cinematic_spawned - seconds, 0.0f);
+}
+
+/* the free camera, a tripod: placed behind the player when it is chosen (as
+behind's would be, turned as they face), tracking them (R3 toggles it, the
+right stick takes the aim), moved by the left stick and the triggers, still
+tracking; FALSE, the camera left alone, while it cannot be placed (nobody
+to place it behind, and no camera before). The cinematic camera is this,
+its sticks and swipes not heard */
 static boolean playback_free_camera(
+	long unit_index,
 	real seconds)
 {
 	real move_x, move_y, turn_x, turn_y, rise;
@@ -1655,19 +2096,64 @@ static boolean playback_free_camera(
 	real_vector3d move;
 
 	playback_sticks(&move_x, &move_y, &turn_x, &turn_y, &rise);
-	if (playback.free_following)
+	if (playback.view == _replay_view_cinematic)
 	{
-		if (move_x == 0.0f && move_y == 0.0f && turn_x == 0.0f && turn_y == 0.0f && rise == 0.0f)
+		move_x = move_y = turn_x = turn_y = rise = 0.0f;
+		playback.touch_yaw = playback.touch_pitch = 0.0f;
+		/* (a player who died: hidden as they spawn, followed at once) */
+		if (unit_index == NONE)
+			playback.cinematic_died = TRUE;
+		else if (playback.cinematic_died)
+		{
+			playback.cinematic_died = FALSE;
+			playback.cinematic_spawned = CINEMATIC_SPAWN_TIME;
+		}
+		if (!playback.free_placing && unit_index != NONE)
+			playback_cinematic_sight(unit_index, seconds);
+	}
+	if (playback.free_placing)
+	{
+		if (unit_index != NONE)
+		{
+			struct object_datum *object = object_get(unit_index);
+			long followed = object->object.parent_object_index != NONE ? object->object.parent_object_index : unit_index;
+
+			object = object_get(followed);
+			playback.yaw = (real)atan2(object->object.forward.j, object->object.forward.i);
+			playback_behind_camera(unit_index, 0.0f);
+		}
+		if (!playback.camera_valid)
 			return FALSE;
-		playback.free_following = FALSE;
+		playback.free_placing = FALSE;
+		playback.free_tracking = TRUE;
+		playback.free_still = TRUE;
+		playback.cinematic_hidden = 0.0f;
+		playback.cinematic_died = FALSE;
+		playback.cinematic_spawned = 0.0f;
+		playback.free_field_of_view = CAMERA_FIELD_OF_VIEW;
+		playback.free_focus_valid = FALSE;
 		playback.free_move_x = playback.free_move_y = playback.free_rise = 0.0f;
 		playback.free_position = playback.camera.position;
 		playback.free_yaw = (real)atan2(playback.camera.forward.j, playback.camera.forward.i);
 		playback.free_pitch = (real)asin(PIN(playback.camera.forward.k, -1.0f, 1.0f));
 	}
-	playback.free_yaw -= turn_x * FREE_CAMERA_TURN * seconds;
-	playback.free_pitch = PIN(playback.free_pitch + turn_y * FREE_CAMERA_TURN * seconds,
-		-FREE_CAMERA_MAXIMUM_PITCH, FREE_CAMERA_MAXIMUM_PITCH);
+	/* (the player's focus; where they died, while they are dead) */
+	if (unit_index != NONE)
+	{
+		playback_focus(unit_index, &playback.free_focus);
+		playback.free_focus_valid = TRUE;
+	}
+	/* (the right stick, or a swipe, takes the aim) */
+	if (turn_x != 0.0f || turn_y != 0.0f || playback.touch_yaw != 0.0f || playback.touch_pitch != 0.0f)
+		playback.free_tracking = FALSE;
+	if (playback.free_tracking && playback.free_focus_valid)
+		playback_free_camera_track(seconds);
+	else
+	{
+		playback.free_yaw += playback.touch_yaw - turn_x * FREE_CAMERA_TURN * seconds;
+		playback.free_pitch = PIN(playback.free_pitch + playback.touch_pitch + turn_y * FREE_CAMERA_TURN * seconds,
+			-FREE_CAMERA_MAXIMUM_PITCH, FREE_CAMERA_MAXIMUM_PITCH);
+	}
 	forward.i = (real)(cos(playback.free_yaw) * cos(playback.free_pitch));
 	forward.j = (real)(sin(playback.free_yaw) * cos(playback.free_pitch));
 	forward.k = (real)sin(playback.free_pitch);
@@ -1675,6 +2161,8 @@ static boolean playback_free_camera(
 	level, forward and back toward where it looks across the ground whatever
 	its pitch, and only the triggers change its height; both eased:
 	playback_free_camera_speed, playback_free_camera_rise) */
+	if (move_x != 0.0f || move_y != 0.0f || rise != 0.0f)
+		playback.free_still = FALSE;
 	playback_free_camera_speed(move_x, move_y, seconds);
 	rise = playback_free_camera_rise(rise, seconds);
 	move.i = ((real)cos(playback.free_yaw) * playback.free_move_y + (real)sin(playback.free_yaw) * playback.free_move_x) *
@@ -1683,7 +2171,9 @@ static boolean playback_free_camera(
 		FREE_CAMERA_SPEED * seconds;
 	move.k = rise * FREE_CAMERA_SPEED * seconds;
 	playback_free_camera_move(&move);
+	playback_free_camera_zoom(seconds);
 	playback_camera_set(&playback.free_position, &forward);
+	playback.camera.field_of_view = playback.free_field_of_view;
 	return TRUE;
 }
 
@@ -1909,11 +2399,25 @@ static void playback_seat_camera(
 	playback_camera_set(&position, &forward);
 }
 
+/* what the cameras look at: a little above what the unit is (on foot, or
+the vehicle it rides), where it is drawn this frame */
+static void playback_focus(
+	long unit_index,
+	real_point3d *focus)
+{
+	struct object_datum *object = object_get(unit_index);
+	long followed = object->object.parent_object_index != NONE ? object->object.parent_object_index : unit_index;
+
+	object_get_origin(followed, focus);
+	render_interpolation_object_point(followed, focus);
+	focus->z += followed == unit_index ? CAMERA_HEIGHT : CAMERA_VEHICLE_HEIGHT;
+}
+
 /* behind what the unit is (on foot, or the vehicle it rides): turned
 with it, or, in the behind view once its right stick is touched, flown
 round it (across with the stick's sideways, up to above it and down with
 its up and down), at the left stick's zoom (its up nearer, down further).
-The free camera, following, is this, the sticks its own */
+The free camera is placed where this is */
 static void playback_behind_camera(
 	long unit_index,
 	real seconds)
@@ -1921,7 +2425,6 @@ static void playback_behind_camera(
 	struct object_datum *object = object_get(unit_index);
 	long followed = object->object.parent_object_index != NONE ? object->object.parent_object_index : unit_index;
 	real distance = followed == unit_index ? CAMERA_DISTANCE : CAMERA_VEHICLE_DISTANCE;
-	real height = followed == unit_index ? CAMERA_HEIGHT : CAMERA_VEHICLE_HEIGHT;
 	real_point3d focus;
 	real_point3d position;
 	real_vector3d back;
@@ -1933,18 +2436,20 @@ static void playback_behind_camera(
 	if (playback.view == _replay_view_behind)
 	{
 		real move_x, move_y, turn_x, turn_y, rise;
+		boolean swiped = playback.touch_yaw != 0.0f || playback.touch_pitch != 0.0f;
 
 		playback_sticks(&move_x, &move_y, &turn_x, &turn_y, &rise);
-		if (!playback.behind_orbiting && playback.camera_valid && (turn_x != 0.0f || turn_y != 0.0f))
+		if (!playback.behind_orbiting && playback.camera_valid && (turn_x != 0.0f || turn_y != 0.0f || swiped))
 		{
 			playback.behind_orbiting = TRUE;
 			playback.behind_pitch = CAMERA_PITCH;
 		}
+		/* (a swipe as the right stick: across round them, up over them) */
 		if (playback.behind_orbiting)
 		{
-			playback.yaw -= turn_x * CAMERA_ORBIT_TURN * seconds;
-			playback.behind_pitch = PIN(playback.behind_pitch - turn_y * CAMERA_ORBIT_TURN * seconds,
-				CAMERA_ORBIT_HIGHEST, CAMERA_ORBIT_LOWEST);
+			playback.yaw += playback.touch_yaw - turn_x * CAMERA_ORBIT_TURN * seconds;
+			playback.behind_pitch = PIN(playback.behind_pitch - playback.touch_pitch -
+				turn_y * CAMERA_ORBIT_TURN * seconds, CAMERA_ORBIT_HIGHEST, CAMERA_ORBIT_LOWEST);
 			pitch = playback.behind_pitch;
 		}
 		playback.behind_zoom = PIN(playback.behind_zoom * (real)exp(-move_y * CAMERA_ZOOM_RATE * seconds),
@@ -1953,9 +2458,7 @@ static void playback_behind_camera(
 	}
 
 	object = object_get(followed);
-	object_get_origin(followed, &focus);
-	render_interpolation_object_point(followed, &focus);
-	focus.z += height;
+	playback_focus(unit_index, &focus);
 	/* (eased round behind it, unless flown) */
 	yaw = (real)atan2(object->object.forward.j, object->object.forward.i);
 	if (!playback.camera_valid)
@@ -2003,6 +2506,16 @@ void network_replay_playback_frame(
 	/* (paused: the camera where it was, its sticks let be) */
 	if (playback.paused && playback.camera_valid)
 		return;
+	/* (the touch controls' view swipe, which no player reads in a replay:
+	the cameras', as the right stick's) */
+	playback.touch_yaw = playback.touch_pitch = 0.0f;
+#ifdef REPLAY_TOUCH
+	{
+		real gyro_yaw, gyro_pitch;
+
+		halo_linux_touch_look(0, &playback.touch_yaw, &playback.touch_pitch, &gyro_yaw, &gyro_pitch);
+	}
+#endif
 	player = playback.watched != NONE ? player_try_and_get(playback.watched) : NULL;
 	/* (the first player alive, before anyone is watched, or once the one
 	watched has left; one who died is watched again when they spawn, the
@@ -2014,8 +2527,10 @@ void network_replay_playback_frame(
 	}
 	unit_index = player ? player->unit_index : NONE;
 	playback.first_person = FALSE;
-	/* (the free camera, until it is flown, is behind's) */
-	if (playback.view == _replay_view_free && playback.camera_valid && playback_free_camera(main_get_seconds_elapsed()))
+	/* (the free camera, until it is placed, is the view before it; the
+	cinematic one's too) */
+	if ((playback.view == _replay_view_free || playback.view == _replay_view_cinematic) &&
+		playback_free_camera(unit_index, main_get_seconds_elapsed()))
 		;
 	else if (unit_index == NONE)
 		return;
@@ -2090,9 +2605,14 @@ static char const *playback_button_prompt(
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_black: return "black";
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_white: return "white";
 	case _gamepad_binary_button_dpad_left: return "dpad_horizontal";
+	case _gamepad_binary_button_dpad_up: return "dpad_up";
+	case _gamepad_binary_button_dpad_down: return "dpad_down";
 	case _gamepad_binary_button_back: return "back";
 	case _gamepad_binary_button_start: return "start";
 	case _gamepad_binary_button_right_thumb: return "stick_right_press";
+	case _gamepad_binary_button_left_thumb: return "stick_left_press";
+	case _replay_hint_stick_left: return "stick_left";
+	case _replay_hint_stick_right: return "stick_right";
 	}
 	return "";
 }
@@ -2109,6 +2629,8 @@ static wchar_t const *playback_button_label(
 	switch (button)
 	{
 	case _gamepad_binary_button_dpad_left: return L"D-PAD";
+	case _gamepad_binary_button_dpad_up: return L"UP";
+	case _gamepad_binary_button_dpad_down: return L"DOWN";
 #if defined(HALO_SWITCH)
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_a: return swapped ? L"A" : L"B";
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b: return swapped ? L"B" : L"A";
@@ -2119,6 +2641,9 @@ static wchar_t const *playback_button_label(
 	case _gamepad_binary_button_back: return L"-";
 	case _gamepad_binary_button_start: return L"+";
 	case _gamepad_binary_button_right_thumb: return L"RS";
+	case _gamepad_binary_button_left_thumb: return L"LS";
+	case _replay_hint_stick_left: return L"LEFT STICK";
+	case _replay_hint_stick_right: return L"RIGHT STICK";
 #elif defined(HALO_PS5)
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_a: return xbox_buttons ? L"A" : L"CROSS";
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b: return xbox_buttons ? L"B" : L"CIRCLE";
@@ -2129,6 +2654,9 @@ static wchar_t const *playback_button_label(
 	case _gamepad_binary_button_back: return xbox_buttons ? L"BACK" : L"CREATE";
 	case _gamepad_binary_button_start: return xbox_buttons ? L"START" : L"OPTIONS";
 	case _gamepad_binary_button_right_thumb: return xbox_buttons ? L"RS" : L"R3";
+	case _gamepad_binary_button_left_thumb: return xbox_buttons ? L"LS" : L"L3";
+	case _replay_hint_stick_left: return L"LEFT STICK";
+	case _replay_hint_stick_right: return L"RIGHT STICK";
 #else
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_a: return L"A";
 	case FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b: return L"B";
@@ -2139,6 +2667,9 @@ static wchar_t const *playback_button_label(
 	case _gamepad_binary_button_back: return L"BACK";
 	case _gamepad_binary_button_start: return L"START";
 	case _gamepad_binary_button_right_thumb: return L"RS";
+	case _gamepad_binary_button_left_thumb: return L"LS";
+	case _replay_hint_stick_left: return L"LEFT STICK";
+	case _replay_hint_stick_right: return L"RIGHT STICK";
 #endif
 	}
 	return L"?";
@@ -2346,12 +2877,108 @@ static void playback_draw_seek(
 	}
 }
 
-/* the buttons' hints on a dark bar that fits them, above the seek bar at
-the bottom edge (their width from a pass drawn unseen first) */
-static void playback_draw_hints(
+/* whether the buttons are a touchscreen's: the touch controls show
+(touch_input.c), and press the buttons drawn for them */
+static boolean playback_touch(
+	void)
+{
+#ifdef REPLAY_TOUCH
+	return touch_input_screen_buttons() != 0;
+#else
+	return FALSE;
+#endif
+}
+
+/* on a touchscreen, the hints as boxes in a row above the seek bar (two,
+the first above, past REPLAY_TOUCH_ONE_ROW), each
+its action's word, brighter while its button is held; and where each is,
+for the touch controls to press its button under a finger
+(touch_input_replay_targets: their places as parts of the screen) */
+static void playback_draw_touch_hints(
 	long font_index,
 	struct playback_hint const *hints,
 	short count)
+{
+	struct font_header *font = font_definition_get(font_index);
+	short height = (short)(font->ascending_height + font->descending_height);
+	rectangle2d window = render.camera.window_bounds;
+	real_argb_color color = *global_real_argb_white;
+	int targets[REPLAY_TOUCH_MAXIMUM_TARGETS * REPLAY_TOUCH_TARGET_FIELDS];
+	/* (the targets are parts of the viewport, which fills the screen as a
+	finger's place is of it, not of the window drawn in: inside it, and
+	smaller on Android, which put them below the boxes, as the text chat's
+	keyboard's: network_chat.c) */
+	rectangle2d viewport = render.camera.viewport_bounds;
+	long screen_width = MAX(1, viewport.x1 - viewport.x0);
+	long screen_height = MAX(1, viewport.y1 - viewport.y0);
+	short shown = (short)MIN(count, REPLAY_TOUCH_MAXIMUM_TARGETS);
+	short per_row = shown > REPLAY_TOUCH_ONE_ROW ? (short)((shown + 1) / 2) : shown;
+	short rows;
+	short bottom;
+	short width;
+	short x = 0;
+	short index;
+	rectangle2d box;
+
+	if (shown <= 0)
+	{
+#ifdef REPLAY_TOUCH
+		touch_input_replay_targets(targets, 0);
+#endif
+		return;
+	}
+	rows = (short)((shown + per_row - 1) / per_row);
+	width = (short)((window.x1 - window.x0 - 2 * REPLAY_SEEK_INSET - (per_row - 1) * REPLAY_TOUCH_GAP) / per_row);
+	width = (short)MIN(width, REPLAY_TOUCH_MAXIMUM_WIDTH);
+	/* (where the controller's bar is: above the seek bar; the last row's
+	bottom there, the first above it) */
+	bottom = (short)(window.y1 - REPLAY_SCREEN_MARGIN / 2 - MAX(height, REPLAY_SEEK_HEIGHT) - 4 - REPLAY_SCREEN_MARGIN / 2);
+	for (index = 0; index < shown; index++)
+	{
+		short button = hints[index].buttons[0];
+		int *target = targets + index * REPLAY_TOUCH_TARGET_FIELDS;
+		short row = (short)(index / per_row);
+		rectangle2d text;
+
+		/* (a row's first: its boxes centred, the row's own count of them) */
+		if (index % per_row == 0)
+		{
+			short in_row = (short)MIN(per_row, shown - index);
+
+			x = (short)((window.x0 + window.x1 - (in_row * width + (in_row - 1) * REPLAY_TOUCH_GAP)) / 2);
+			box.y1 = (short)(bottom - (rows - 1 - row) * (REPLAY_TOUCH_HEIGHT + REPLAY_TOUCH_GAP));
+			box.y0 = (short)(box.y1 - REPLAY_TOUCH_HEIGHT);
+		}
+
+		box.x0 = x;
+		box.x1 = (short)(x + width);
+		x = (short)(box.x1 + REPLAY_TOUCH_GAP);
+		draw_quad(&box, playback.held[button] ? REPLAY_TOUCH_HELD_COLOR : REPLAY_HINT_BAR_COLOR);
+		text = box;
+		text.y0 = (short)(box.y0 + (REPLAY_TOUCH_HEIGHT - height) / 2);
+		text.y1 = (short)(text.y0 + height + 4);
+		draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
+		rasterizer_draw_unicode_string(&text, NULL, NULL, 0, hints[index].action);
+		target[0] = (int)((box.x0 - viewport.x0) * 10000L / screen_width);
+		target[1] = (int)((box.y0 - viewport.y0) * 10000L / screen_height);
+		target[2] = (int)((box.x1 - viewport.x0) * 10000L / screen_width);
+		target[3] = (int)((box.y1 - viewport.y0) * 10000L / screen_height);
+		target[4] = button;
+	}
+#ifdef REPLAY_TOUCH
+	touch_input_replay_targets(targets, shown);
+#endif
+}
+
+/* the buttons' hints on a dark bar that fits them, above the seek bar at
+the bottom edge (their width from a pass drawn unseen first); a
+touchscreen's as boxes to press (playback_draw_touch_hints) */
+/* a bar of hints, centred, its bottom at bottom; its top */
+static short playback_draw_hint_bar(
+	long font_index,
+	struct playback_hint const *hints,
+	short count,
+	short bottom)
 {
 	struct font_header *font = font_definition_get(font_index);
 	short height = (short)(font->ascending_height + font->descending_height);
@@ -2365,23 +2992,53 @@ static void playback_draw_hints(
 	width = (short)(playback_draw_hint_line(font_index, &line, window.x0, hints, count, FALSE) - window.x0);
 	bar.x0 = (short)((window.x0 + window.x1 - width) / 2 - REPLAY_HINT_PADDING);
 	bar.x1 = (short)(bar.x0 + width + 2 * REPLAY_HINT_PADDING);
-	/* (above the seek bar: playback_draw_seek) */
-	bar.y1 = (short)(window.y1 - REPLAY_SCREEN_MARGIN / 2 - MAX(height, REPLAY_SEEK_HEIGHT) - 4 - REPLAY_SCREEN_MARGIN / 2);
+	bar.y1 = bottom;
 	bar.y0 = (short)(bar.y1 - MAX(height, REPLAY_HINT_HEIGHT) - 6);
 	draw_quad(&bar, REPLAY_HINT_BAR_COLOR);
 	line.y0 = (short)(bar.y0 + 3);
 	line.y1 = bar.y1;
 	playback_draw_hint_line(font_index, &line, (short)(bar.x0 + REPLAY_HINT_PADDING), hints, count, TRUE);
+	return bar.y0;
+}
+
+/* the buttons' hints on a dark bar, and the camera's (the view's sticks
+and buttons: none for a touchscreen, whose own controls they are) on
+another above it */
+static void playback_draw_hints(
+	long font_index,
+	struct playback_hint const *hints,
+	short count,
+	struct playback_hint const *camera,
+	short camera_count)
+{
+	struct font_header *font = font_definition_get(font_index);
+	short height = (short)(font->ascending_height + font->descending_height);
+	rectangle2d window = render.camera.window_bounds;
+	short top;
+
+	if (playback_touch())
+	{
+		playback_draw_touch_hints(font_index, hints, count);
+		playback_draw_seek(font_index);
+		return;
+	}
+	/* (above the seek bar: playback_draw_seek) */
+	top = playback_draw_hint_bar(font_index, hints, count,
+		(short)(window.y1 - REPLAY_SCREEN_MARGIN / 2 - MAX(height, REPLAY_SEEK_HEIGHT) - 4 - REPLAY_SCREEN_MARGIN / 2));
+	if (camera_count > 0)
+		playback_draw_hint_bar(font_index, camera, camera_count, (short)(top - REPLAY_HINT_ROW_GAP));
 	playback_draw_seek(font_index);
 }
 
 /* the pause menu: the screen dimmed, PAUSED in its middle, and its
-buttons' bar (nothing in it to choose yet) */
+buttons' bar (resume, the hints shown or hidden, leave) */
 static void playback_draw_pause_menu(
 	long font_index)
 {
-	static struct playback_hint const hints[] = {
+	struct playback_hint const hints[] = {
 		{ { _gamepad_binary_button_start, NONE }, L"RESUME" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y, NONE },
+			config_boolean("network.replay_hints") ? L"HIDE HINTS" : L"SHOW HINTS" },
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b, NONE }, L"LEAVE" },
 	};
 	struct font_header *font = font_definition_get(font_index);
@@ -2396,15 +3053,16 @@ static void playback_draw_pause_menu(
 	bounds.y1 = (short)(bounds.y0 + height + 4);
 	draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, L"PAUSED");
-	playback_draw_hints(font_index, hints, NUMBEROF(hints));
+	playback_draw_hints(font_index, hints, NUMBEROF(hints), NULL, 0);
 }
 
 void network_replay_playback_draw(
 	void)
 {
-	static wchar_t const *const view_names[NUMBER_OF_REPLAY_VIEWS] = { L"BEHIND", L"EYES", L"FREE CAMERA" };
-	/* (the third, behind flown round the player: how to have it turn with
-	them again; left out otherwise) */
+	static wchar_t const *const view_names[NUMBER_OF_REPLAY_VIEWS] = { L"BEHIND", L"EYES", L"FREE CAMERA", L"CINEMATIC" };
+	/* (the third, R3: behind flown round the player, how to have it turn
+	with them again; the free camera, how to have it track them, or stop;
+	left out otherwise) */
 	static struct playback_hint const hints[] = {
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_a,
 			FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_x }, L"PLAYER" },
@@ -2412,12 +3070,48 @@ void network_replay_playback_draw(
 		{ { _gamepad_binary_button_right_thumb, NONE }, L"RESET" },
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_white,
 			FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_black }, L"SPEED" },
-		{ { _gamepad_binary_button_dpad_left, NONE }, L"SKIP" },
+		{ { _gamepad_binary_button_dpad_left, NONE }, L"SEEK" },
 		{ { _gamepad_binary_button_back, NONE }, L"SCORES" },
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b, NONE }, L"HIDE" },
 		{ { _gamepad_binary_button_start, NONE }, L"PAUSE" },
 	};
-	struct playback_hint shown[NUMBEROF(hints)];
+	/* (a touchscreen's: a box a button, both ways for the player and the
+	seek; the fourth, R3, as the controller's third) */
+	static struct playback_hint const touch_hints[] = {
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_x, NONE }, L"PREV" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_a, NONE }, L"NEXT" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y, NONE }, L"VIEW" },
+		{ { _gamepad_binary_button_right_thumb, NONE }, L"RESET" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_white, NONE }, L"SLOWER" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_black, NONE }, L"FASTER" },
+		{ { _gamepad_binary_button_dpad_left, NONE }, L"<<" },
+		{ { _gamepad_binary_button_dpad_right, NONE }, L">>" },
+		{ { _gamepad_binary_button_back, NONE }, L"SCORES" },
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b, NONE }, L"HIDE" },
+		{ { _gamepad_binary_button_start, NONE }, L"PAUSE" },
+	};
+	/* (a controller's camera bar, above the buttons': the free camera's
+	sticks, its tracking and its return behind the player; behind's) */
+	static struct playback_hint const free_camera_hints[] = {
+		{ { _replay_hint_stick_left, NONE }, L"MOVE" },
+		{ { _replay_hint_stick_right, NONE }, L"AIM" },
+		{ { _gamepad_binary_button_right_thumb, _gamepad_binary_button_dpad_up }, L"TRACK" },
+		{ { _gamepad_binary_button_left_thumb, _gamepad_binary_button_dpad_down }, L"FOLLOW PLAYER" },
+	};
+	static struct playback_hint const behind_camera_hints[] = {
+		{ { _replay_hint_stick_left, NONE }, L"ZOOM" },
+		{ { _replay_hint_stick_right, NONE }, L"ORBIT" },
+		{ { _gamepad_binary_button_right_thumb, _gamepad_binary_button_dpad_up }, L"RESET" },
+	};
+	static struct playback_hint const touch_show[] = {
+		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b, NONE }, L"SHOW" },
+	};
+	/* (the replay over: back to the last keyframe, before it returns to
+	the menu) */
+	static struct playback_hint const touch_ended[] = {
+		{ { _gamepad_binary_button_dpad_left, NONE }, L"<<" },
+	};
+	struct playback_hint shown[NUMBEROF(touch_hints)];
 	short shown_count = 0;
 	short index;
 	long font_index;
@@ -2438,11 +3132,16 @@ void network_replay_playback_draw(
 		game_engine_port_rasterize_scores(playback.watched);
 		return;
 	}
-	if (playback.hidden && !playback.paused)
-		return;
 	font_index = playback_font();
 	if (font_index == NONE)
 		return;
+	/* (a touchscreen's lines hidden: a box to show them again, B's) */
+	if (playback.hidden && !playback.paused)
+	{
+		if (playback_touch())
+			playback_draw_touch_hints(font_index, touch_show, NUMBEROF(touch_show));
+		return;
+	}
 	if (playback.paused)
 	{
 		playback_draw_pause_menu(font_index);
@@ -2469,9 +3168,12 @@ void network_replay_playback_draw(
 		boolean smoothed = playback.view == _replay_view_eyes && playback.client && player &&
 			!playback.recorders[DATUM_INDEX_TO_ABSOLUTE_INDEX(playback.watched)];
 
+		/* (the free camera names the player only while it tracks them) */
+		boolean tracking = playback.view == _replay_view_free && playback.free_tracking && !playback.free_placing;
+
 		usnprintf(text, NUMBEROF(text) - 1, L"%.12s   %s   %s",
-			playback.view == _replay_view_free || !player ? L"REPLAY" : player->name,
-			smoothed ? L"EYES (SMOOTHED)" : view_names[playback.view], speed);
+			(playback.view == _replay_view_free && !tracking) || !player ? L"REPLAY" : player->name,
+			smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view], speed);
 	}
 	text[NUMBEROF(text) - 1] = 0;
 	font = font_definition_get(font_index);
@@ -2486,11 +3188,51 @@ void network_replay_playback_draw(
 	draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, text);
 	if (playback.ended)
+	{
+		if (playback_touch())
+			playback_draw_touch_hints(font_index, touch_ended, NUMBEROF(touch_ended));
 		return;
+	}
+	if (playback_touch())
+	{
+		for (index = 0; index < (short)NUMBEROF(touch_hints); index++)
+		{
+			if (index != 3 || (playback.view == _replay_view_behind && playback.behind_orbiting))
+				shown[shown_count++] = touch_hints[index];
+			else if (playback.view == _replay_view_free)
+			{
+				shown[shown_count] = touch_hints[index];
+				shown[shown_count++].action = L"TRACK";
+			}
+		}
+		playback_draw_hints(font_index, shown, shown_count, NULL, 0);
+		return;
+	}
+	/* (a controller's hints hidden from the pause menu: the seek bar alone,
+	network.replay_hints) */
+	if (!config_boolean("network.replay_hints"))
+	{
+		playback_draw_seek(font_index);
+		return;
+	}
+	/* (a controller's: R3 is in the camera's bar above, the view's) */
 	for (index = 0; index < (short)NUMBEROF(hints); index++)
 	{
-		if (index != 2 || (playback.view == _replay_view_behind && playback.behind_orbiting))
+		if (index != 2)
 			shown[shown_count++] = hints[index];
 	}
-	playback_draw_hints(font_index, shown, shown_count);
+	if (playback.view == _replay_view_free)
+	{
+		/* (R3 and D-pad Up toggle the tracking: what it does now) */
+		struct playback_hint camera[NUMBEROF(free_camera_hints)];
+
+		csmemcpy(camera, free_camera_hints, sizeof(camera));
+		if (playback.free_tracking && !playback.free_placing)
+			camera[2].action = L"FREE";
+		playback_draw_hints(font_index, shown, shown_count, camera, NUMBEROF(camera));
+	}
+	else if (playback.view == _replay_view_behind)
+		playback_draw_hints(font_index, shown, shown_count, behind_camera_hints, NUMBEROF(behind_camera_hints));
+	else
+		playback_draw_hints(font_index, shown, shown_count, NULL, 0);
 }

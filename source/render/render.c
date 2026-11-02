@@ -344,7 +344,12 @@ static void render_window(
 	/* port: a replay's skip ahead: its held frame in place of the view, the
 	replay's lines drawn over it after (port/linux/game/network_replay_playback.c) */
 	if (rasterizer_target == _render_target_primary && network_replay_frozen())
+	{
 		rasterizer_port_hold_draw();
+		/* (the planar fog's offset set for this view, which the structure's
+		preprocess forgets, else the next view's asserts: none drawn here) */
+		structure_render_port_forget_fog_offset();
+	}
 	else if (!bink_playback_in_progress())
 	{
 		build_sprite_prepare_for_window();

@@ -415,6 +415,24 @@
 	<bitmap name="controllers/switch_pro_overlay_small">
 		<frame png="ce/port/controllers/switch_pro_overlay_small__0.png" width="266" height="202"/>
 	</bitmap>
+	<bitmap name="hints/switch_l">
+		<frame png="ce/port/hints/switch_l__0.png" width="14" height="14"/>
+	</bitmap>
+	<bitmap name="hints/switch_r">
+		<frame png="ce/port/hints/switch_r__0.png" width="14" height="14"/>
+	</bitmap>
+	<bitmap name="hints/ps5_l1">
+		<frame png="ce/port/hints/ps5_l1__0.png" width="14" height="14"/>
+	</bitmap>
+	<bitmap name="hints/ps5_r1">
+		<frame png="ce/port/hints/ps5_r1__0.png" width="14" height="14"/>
+	</bitmap>
+	<bitmap name="hints/switch_dpad">
+		<frame png="ce/port/hints/switch_dpad__0.png" width="14" height="14"/>
+	</bitmap>
+	<bitmap name="hints/ps5_dpad">
+		<frame png="ce/port/hints/ps5_dpad__0.png" width="14" height="14"/>
+	</bitmap>
 	<bitmap name="blank">
 		<frame png="ce/port/blank__0.png" width="4" height="4"/>
 	</bitmap>

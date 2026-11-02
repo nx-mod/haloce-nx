@@ -167,6 +167,10 @@ int host_touch_menu_fingers(void);
 /* the overlay's devices: 1, a touchscreen; 2, a game controller; 0 until it
 has looked */
 int host_touch_devices(void);
+/* a replay's buttons on the screen, for the overlay to press: count of
+them, each five ints (x0, y0, x1, y1 in ten-thousandths of the screen, and
+the game's controller button it holds down) */
+void host_touch_targets(const int *targets, int count);
 
 /* ---------- the server browser's master servers (host_https.c) */
 

@@ -91,6 +91,7 @@ mutes.
 #include "text_filter.h"
 #include "halo_keyboard.h"
 #include "server_director.h"
+#include "network_replay.h"
 
 #include <stdio.h>
 
@@ -2081,8 +2082,10 @@ void network_chat_update(
 		chat_actions_held = held;
 		/* (or the controller's D-pad Up, the touch controls' too, which opens
 		the on-screen keyboard; not while the overlay menu is open, whose up
-		it is: port/linux/game/overlay_menu.c) */
-		if ((pressed || TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP)) && !console_is_active() && !overlay_menu_open())
+		it is: port/linux/game/overlay_menu.c, nor in a replay's playback,
+		whose up is its camera's: network_replay_playback.c) */
+		if ((pressed || (TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP) && !network_replay_playing())) &&
+			!console_is_active() && !overlay_menu_open())
 		{
 			/* (no typing where the host has the chat off: it says so, once a
 			while) */

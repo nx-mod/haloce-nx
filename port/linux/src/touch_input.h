@@ -71,6 +71,14 @@ port/linux/game/touch_postgame.c), as the touch controls would: on a
 touchscreen, with input.touch_controls "on", or "auto" while no controller
 is connected */
 int touch_input_screen_buttons(void);
+
+/* a replay's buttons on the screen (port/linux/game/network_replay_playback.c),
+for the touch controls to press: count of them, each
+TOUCH_REPLAY_TARGET_FIELDS ints (x0, y0, x1, y1 in ten-thousandths of the
+screen, and the game's controller button, input.h's, it holds down) */
+#define TOUCH_REPLAY_MAXIMUM_TARGETS 16
+#define TOUCH_REPLAY_TARGET_FIELDS 5
+void touch_input_replay_targets(const int *targets, int count);
 #endif
 
 #endif

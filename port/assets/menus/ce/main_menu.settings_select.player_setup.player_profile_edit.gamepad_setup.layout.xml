@@ -16,7 +16,8 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help">
 		<data input="port settings help"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" x="54" y="73"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" x="54" y="73" platform="desktop android web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset_console" x="54" y="73" platform="switch ps5"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_joystick_preset" x="54" y="103"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_bar" y="414"/>
 	</widget>
@@ -25,7 +26,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF" platform="desktop android web">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_spinner" x="286" y="1"/>
 	</widget>
@@ -34,11 +35,20 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|SWAP TRIGGERS|SWAP A, L TRIGGER|SWAP B, L TRIGGER|SWAP B, R STICK|BOXER|GREEN THUMB|BUMPER JUMPER|RECLAIMER|FISHSTICKS|RECON" setting="profile.button_preset" values="0|1|2|3|4|5|6|7|8|9|10" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
 		<on event="created" run="port setting load"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_button_preset_console" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF" platform="switch ps5">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_console_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_console_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_console_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels" string_index="1" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/button_preset_console_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|SWAP TRIGGERS|SWAP A, L TRIGGER|SWAP B, L TRIGGER|SWAP B, R STICK|BOXER|GREEN THUMB|BUMPER JUMPER|RECLAIMER|FISHSTICKS|RECON" setting="profile.button_preset" values="0|1|2|3|4|5|6|7|8|9|10" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="created" run="port setting load"/>
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/op_joystick_preset" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_spinner" x="320" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels" string_index="1" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels" string_index="2" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/joystick_preset_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|SOUTHPAW|LEGACY|LEGACY SOUTHPAW" setting="profile.joystick_preset" values="0|1|2|3" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
 		<on event="created" run="port setting load"/>
@@ -55,11 +65,13 @@
 	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/labels">
 		<string text="BUTTON LAYOUT:"/>
+		<string text="BUTTON LAYOUT:"/>
 		<string text="STICK LAYOUT:"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/help_strings">
 		<string text=""/>
 		<string text="Which of the controller's buttons does what (not\nthe keyboard's: Controls Setup sets those)."/>
+		<string text="Which of the controller's buttons does what."/>
 		<string text="Which stick moves and which looks."/>
 	</strings>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/layout/xbox_series/overlay/label_a" type="text" width="172" height="25" font="ui\large_ui" color="#FF2896FF" align="left" text_y="2" text_flags="no_focus_test">

@@ -256,6 +256,24 @@ void recorded_animations_dispose(
 	return;
 }
 
+/* port: a thread's place in its animation's event stream, which is the
+map's tag data (game_state.c's game_state_image_relocate) */
+boolean recorded_animations_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	long index;
+
+	for (index = 0; index < animation_threads->maximum_count; index++)
+	{
+		struct animation_thread *thread = game_state_relocation_element(relocation, animation_threads, index);
+
+		if (thread)
+			game_state_relocate(relocation, &thread->event_stream);
+	}
+
+	return TRUE;
+}
+
 void recorded_animations_dispose_from_old_map(
 	void)
 {

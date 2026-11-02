@@ -378,6 +378,40 @@ void glow_initialize_for_new_map(
 	return;
 }
 
+/* port: a glow's particles are a list through the glow particles' array
+(game_state.c's game_state_image_relocate) */
+boolean glow_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	long index;
+
+	if (!glow_globals.glow_data || !glow_globals.glow_particle_data)
+		return TRUE;
+	for (index = 0; index < glow_globals.glow_data->maximum_count; index++)
+	{
+		struct glow_datum *glow = game_state_relocation_element(relocation, glow_globals.glow_data, index);
+
+		if (glow)
+		{
+			game_state_relocate(relocation, &glow->head_particle);
+			game_state_relocate(relocation, &glow->tail_particle);
+		}
+	}
+	for (index = 0; index < glow_globals.glow_particle_data->maximum_count; index++)
+	{
+		struct glow_particle *particle =
+			game_state_relocation_element(relocation, glow_globals.glow_particle_data, index);
+
+		if (particle)
+		{
+			game_state_relocate(relocation, &particle->next);
+			game_state_relocate(relocation, &particle->previous);
+		}
+	}
+
+	return TRUE;
+}
+
 void glow_dispose_from_old_map(
 	void)
 {
