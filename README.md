@@ -4,6 +4,8 @@ A native Switch port of Halo: Combat Evolved, built from the decompilation
 of the Xbox game, drawn with deko3d. It plays online with
 [OpenCE](https://github.com/OpenCommunityEdition/OpenCE)'s other platforms.
 
+![Online on the Switch](docs/images/switch-online.jpg)
+
 **No game data is included:** you need your own Xbox copy of the game.
 
 ## Install
