@@ -7,17 +7,26 @@ the guest hands over (port/android/guest/vk_commands.h): targets, clears and
 present. host_vk_present.c has the surface and the swapchain.
 
 The guest writes a frame's commands into its own memory and calls
-host_vk_submit(); everything a command names is read during that call, and a
-frame is one command buffer, recorded as the commands come and submitted at
-PRESENT. At most one rendering (dynamic rendering) is open at a time. Every
-image is transitioned from the layout it is tracked in, with a full barrier
-(all commands to all commands): this phase is for being right.
+host_vk_submit(); a frame is one command buffer, recorded as the commands come
+and submitted at PRESENT. The commands are run on a thread of their own, the
+render thread (debug.vk_render_thread), after the call has returned: the guest
+writes its streams in turn (VK_COMMAND_STREAMS), and the call waits only until
+the stream it will write next has been run, so the game makes a frame while
+the one before is recorded, handed to the driver and presented. Nothing a
+command names outside its stream is written again by the guest (the high-res
+HUD's PNGs, embedded in its image). Without the thread, a stream is run during
+the call. At most one rendering (dynamic rendering, or a render pass where the
+driver has none: host_vk_passes.c) is open at a time. Every image is
+transitioned from the layout it is tracked in, with a barrier that waits for
+what that layout was used for and holds back what the next is used for
+(host_vk_barrier_scope).
 */
 
 #include "host.h"
 #include "host_vk.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +36,12 @@ struct host_vk_backend host_vkb;
 void *host_vk_window;
 int host_vk_present_marker;
 int host_vk_self_test;
+#ifdef HALO_PS5
+/* (not tried on the console yet) */
+int host_vk_render_thread;
+#else
+int host_vk_render_thread = 1;
+#endif
 
 #define B host_vkb
 
@@ -71,16 +86,29 @@ int host_vk_check(VkResult result, const char *call)
 void host_vk_wait_fence(VkFence fence, const char *what, uint64_t number)
 {
 	uint64_t start = now_ns();
-	VkResult result = vkWaitForFences(B.device, 1, &fence, VK_TRUE, 2000000000ull);
+	int said = 0;
+	VkResult result;
 
-	if (result == VK_TIMEOUT)
+	/* (a timeout before its time is waited out again: a Mali-G78's driver gives one at once when a signal reaches
+	the thread waiting, as the profiler's do, debug.profile_hz; said only for a wait of two seconds and more) */
+	for (;;)
 	{
-		host_logf(HOST_LOG_WARN, "vk: waiting for %s (submission %llu) has taken more than two seconds; waiting on",
-			what, (unsigned long long)number);
-		result = vkWaitForFences(B.device, 1, &fence, VK_TRUE, UINT64_MAX);
+		uint64_t waited = now_ns() - start;
+
+		result = vkWaitForFences(B.device, 1, &fence, VK_TRUE, waited < 2000000000ull ? 2000000000ull - waited :
+			UINT64_MAX);
+		if (result != VK_TIMEOUT)
+			break;
+		if (!said && now_ns() - start >= 2000000000ull)
+		{
+			host_logf(HOST_LOG_WARN, "vk: waiting for %s (submission %llu) has taken more than two seconds; waiting on",
+				what, (unsigned long long)number);
+			said = 1;
+		}
+	}
+	if (said)
 		host_logf(HOST_LOG_WARN, "vk: %s (submission %llu) was ready after %.1f s", what, (unsigned long long)number,
 			(double)(now_ns() - start) / 1e9);
-	}
 	HOST_VK_CHECK(result);
 }
 
@@ -159,7 +187,9 @@ VkCommandBuffer host_vk_frame_command(void)
 static void frame_submit(uint32_t wait_image)
 {
 	struct host_vk_frame *frame = &B.frames[B.frame];
-	VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	/* (the swapchain image is touched only by the clear and the blit into it, host_vk_present_record: the frame's
+	other commands do not wait for the display to give it back) */
+	VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 	VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 
 	if (!frame->recording)
@@ -183,6 +213,76 @@ static void frame_submit(uint32_t wait_image)
 		return;
 	B.submission = frame->number;
 	frame->submitted = 1;
+}
+
+/* The frame in two submissions: its own commands now, before the swapchain's image is asked for (which waits while the
+display holds them all), so that the GPU starts on them at once; then the picture's present into the image, which waits
+for them and for the image. Android's queue takes the next picture only once the GPU has finished this one, so the
+sooner it starts, the less the next present waits. 0 if the frame's commands could not be submitted (nothing is then
+presented). */
+static int frame_submit_split(struct host_vk_target *back_buffer, uint32_t *image_out)
+{
+	struct host_vk_frame *frame = &B.frames[B.frame];
+	VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	VkCommandBufferBeginInfo begin = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	VkSemaphore waits[2];
+	VkPipelineStageFlags stages[2];
+	uint32_t image;
+
+	*image_out = UINT32_MAX;
+	if (!frame->recording)
+		return 0;
+	frame->recording = 0;
+	if (!HOST_VK_CHECK(vkEndCommandBuffer(frame->command)))
+		return 0;
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &frame->command;
+	submit.signalSemaphoreCount = 1;
+	submit.pSignalSemaphores = &frame->drawn;
+	if (!HOST_VK_CHECK(vkQueueSubmit(B.queue, 1, &submit, VK_NULL_HANDLE)))
+		return 0;
+
+	if (!HOST_VK_CHECK(vkBeginCommandBuffer(frame->present_command, &begin)))
+		return 0;
+	image = host_vk_present_record(frame->present_command, back_buffer);
+	host_vk_profile_frame_end((unsigned)(frame - B.frames), frame->present_command, image != UINT32_MAX);
+	if (!HOST_VK_CHECK(vkEndCommandBuffer(frame->present_command)))
+		return 0;
+	/* (the frame's commands whatever the stage; the image at the transfer stage, as frame_submit waits for it. The
+	image's semaphore comes first: Turnip's KGSL backend (Mesa 26.0, kgsl_syncobj_merge) merges a sync file after a
+	GPU timestamp by converting the sync file as if it were the timestamp, and reads through its null queue; a
+	timestamp after a sync file is merged correctly) */
+	if (image != UINT32_MAX)
+	{
+		waits[0] = frame->acquired;
+		stages[0] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		waits[1] = frame->drawn;
+		stages[1] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	}
+	else
+	{
+		waits[0] = frame->drawn;
+		stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	}
+	memset(&submit, 0, sizeof(submit));
+	submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submit.waitSemaphoreCount = image != UINT32_MAX ? 2 : 1;
+	submit.pWaitSemaphores = waits;
+	submit.pWaitDstStageMask = stages;
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &frame->present_command;
+	if (image != UINT32_MAX)
+	{
+		submit.signalSemaphoreCount = 1;
+		submit.pSignalSemaphores = &B.chain.render_done[image];
+	}
+	frame->number = B.submission + 1;
+	*image_out = image;
+	if (!HOST_VK_CHECK(vkQueueSubmit(B.queue, 1, &submit, frame->fence)))
+		return 1;
+	B.submission = frame->number;
+	frame->submitted = 1;
+	return 1;
 }
 
 /* submits the frame as it is and waits for it: for the self-tests, which read what the GPU wrote back; 0 if it
@@ -231,15 +331,80 @@ uint32_t host_vk_retired(void)
 	return result;
 }
 
+/* ---------- barriers */
+
+/* what an image is used for in a layout: the stages that use it, and its writes there (made available by a barrier
+from it) and its reads and writes (made visible by one to it) */
+static void layout_use(VkImageLayout layout, VkPipelineStageFlags *stage, VkAccessFlags *writes, VkAccessFlags *uses)
+{
+	switch (layout)
+	{
+	case VK_IMAGE_LAYOUT_UNDEFINED:
+		/* (nothing to wait for: its contents are not kept) */
+		*stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		*writes = *uses = 0;
+		break;
+	case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+		*stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		*writes = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		*uses = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+		*stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		*writes = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		*uses = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+		/* (sampled in the fragment shader alone: every texture binding is the fragment stage's - the Xbox's vertex
+		shaders read no texture - and so a rendering into a texture that the next samples lets that one's vertex
+		shading and binning go ahead while its pixels are drawn, which a tiler pays dearly for otherwise: on a
+		Mali-G78, Damnation's object shadows' small renderings took 2.8 ms of the GPU's frame with the vertex shader
+		here, 1.2 ms without, and the frame 11.1 ms on Blood Gulch, 8.4 without) */
+		*stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		*writes = 0;
+		*uses = VK_ACCESS_SHADER_READ_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+		*stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		*writes = 0;
+		*uses = VK_ACCESS_TRANSFER_READ_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		*stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		*writes = VK_ACCESS_TRANSFER_WRITE_BIT;
+		*uses = VK_ACCESS_TRANSFER_WRITE_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+		/* (the presentation engine waits on the frame's semaphore, not on a stage) */
+		*stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		*writes = *uses = 0;
+		break;
+	default:
+		*stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		*writes = VK_ACCESS_MEMORY_WRITE_BIT;
+		*uses = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+		break;
+	}
+}
+
+void host_vk_barrier_scope(VkImageLayout from, VkImageLayout to, VkPipelineStageFlags *source_stage,
+	VkAccessFlags *source_access, VkPipelineStageFlags *destination_stage, VkAccessFlags *destination_access)
+{
+	VkAccessFlags unused;
+
+	layout_use(from, source_stage, source_access, &unused);
+	layout_use(to, destination_stage, &unused, destination_access);
+}
+
 /* ---------- the game's render targets */
 
 static void barrier_image(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspect, VkImageLayout from,
-	VkImageLayout to, VkPipelineStageFlags destination_stage, VkAccessFlags destination_access)
+	VkImageLayout to)
 {
 	VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+	VkPipelineStageFlags source_stage, destination_stage;
 
-	barrier.srcAccessMask = from == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_MEMORY_WRITE_BIT;
-	barrier.dstAccessMask = destination_access;
+	host_vk_barrier_scope(from, to, &source_stage, &barrier.srcAccessMask, &destination_stage, &barrier.dstAccessMask);
 	barrier.oldLayout = from;
 	barrier.newLayout = to;
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -248,15 +413,14 @@ static void barrier_image(VkCommandBuffer command, VkImage image, VkImageAspectF
 	barrier.subresourceRange.aspectMask = aspect;
 	barrier.subresourceRange.levelCount = 1;
 	barrier.subresourceRange.layerCount = 1;
-	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, destination_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
+	vkCmdPipelineBarrier(command, source_stage, destination_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
 }
 
 /* the target goes to a layout, from the one it is in: always a barrier, even to the same layout, because a
 rendering's writes are not visible to the next without one */
 void host_vk_target_transition(VkCommandBuffer command, struct host_vk_target *target, VkImageLayout layout)
 {
-	barrier_image(command, target->image, target->aspect, target->layout, layout, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	barrier_image(command, target->image, target->aspect, target->layout, layout);
 	target->layout = layout;
 }
 
@@ -392,6 +556,7 @@ struct host_vk_target *host_vk_target_get(const struct vk_surface *surface)
 	view.subresourceRange.layerCount = 1;
 	if (!HOST_VK_CHECK(vkCreateImageView(B.device, &view, NULL, &target->view)))
 		goto fail;
+	host_vk_pass_view_note(target->view, info.format, VK_SAMPLE_COUNT_1_BIT);
 	target->next_in_bucket = B.buckets[bucket];
 	B.buckets[bucket] = target;
 	B.images++;
@@ -404,7 +569,10 @@ struct host_vk_target *host_vk_target_get(const struct vk_surface *surface)
 	return target;
 fail:
 	if (target->view)
+	{
+		host_vk_pass_view_forget(target->view);
 		vkDestroyImageView(B.device, target->view, NULL);
+	}
 	if (target->memory)
 		vkFreeMemory(B.device, target->memory, NULL);
 	if (target->image)
@@ -486,6 +654,7 @@ static void multisamples_destroy_retired(int force)
 	{
 		if (retired_multisamples[index].after <= retired)
 		{
+			host_vk_pass_view_forget(retired_multisamples[index].view);
 			vkDestroyImageView(B.device, retired_multisamples[index].view, NULL);
 			vkDestroyImage(B.device, retired_multisamples[index].image, NULL);
 			vkFreeMemory(B.device, retired_multisamples[index].memory, NULL);
@@ -528,8 +697,7 @@ static void multisample_retire(struct host_vk_target *target)
 /* the multisampled image's transition to a layout (outside a rendering), as host_vk_target_transition */
 static void multisample_transition(VkCommandBuffer command, struct host_vk_target *target, VkImageLayout layout)
 {
-	barrier_image(command, target->multisample_image, target->aspect, target->multisample_layout, layout,
-		VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	barrier_image(command, target->multisample_image, target->aspect, target->multisample_layout, layout);
 	target->multisample_layout = layout;
 }
 
@@ -592,6 +760,7 @@ static int multisample_set(struct host_vk_target *target, uint32_t samples)
 	view.subresourceRange.layerCount = 1;
 	if (!HOST_VK_CHECK(vkCreateImageView(B.device, &view, NULL, &target->multisample_view)))
 		goto fail;
+	host_vk_pass_view_note(target->multisample_view, info.format, (VkSampleCountFlagBits)samples);
 	target->samples = samples;
 	target->multisample_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 	host_logf(HOST_LOG_INFO, "vk: %s target %08x, %ux%u, drawn with %u samples a pixel", depth ? "depth" : "colour",
@@ -627,7 +796,10 @@ fail:
 	host_logf(HOST_LOG_ERROR, "vk: the %ux%u target at %08x cannot be drawn with %u samples a pixel; drawn with one",
 		(unsigned)target->key.pixel_width, (unsigned)target->key.pixel_height, (unsigned)target->key.data, (unsigned)samples);
 	if (target->multisample_view)
+	{
+		host_vk_pass_view_forget(target->multisample_view);
 		vkDestroyImageView(B.device, target->multisample_view, NULL);
+	}
 	if (target->multisample_memory)
 		vkFreeMemory(B.device, target->multisample_memory, NULL);
 	if (target->multisample_image)
@@ -838,6 +1010,10 @@ static VkPipeline clear_pipeline(uint32_t mask, int has_depth, uint32_t samples)
 	info.pDynamicState = &dynamic;
 	info.layout = B.clear_layout;
 	info.basePipelineIndex = -1;
+	/* (a driver without dynamic rendering: a render pass of the renderings' formats and samples, host_vk_passes.c) */
+	info.renderPass = host_vk_pass_for_pipeline(&rendering, multisample.rasterizationSamples, 1);
+	if (info.renderPass)
+		info.pNext = rendering.pNext;
 	if (!HOST_VK_CHECK(vkCreateGraphicsPipelines(B.device, VK_NULL_HANDLE, 1, &info, NULL, slot)))
 		*slot = VK_NULL_HANDLE;
 	return *slot;
@@ -1377,6 +1553,10 @@ static VkPipeline test_pipeline(void)
 	info.pDynamicState = &dynamic;
 	info.layout = T.layout;
 	info.basePipelineIndex = -1;
+	/* (a driver without dynamic rendering: a render pass of the renderings' formats and samples, host_vk_passes.c) */
+	info.renderPass = host_vk_pass_for_pipeline(&rendering, multisample.rasterizationSamples, 1);
+	if (info.renderPass)
+		info.pNext = rendering.pNext;
 	if (!HOST_VK_CHECK(vkCreateGraphicsPipelines(B.device, VK_NULL_HANDLE, 1, &info, NULL, &T.pipeline)))
 		T.pipeline = VK_NULL_HANDLE;
 	return T.pipeline;
@@ -1486,10 +1666,23 @@ done:
 		host_vk_data_frame_end();
 }
 
+/* every 60 frames: the counts in full with debug.gpu_stats (host_gl_statistics), and otherwise a line only for 60 frames
+in which draws were skipped or drawn without a texture (two lines a second of counts were most of a log sent in) */
 static void log_statistics(void)
 {
 	struct host_vk_counts *c = &B.counts;
+	unsigned skipped = c->draws_skipped_shader + c->draws_skipped_pipeline + c->draws_skipped_target +
+		c->draws_skipped_data + c->draws_skipped_other;
 
+	if (!host_gl_statistics)
+	{
+		if (skipped || c->draws_texture_missing)
+			host_logf(HOST_LOG_INFO, "vk: in %u frames, of %u draws: skipped %u for a shader, %u for a pipeline, %u no target, "
+				"%u data missing, %u other; %u with a texture missing (debug.gpu_stats for every count)", c->frames,
+				c->draws_made + skipped, c->draws_skipped_shader, c->draws_skipped_pipeline, c->draws_skipped_target,
+				c->draws_skipped_data, c->draws_skipped_other, c->draws_texture_missing);
+		goto reset;
+	}
 	host_logf(HOST_LOG_INFO, "vk: %u frames: %u hand-overs; commands: %u targets, %u clears, %u presents; clears: %u drawn, "
 		"%u by vkCmdClearAttachments; %u target changes; %u renderings ended to read a target, %u targets made readable "
 		"as they were left; %u clears made by a rendering's load (%u alone); %u images; submissions %llu, retired %u; %u swapchain "
@@ -1513,6 +1706,7 @@ static void log_statistics(void)
 		if (services[0] && lines++ % 10 == 0)
 			host_logf(HOST_LOG_INFO, "vk: services: %s", services);
 	}
+reset:
 	c->draws_ready = c->draws_skipped_shader = c->draws_skipped_pipeline = 0;
 	c->draws_made = c->draws_skipped_target = c->draws_skipped_data = c->draws_skipped_other = c->draws_texture_missing = 0;
 	c->textures_skipped = c->texture_bytes = 0;
@@ -1570,11 +1764,17 @@ static void command_present(const struct vk_command_present *command)
 	/* the next frame starts with nothing bound (the guest tells the host its targets again) */
 	B.color = B.depth = NULL;
 	B.samples = 0;
-	if (back_buffer && !B.dead)
-		image = host_vk_present_record(cmd, back_buffer);
-	else
+	if (!back_buffer || B.dead)
+	{
 		host_vk_presenting = 0;
-	frame_submit(image);
+		frame_submit(UINT32_MAX);
+	}
+	else if (!frame_submit_split(back_buffer, &image) && !B.dead && B.frames[B.frame].recording)
+	{
+		/* (not split: presented as one submission) */
+		image = host_vk_present_record(cmd, back_buffer);
+		frame_submit(image);
+	}
 	if (image != UINT32_MAX && !B.dead && !B.frames[B.frame].submitted)
 		present_unsubmitted(image);
 	else if (image != UINT32_MAX && !B.dead)
@@ -1703,6 +1903,7 @@ static int device_create(void)
 		color_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	if (color_features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
 		color_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	B.color_sampled = (color_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
 	color_blit_destination = (color_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
 		(color_features & VK_FORMAT_FEATURE_BLIT_DST_BIT);
 	B.blit_filter = (color_features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
@@ -1732,7 +1933,12 @@ static int device_create(void)
 	/* the device: swapchain, and dynamic rendering (the 1.3 feature, or the extension with what it depends on
 	before 1.2: host_vk_startup found them) */
 	enabled_add(names, &name_count, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-	if (host_vk.api >= VK_API_VERSION_1_3)
+	if (host_vk.render_passes)
+	{
+		/* (render passes: host_vk_passes.c) */
+		chain_end = &features.pNext;
+	}
+	else if (host_vk.api >= VK_API_VERSION_1_3)
 	{
 		features13.dynamicRendering = VK_TRUE;
 		features.pNext = &features13;
@@ -1773,7 +1979,8 @@ static int device_create(void)
 	/* multisampling in the GPU's tile memory (VK_EXT_multisampled_render_to_single_sampled), where the device has it
 	for both target formats, and debug.original_multisample does not keep the images of samples: the counts it can */
 	B.msrtss_counts = 0;
-	if (!host_vk_original_multisample && enabled_add(names, &name_count, VK_EXT_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_EXTENSION_NAME))
+	/* (it is dynamic rendering's: with render passes, the images of samples) */
+	if (!host_vk_original_multisample && !host_vk.render_passes && enabled_add(names, &name_count, VK_EXT_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_EXTENSION_NAME))
 	{
 		VkPhysicalDeviceFeatures2 available = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 		VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT supported =
@@ -1831,10 +2038,15 @@ static int device_create(void)
 	if (!name) { host_logf(HOST_LOG_ERROR, "vk: the device has no %s", #name); missing++; }
 	HOST_VK_DEVICE_FUNCTIONS(X)
 #undef X
-	host_vk_cmd_begin_rendering = (PFN_vkCmdBeginRenderingKHR)host_vk.vkGetDeviceProcAddr(B.device,
-		host_vk.api >= VK_API_VERSION_1_3 ? "vkCmdBeginRendering" : "vkCmdBeginRenderingKHR");
-	host_vk_cmd_end_rendering = (PFN_vkCmdEndRenderingKHR)host_vk.vkGetDeviceProcAddr(B.device,
-		host_vk.api >= VK_API_VERSION_1_3 ? "vkCmdEndRendering" : "vkCmdEndRenderingKHR");
+	if (host_vk.render_passes)
+		host_vk_passes_install();
+	else
+	{
+		host_vk_cmd_begin_rendering = (PFN_vkCmdBeginRenderingKHR)host_vk.vkGetDeviceProcAddr(B.device,
+			host_vk.api >= VK_API_VERSION_1_3 ? "vkCmdBeginRendering" : "vkCmdBeginRenderingKHR");
+		host_vk_cmd_end_rendering = (PFN_vkCmdEndRenderingKHR)host_vk.vkGetDeviceProcAddr(B.device,
+			host_vk.api >= VK_API_VERSION_1_3 ? "vkCmdEndRendering" : "vkCmdEndRenderingKHR");
+	}
 	if (!host_vk_cmd_begin_rendering || !host_vk_cmd_end_rendering)
 	{
 		host_logf(HOST_LOG_ERROR, "vk: the device has no dynamic rendering entry points");
@@ -1866,6 +2078,8 @@ static int device_create(void)
 			goto failed;
 		allocate.commandPool = frame->pool;
 		if (!HOST_VK_CHECK(vkAllocateCommandBuffers(B.device, &allocate, &frame->command)) ||
+			!HOST_VK_CHECK(vkAllocateCommandBuffers(B.device, &allocate, &frame->present_command)) ||
+			!HOST_VK_CHECK(vkCreateSemaphore(B.device, &semaphore, NULL, &frame->drawn)) ||
 			!HOST_VK_CHECK(vkCreateFence(B.device, &fence, NULL, &frame->fence)) ||
 			!HOST_VK_CHECK(vkCreateSemaphore(B.device, &semaphore, NULL, &frame->acquired)))
 			goto failed;
@@ -1895,10 +2109,11 @@ static int device_create(void)
 	if (host_vk_self_test)
 		clears_selftest();
 	host_logf(HOST_LOG_INFO, "vk: device ready: queue family %u, colour targets %s, depth targets %s, blit filter %s, "
-		"dynamic rendering from %s; anisotropy %d, non-solid fill %d, precise occlusion %d, BC textures %d", B.family, "B8G8R8A8_UNORM",
+		"renderings %s; anisotropy %d, non-solid fill %d, precise occlusion %d, BC textures %d", B.family, "B8G8R8A8_UNORM",
 		B.depth_format == VK_FORMAT_D24_UNORM_S8_UINT ? "D24_UNORM_S8_UINT" : "D32_SFLOAT_S8_UINT",
 		B.blit_filter == VK_FILTER_LINEAR ? "linear" : "nearest",
-		host_vk.api >= VK_API_VERSION_1_3 ? "Vulkan 1.3" : "VK_KHR_dynamic_rendering", B.sampler_anisotropy,
+		host_vk.render_passes ? "as render passes (host_vk_passes.c)" : host_vk.api >= VK_API_VERSION_1_3 ?
+		"by dynamic rendering, from Vulkan 1.3" : "by dynamic rendering, from VK_KHR_dynamic_rendering", B.sampler_anisotropy,
 		B.fill_mode_non_solid, B.occlusion_query_precise, B.texture_compression_bc);
 	return 1;
 failed:
@@ -1943,8 +2158,8 @@ uint32_t host_vk_bc_supported(void)
 	return 1;
 }
 
-/* runs size bytes of commands at commands (a guest address), during the call */
-void host_vk_submit(uint32_t commands, uint32_t size)
+/* runs size bytes of commands at commands (a guest address), now */
+static void submit_run(uint32_t commands, uint32_t size)
 {
 	const unsigned char *at = (const unsigned char *)(uintptr_t)commands;
 	const unsigned char *end = at + size;
@@ -2009,6 +2224,16 @@ void host_vk_submit(uint32_t commands, uint32_t size)
 			if (header->size >= sizeof(struct vk_command_texture_data))
 				host_vk_texture_data_command((const struct vk_command_texture_data *)header);
 			break;
+		case VK_COMMAND_DATA_PATCH:
+			if (header->size >= sizeof(struct vk_command_data_patch) &&
+				host_vk_data_patch_command((const struct vk_command_data_patch *)header, header->size))
+				break;
+			at = end;
+			continue;
+		case VK_COMMAND_STATIC_FREE:
+			if (header->size >= sizeof(struct vk_command_static_free))
+				host_vk_static_free_command((const struct vk_command_static_free *)header);
+			break;
 		case VK_COMMAND_TEXTURE_FREE:
 			if (header->size >= sizeof(struct vk_command_texture_free))
 				host_vk_texture_free_command((const struct vk_command_texture_free *)header);
@@ -2066,4 +2291,102 @@ void host_vk_submit(uint32_t commands, uint32_t size)
 static void __attribute__((constructor)) backend_lock_init(void)
 {
 	pthread_mutex_init(&B.lock, NULL);
+}
+
+/* ---------- the render thread
+
+The streams handed over and not yet run, the one being run among them, oldest first. host_vk_submit returns once no more
+than VK_COMMAND_STREAMS - 2 are left: the stream the guest writes next is never among them. */
+
+static struct
+{
+	/* started: the thread runs; failed: it could not be made (said once), and the streams are run during the call */
+	int started, failed;
+	pthread_t thread;
+	pthread_mutex_t lock;
+	pthread_cond_t handed, ran;
+	struct
+	{
+		uint32_t commands, size;
+	} queue[VK_COMMAND_STREAMS];
+	unsigned first, count;
+} R = { 0, 0, 0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER };
+
+static void *render_thread(void *unused)
+{
+	(void)unused;
+	/* (sampled with the guest's threads, debug.profile_hz) */
+	host_debug_thread_started();
+	pthread_mutex_lock(&R.lock);
+	for (;;)
+	{
+		uint32_t commands, size;
+
+		while (!R.count)
+			pthread_cond_wait(&R.handed, &R.lock);
+		commands = R.queue[R.first].commands;
+		size = R.queue[R.first].size;
+		pthread_mutex_unlock(&R.lock);
+		submit_run(commands, size);
+		pthread_mutex_lock(&R.lock);
+		R.first = (R.first + 1) % VK_COMMAND_STREAMS;
+		R.count--;
+		pthread_cond_broadcast(&R.ran);
+	}
+	return NULL;
+}
+
+/* the render thread, made the first time; 0 if there is none (debug.vk_render_thread off, or it could not be made) */
+static int render_thread_ensure(void)
+{
+	pthread_attr_t attributes;
+	int result;
+
+	if (R.started)
+		return 1;
+	if (R.failed || !host_vk_render_thread)
+		return 0;
+	pthread_attr_init(&attributes);
+	pthread_attr_setstacksize(&attributes, 2 * 1024 * 1024);
+	result = pthread_create(&R.thread, &attributes, render_thread, NULL);
+	pthread_attr_destroy(&attributes);
+	if (result)
+	{
+		R.failed = 1;
+		host_logf(HOST_LOG_WARN, "vk: the render thread cannot be made (%d); the commands are run on the game's thread",
+			result);
+		return 0;
+	}
+	R.started = 1;
+	host_logf(HOST_LOG_INFO, "vk: the commands are recorded and presented on a render thread");
+	return 1;
+}
+
+void host_vk_submit(uint32_t commands, uint32_t size)
+{
+	if (!host_vk.instance)
+		return;
+	if (!render_thread_ensure())
+	{
+		submit_run(commands, size);
+		return;
+	}
+	pthread_mutex_lock(&R.lock);
+	R.queue[(R.first + R.count) % VK_COMMAND_STREAMS].commands = commands;
+	R.queue[(R.first + R.count) % VK_COMMAND_STREAMS].size = size;
+	R.count++;
+	pthread_cond_signal(&R.handed);
+	while (R.count > VK_COMMAND_STREAMS - 2)
+		pthread_cond_wait(&R.ran, &R.lock);
+	pthread_mutex_unlock(&R.lock);
+}
+
+void host_vk_render_thread_drain(void)
+{
+	if (!R.started)
+		return;
+	pthread_mutex_lock(&R.lock);
+	while (R.count)
+		pthread_cond_wait(&R.ran, &R.lock);
+	pthread_mutex_unlock(&R.lock);
 }

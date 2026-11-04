@@ -104,6 +104,9 @@ their handlers open opens.
 #include "../src/server_master.h"
 #include "../src/server_json.h"
 #include "text_filter.h"
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+#include "../src/posix.h"
+#endif
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -263,6 +266,9 @@ struct pc_menu_setting *pc_menu_setting_get(long definition_index);
 /* ---------- private code */
 
 static boolean campaign_profile(short controller, struct player_profile *profile);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+static void vk_driver_setting_values(struct widget_instance *spinner, struct pc_menu_setting *setting);
+#endif
 
 static boolean text_is_number(char const *text, double *number)
 {
@@ -493,6 +499,9 @@ static boolean setting_load(struct widget_instance *widget)
 		return TRUE;
 	if (!setting || !setting_text(setting->setting, current, sizeof(current), FALSE))
 		return FALSE;
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	vk_driver_setting_values(widget, setting);
+#endif
 	setting->loaded_index = setting_value_index(setting, current);
 	if (setting->loaded_index < (short)widget->parameters.list.number_of_items)
 		widget->parameters.list.selected_index = setting->loaded_index;
@@ -1408,6 +1417,134 @@ static void map_description_show(struct widget_instance *description, short leve
 		widget->parameters.text_box.string_list_index = map;
 }
 
+/* the map lists' IMPORT (Android's alone: tools/port_settings.py's
+MAP_IMPORT): the app's file picker, then the maps chosen (.map files, and
+those in .zip files) copied into custom_maps on the app's own thread; the
+list open counts the folder's maps each second, and finds them again when
+the count changes (map_import_look), as each one comes */
+
+/* how often custom_maps is looked at while IMPORT's maps are awaited */
+#define MAP_IMPORT_LOOK_MILLISECONDS 1000
+
+void platform_translate_path(char const *xbox_path, char *host_path, unsigned long host_path_size);
+/* (the app's file picker: port/android/host/host_main.c, HaloActivity.importMaps) */
+void host_android_import_maps(const char *folder);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+#include <stdbool.h>
+bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xoffset, int yoffset);
+#endif
+
+static struct
+{
+	/* whether maps are awaited (until the list is opened again), the
+	folder's maps as last counted, and when they were */
+	boolean importing;
+	long maps;
+	unsigned long looked;
+} map_import;
+
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* the .map files of a folder, and with `inside`, those of its folders too
+(a map being copied is a .map.part until it is whole) */
+static long map_import_count_in(char const *folder, boolean inside)
+{
+	char name[256];
+	void *directory = posix_directory_open(folder);
+	long count = 0;
+
+	while (directory && posix_directory_next(directory, name, sizeof(name)))
+	{
+		size_t length = strlen(name);
+		char path[1024];
+		struct posix_file_information information;
+
+		if (length > 4 && !csstrcasecmp(name + length - 4, ".map"))
+		{
+			count++;
+			continue;
+		}
+		if (!inside || !strcmp(name, ".") || !strcmp(name, ".."))
+			continue;
+		snprintf(path, sizeof(path), "%s/%s", folder, name);
+		if (posix_stat(path, &information) == 0 && (information.flags & _posix_file_is_directory))
+			count += map_import_count_in(path, FALSE);
+	}
+	if (directory)
+		posix_directory_close(directory);
+	return count;
+}
+
+/* the maps of custom_maps, where IMPORT puts them: at its top, and in its
+folders (a set of maps' own: one level of them, as the lists read) */
+static long map_import_count(void)
+{
+	char folder[1024];
+
+	platform_translate_path(CUSTOM_EDITION_MAP_DIRECTORY, folder, sizeof(folder));
+	return map_import_count_in(folder, TRUE);
+}
+#else
+static long map_import_count(void)
+{
+	return 0;
+}
+#endif
+
+/* "port map import" (A on IMPORT) */
+static boolean map_import_start(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	char folder[1024];
+
+	/* (where Custom Edition maps cannot run, the lists show none: a map
+imported would never be seen, so the player is told why instead) */
+	if (!halo_custom_edition_tag_cache())
+	{
+		platform_log("maps: IMPORT refused: Custom Edition maps cannot run here (the log's first lines say why)");
+		SDL_ShowAndroidToast("Custom Edition maps can't run on this device, so imported maps wouldn't show. "
+			"debug.txt and halo.log say why.", 1, -1, 0, 0);
+		return TRUE;
+	}
+	platform_translate_path(CUSTOM_EDITION_MAP_DIRECTORY, folder, sizeof(folder));
+	map_import.importing = TRUE;
+	map_import.maps = map_import_count();
+	map_import.looked = system_milliseconds();
+	host_android_import_maps(folder);
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+/* TRUE when maps IMPORT awaits have come: the maps folders are then looked
+at again by the next level list (the list's caller's
+ui_widget_port_multiplayer_maps) */
+static boolean map_import_look(void)
+{
+	unsigned long now = system_milliseconds();
+	long maps;
+
+	if (!map_import.importing || now - map_import.looked < MAP_IMPORT_LOOK_MILLISECONDS)
+		return FALSE;
+	map_import.looked = now;
+	maps = map_import_count();
+	if (maps == map_import.maps)
+		return FALSE;
+	map_import.maps = maps;
+	custom_edition_maps_look_again();
+	map_browse_forget();
+	platform_log("maps: custom_maps has %ld maps now", maps);
+	return TRUE;
+}
+
+/* a list's first entry shown and the one chosen kept to count entries,
+after the maps were found again */
+static void map_import_clamp(short *first, short *chosen, short count)
+{
+	*chosen = (short)PIN(*chosen, 0, MAX(count - 1, 0));
+	*first = (short)PIN(*first, 0, MAX(count - MAP_KIND_ROWS, 0));
+}
+
 /* New Game's list: SINGLEPLAYER's levels, the profile's reached, or
 MULTIPLAYER's maps, played alone to walk around (no game engine: a campaign
 game on the map); CUSTOM SINGLEPLAYER's maps played as the campaign's levels
@@ -1482,6 +1619,7 @@ static boolean level_list_initialize(struct widget_instance *list, short control
 	campaign.shown_level = level;
 	level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
 	map_browse_forget();
+	map_import.importing = FALSE;
 	level_list.kind = MAP_KIND_SINGLEPLAYER;
 	level_list.category[0] = 0;
 	level_list.category_entry = 0;
@@ -1550,6 +1688,15 @@ static void level_list_update(struct widget_instance *list)
 		level_list.kind = kind;
 		level_list.category[0] = 0;
 		level_list.first = level_list.chosen = 0;
+	}
+	if (map_import_look())
+	{
+		short last_used;
+
+		level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
+		if (kind != MAP_KIND_SINGLEPLAYER)
+			map_import_clamp(&level_list.first, &level_list.chosen,
+				map_kind_count(kind, level_list.map_count, level_list.category));
 	}
 	count = map_kind_count(kind, level_list.map_count, level_list.category);
 	entry = map_kind_rows_update(list, &level_list.first, count,
@@ -1922,14 +2069,124 @@ static void video_rows_show(struct widget_instance *list)
 	}
 }
 
-/* Video Setup's Vulkan Driver (Android's: tools/port_settings.py), shown
-while the backend shown is Vulkan; the list passes over it while it is
-hidden, and the focus on it goes to the backend's row */
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* Video Setup's VULKAN DRIVER's archives: the zips in the data folder's
+freedreno_drivers (where the launcher downloads Turnip, Updater.java, and
+IMPORT DRIVER copies others), after the spinner's own STOCK, by name. ui_widget.c shows them
+as the spinner's extra items, read again as it is made; the host opens the
+one chosen at the next start (port/android/host/host_vk_driver.c) */
+#define VK_DRIVER_FOLDER "freedreno_drivers"
+#define MAXIMUM_VK_DRIVERS 32
+#define VK_DRIVER_NAME_SIZE 128
+/* (the spinner's width: a longer name keeps its start and end) */
+#define VK_DRIVER_LABEL_LENGTH 16
+
+const char *platform_data_root(void);
+
+static struct
+{
+	short count;
+	char names[MAXIMUM_VK_DRIVERS][VK_DRIVER_NAME_SIZE];
+	wchar_t labels[MAXIMUM_VK_DRIVERS][VK_DRIVER_LABEL_LENGTH + 1];
+} vk_drivers;
+
+static int vk_driver_name_compare(void const *a, void const *b)
+{
+	return _stricmp((char const *)a, (char const *)b);
+}
+
+/* a name without its ".zip", cut in the middle to the label's length */
+static void vk_driver_label(char const *name, wchar_t *label)
+{
+	size_t length = strlen(name) - 4, index, kept = (VK_DRIVER_LABEL_LENGTH - 2) / 2;
+
+	for (index = 0; index < length && index < VK_DRIVER_LABEL_LENGTH; index++)
+		label[index] = (wchar_t)(unsigned char)name[index];
+	if (length > VK_DRIVER_LABEL_LENGTH)
+	{
+		label[kept] = L'.';
+		label[kept + 1] = L'.';
+		for (index = 0; index < kept; index++)
+			label[kept + 2 + index] = (wchar_t)(unsigned char)name[length - kept + index];
+		length = VK_DRIVER_LABEL_LENGTH;
+	}
+	label[length] = 0;
+}
+
+void vk_driver_list_read(void)
+{
+	char path[512], name[VK_DRIVER_NAME_SIZE];
+	void *directory;
+	short index;
+
+	vk_drivers.count = 0;
+	snprintf(path, sizeof(path), "%s/" VK_DRIVER_FOLDER, platform_data_root());
+	directory = posix_directory_open(path);
+	while (directory && vk_drivers.count < MAXIMUM_VK_DRIVERS && posix_directory_next(directory, name, sizeof(name)))
+	{
+		size_t length = strlen(name);
+
+		if (name[0] == '.' || length <= 4 || length >= VK_DRIVER_NAME_SIZE || _stricmp(name + length - 4, ".zip"))
+			continue;
+		strcpy(vk_drivers.names[vk_drivers.count++], name);
+	}
+	if (directory)
+		posix_directory_close(directory);
+	qsort(vk_drivers.names, (size_t)vk_drivers.count, sizeof(vk_drivers.names[0]), vk_driver_name_compare);
+	for (index = 0; index < vk_drivers.count; index++)
+		vk_driver_label(vk_drivers.names[index], vk_drivers.labels[index]);
+}
+
+short vk_driver_list_count(void)
+{
+	return vk_drivers.count;
+}
+
+wchar_t const *vk_driver_list_label(short index)
+{
+	return index >= 0 && index < vk_drivers.count ? vk_drivers.labels[index] : L"";
+}
+
+/* the spinner's values past its own: the archives' names, as listed */
+static void vk_driver_setting_values(struct widget_instance *spinner, struct pc_menu_setting *setting)
+{
+	short own, index;
+
+	if (!setting->setting || strcmp(setting->setting, "display.vk_driver"))
+		return;
+	own = ui_widget_spinner_own_item_count(spinner);
+	for (index = 0; index < vk_drivers.count && own + index < MAXIMUM_STRINGS; index++)
+		setting->values[own + index] = vk_drivers.names[index];
+	setting->value_count = own + index;
+}
+
+/* (the app's file picker, which copies the driver archives chosen into
+freedreno_drivers: port/android/host/host_main.c, HaloActivity.importVkDrivers) */
+void host_android_import_vk_drivers(const char *folder);
+
+/* "port vk driver import" (A on Video Setup's IMPORT DRIVER, Android's
+alone): the archives chosen are copied on the app's own thread, and listed
+the next time Video Setup opens (its spinner's items are made as it is) */
+static boolean vk_driver_import(void)
+{
+	char folder[512];
+
+	snprintf(folder, sizeof(folder), "%s/" VK_DRIVER_FOLDER, platform_data_root());
+	host_android_import_vk_drivers(folder);
+	return TRUE;
+}
+#endif
+
+/* Video Setup's Vulkan Driver and IMPORT DRIVER (Android's:
+tools/port_settings.py), shown while the backend shown is Vulkan; the lists
+pass over them while they are hidden, and the focus on the row goes to the
+backend's row, on the button to DEFAULTS */
 static void vk_driver_row_show(struct widget_instance *list)
 {
 	struct widget_instance *renderer = named(list, "renderer_spinner", 0);
 	struct widget_instance *renderer_row = named(list, "op_renderer", 0);
 	struct widget_instance *driver_row = named(list, "op_vk_driver", 0);
+	struct widget_instance *import_button = named(list, "button_vk_driver_import", 0);
 	struct pc_menu_setting *setting = renderer ? pc_menu_setting_get(renderer->definition_tag_index) : NULL;
 	struct widget_instance *child;
 	short index;
@@ -1938,6 +2195,17 @@ static void vk_driver_row_show(struct widget_instance *list)
 		return;
 	index = renderer->parameters.list.selected_index;
 	driver_row->visible = index >= 0 && index < setting->value_count && !strcmp(setting->values[index], "vulkan");
+	if (import_button && import_button->parent)
+	{
+		struct widget_instance *bar = import_button->parent;
+
+		import_button->visible = driver_row->visible;
+		if (!import_button->visible && bar->focused_child == import_button && bar->child)
+		{
+			bar->focused_child = bar->child;
+			bar->parameters.list.selected_index = 0;
+		}
+	}
 	if (!driver_row->visible && list->focused_child == driver_row)
 	{
 		for (index = 0, child = list->child; child && child != renderer_row; child = child->next)
@@ -3002,9 +3270,15 @@ resource pack list is, the one that plays over the others at the top (the
 load order upside down: the mod loaded last first), turned on or off and
 moved up or down there, and in the frame beside them the mod chosen's
 details; OK keeps it (port/linux/src/port_mods.c's load_order.toml) and
-plays them on the map now (mods.c), Cancel forgets it */
+plays them on the map now (mods.c), Cancel forgets it. On Android, IMPORT
+takes a mod from a .zip file (the app's file picker) and DELETE deletes the
+mod chosen at a second press: both keep what was chosen as OK does, and
+find the mods again */
 
+/* the most rows (Android's ten, its IMPORT and DELETE below them) */
 #define MOD_ROWS 11
+/* how often the mods folder is looked at while IMPORT's mod is awaited */
+#define MOD_IMPORT_LOOK_MILLISECONDS 1000
 #define MOD_DETAILS_LENGTH 1024
 /* the details' lines: as many as fit down the frame */
 #define MOD_DETAILS_LINES 13
@@ -3046,8 +3320,14 @@ long port_mods_move(long position, long places);
 void port_mods_turn(long index, int on);
 int port_mods_save(void);
 void port_mods_revert(void);
+char const *port_mods_folder(long index);
+long port_mods_folders(void);
+int port_mods_delete(long index);
 /* (mods.c) */
 void mods_apply(void);
+/* (the app's file picker, which takes the mods chosen from their .zip files
+into the folder: port/android/host/host_main.c, HaloActivity.importMods) */
+void host_android_import_mods(const char *folder);
 
 static struct
 {
@@ -3056,6 +3336,17 @@ static struct
 	focus from the rows) */
 	short first;
 	short chosen;
+	/* the rows the screen has (fewer on Android) */
+	short rows;
+	/* the mod DELETE asks about (its folder: a second press deletes it),
+	and what the last DELETE did, in the details until another is chosen */
+	char deleting[64];
+	char why[96];
+	/* (IMPORT) whether a mod is awaited, the mods folder's folders as it
+	was asked for, and when they were last counted */
+	boolean importing;
+	long import_folders;
+	unsigned long import_looked;
 	/* the text boxes' fonts and widths as they were last drawn
 	(menu_functions_text_box_drawn), which their lines are measured in;
 	NONE before then */
@@ -3063,7 +3354,7 @@ static struct
 	short widths[NUMBER_OF_MOD_TEXT_BOXES];
 	/* what the details show (they are wrapped again when it changes), and
 	the mod each row's name is of, in which font (NONE: none yet) */
-	char shown[128];
+	char shown[256];
 	long row_mods[MOD_ROWS];
 	long row_fonts[MOD_ROWS];
 } mods_screen;
@@ -3247,6 +3538,9 @@ static boolean mods_screen_reset(void)
 	port_mods_revert();
 	mods_screen.first = 0;
 	mods_screen.chosen = 0;
+	mods_screen.rows = MOD_ROWS;
+	mods_screen.deleting[0] = 0;
+	mods_screen.why[0] = 0;
 	mods_screen.shown[0] = 0;
 	for (index = 0; index < NUMBER_OF_MOD_TEXT_BOXES; index++)
 	{
@@ -3283,6 +3577,7 @@ static boolean mods_move(struct widget_instance *widget, short places)
 	struct widget_instance *row = mod_row(widget);
 	short count = (short)port_mods_count();
 	short place = row ? mod_row_place(row) : mods_screen.chosen;
+	short rows = mods_screen.rows ? mods_screen.rows : MOD_ROWS;
 	short moved;
 
 	/* (no mods: nothing to move) */
@@ -3294,8 +3589,8 @@ static boolean mods_move(struct widget_instance *widget, short places)
 	mods_screen.chosen = moved;
 	if (moved < mods_screen.first)
 		mods_screen.first = moved;
-	else if (moved >= mods_screen.first + MOD_ROWS)
-		mods_screen.first = (short)(moved - MOD_ROWS + 1);
+	else if (moved >= mods_screen.first + rows)
+		mods_screen.first = (short)(moved - rows + 1);
 	if (row && row->parent)
 		focus_row(row->parent, (short)(moved - mods_screen.first));
 	/* (the list's shoulders: its focus follows the mod too) */
@@ -3321,10 +3616,10 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 	char shown[sizeof(mods_screen.shown)];
 
 	/* (wrapped again only when what they show, or its fonts, change) */
-	snprintf(shown, sizeof(shown), "%ld %d %d %d %d %ld %d %ld %d", mod, port_mods_status(mod, NULL, 0),
+	snprintf(shown, sizeof(shown), "%ld %d %d %d %d %ld %d %ld %d %s", mod, port_mods_status(mod, NULL, 0),
 		port_mods_on(mod), place, count, mods_screen.fonts[_mod_details_name],
 		mods_screen.widths[_mod_details_name], mods_screen.fonts[_mod_details_text],
-		mods_screen.widths[_mod_details_text]);
+		mods_screen.widths[_mod_details_text], mods_screen.why);
 	if (!strcmp(shown, mods_screen.shown))
 		return;
 	strcpy(mods_screen.shown, shown);
@@ -3334,10 +3629,21 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 		mods_wide_text(count ? "" : "No mods", wide, NUMBEROF(wide));
 		text_set_length(named(details, "mod_details_name", 0), wide, NUMBEROF(wide));
 		text[0] = 0;
+		line = 0;
+		if (mods_screen.why[0])
+		{
+			line = mods_wrap(mods_screen.why, text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+			line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+		}
 		if (!count)
 		{
-			mods_wrap("Each mod is a folder of its own in the mods folder, beside the maps folder.", text,
-				sizeof(text), _mod_details_text, MOD_DETAILS_LINES, 0);
+			line = mods_wrap("Each mod is a folder of its own in the mods folder, beside the maps folder.", text,
+				sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+			line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+			mods_wrap("IMPORT takes one from a .zip file of its folder's files.", text, sizeof(text),
+				_mod_details_text, MOD_DETAILS_LINES, line);
+#endif
 		}
 		mods_wide_text(text, wide, NUMBEROF(wide));
 		text_set_length(named(details, "mod_details_text", 0), wide, NUMBEROF(wide));
@@ -3354,6 +3660,11 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 		icon->animation.current_frame_index = status == _port_mod_out_of_order ? 1 : 2;
 	text[0] = 0;
 	line = 0;
+	if (mods_screen.why[0])
+	{
+		line = mods_wrap(mods_screen.why, text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+		line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
+	}
 	if (status != _port_mod_fine)
 	{
 		/* (its first line indented, for the icon) */
@@ -3378,14 +3689,61 @@ are more mods past them), each mod's name (cut short where it is too long),
 ON or OFF and its icon (out of the order it asks for; another says it cannot
 be played with it, or it cannot be played), and the details of the mod
 chosen */
+/* the mods found again (after DELETE, or once IMPORT's has come): what the
+menu has chosen kept first, as OK keeps it, then played, and the rows and
+the details written again */
+static void mods_found_again(void)
+{
+	short index;
+	short count;
+
+	mods_apply();
+	count = (short)port_mods_count();
+	if (mods_screen.chosen >= count)
+		mods_screen.chosen = (short)MAX(0, count - 1);
+	if (mods_screen.first > 0 && mods_screen.first >= count)
+		mods_screen.first = (short)MAX(0, count - 1);
+	mods_screen.shown[0] = 0;
+	for (index = 0; index < MOD_ROWS; index++)
+		mods_screen.row_mods[index] = NONE;
+}
+
+/* (IMPORT) the mods folder looked at again, while a mod is awaited: a
+folder more (or fewer) is the app's copy done */
+static void mods_import_look(void)
+{
+	unsigned long now = system_milliseconds();
+
+	if (!mods_screen.importing || now - mods_screen.import_looked < MOD_IMPORT_LOOK_MILLISECONDS)
+		return;
+	mods_screen.import_looked = now;
+	if (port_mods_folders() == mods_screen.import_folders)
+		return;
+	mods_screen.importing = FALSE;
+	port_mods_save();
+	mods_found_again();
+	platform_log("mods: a mod was imported: %ld found", port_mods_count());
+}
+
 static void mods_update(struct widget_instance *list)
 {
 	struct widget_instance *row;
-	struct widget_instance *focused = mod_row(list->focused_child);
-	short count = (short)port_mods_count();
-	short focused_index = focused ? (short)(atoi(focused->name + 7) - 1) : NONE;
+	struct widget_instance *focused;
+	short count;
+	short focused_index;
+	short rows = 0;
 
-	if (focused_index == MOD_ROWS - 1 && mods_screen.first + MOD_ROWS < count && list_scrolls_at_end())
+	mods_import_look();
+	focused = mod_row(list->focused_child);
+	count = (short)port_mods_count();
+	focused_index = focused ? (short)(atoi(focused->name + 7) - 1) : NONE;
+	for (row = list->child; row; row = row->next)
+	{
+		if (!strncmp(row->name, "op_mod_", 7))
+			rows++;
+	}
+	mods_screen.rows = rows = (short)PIN(rows, 1, MOD_ROWS);
+	if (focused_index == rows - 1 && mods_screen.first + rows < count && list_scrolls_at_end())
 	{
 		mods_screen.first++;
 		focus_row(list, --focused_index);
@@ -3395,10 +3753,15 @@ static void mods_update(struct widget_instance *list)
 		mods_screen.first--;
 		focus_row(list, ++focused_index);
 	}
-	if (mods_screen.first > 0 && mods_screen.first + MOD_ROWS > count)
-		mods_screen.first = (short)MAX(0, count - MOD_ROWS);
-	if (focused_index != NONE && mods_screen.first + focused_index < count)
+	if (mods_screen.first > 0 && mods_screen.first + rows > count)
+		mods_screen.first = (short)MAX(0, count - rows);
+	if (focused_index != NONE && mods_screen.first + focused_index < count &&
+		mods_screen.chosen != mods_screen.first + focused_index)
+	{
 		mods_screen.chosen = (short)(mods_screen.first + focused_index);
+		mods_screen.deleting[0] = 0;
+		mods_screen.why[0] = 0;
+	}
 	for (row = list->child; row; row = row->next)
 	{
 		short place;
@@ -3474,13 +3837,64 @@ static boolean mods_accept(struct widget_instance *widget, boolean *widget_delet
 #endif
 }
 
+/* "port mods delete" (A on DELETE, Android's alone): the first press asks,
+the second deletes the mod chosen (the one asked about, unless another was
+chosen since), what the menu has chosen kept first */
+static boolean mods_delete(void)
+{
+	short count = (short)port_mods_count();
+	long mod = mod_at_place(count ? mods_screen.chosen : NONE);
+	char folder[sizeof(mods_screen.deleting)];
+
+	if (mod < 0)
+		return TRUE;
+	snprintf(folder, sizeof(folder), "%s", port_mods_folder(mod));
+	if (strcmp(mods_screen.deleting, folder))
+	{
+		strcpy(mods_screen.deleting, folder);
+		snprintf(mods_screen.why, sizeof(mods_screen.why), "Press DELETE again to delete it.");
+		return TRUE;
+	}
+	mods_screen.deleting[0] = 0;
+	port_mods_save();
+	if (port_mods_delete(mod))
+	{
+		snprintf(mods_screen.why, sizeof(mods_screen.why), "%s deleted.", folder);
+		platform_log("mods: %s deleted", folder);
+	}
+	else
+		snprintf(mods_screen.why, sizeof(mods_screen.why), "%s could not be deleted whole.", folder);
+	mods_found_again();
+	return TRUE;
+}
+
+/* "port mods import" (A on IMPORT, Android's alone): the app's file picker,
+then each .zip chosen taken into a folder of its name on the app's own
+thread; the screen finds it there (mods_import_look) */
+static boolean mods_import(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	char folder[1024];
+
+	snprintf(folder, sizeof(folder), "%s/mods", platform_data_root());
+	mods_screen.importing = TRUE;
+	mods_screen.import_folders = port_mods_folders();
+	mods_screen.import_looked = system_milliseconds();
+	host_android_import_mods(folder);
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
 /* ---------- the main menu's Theater (port/linux/REPLAY.md): the replays a
 host or a client records (network_replay.c), a row each, the newest first,
 scrolling over more (as the Mods screen's rows): A plays the one chosen
 (network_replay_playback.c), and the panel says what it is. RECORD turns
 network.record_replays on or off (from the next game), DELETE deletes the
-one chosen at a second press, and EXPORT (Android) copies them to a folder
-the player chooses */
+one chosen at a second press, IMPORT (Android) copies replays the player
+chooses into the folder, and EXPORT (Android) copies them to a folder the
+player chooses */
 
 #define THEATER_TEXT_LENGTH 512
 /* the characters a line of the panel takes (its text box is the Mods
@@ -3567,8 +3981,11 @@ static void theater_refresh(void)
 
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 /* (the app's folder picker, which copies the folder's replays to the folder
-chosen: port/android/host/host_main.c, HaloActivity.exportReplays) */
+chosen: port/android/host/host_main.c, HaloActivity.exportReplays; and its
+file picker, which copies the replays chosen into the folder,
+HaloActivity.importReplays) */
 void host_android_export_replays(const char *folder);
+void host_android_import_replays(const char *folder);
 #endif
 
 /* the row (op_replay_<n>) a widget is or is in, else NULL */
@@ -3742,7 +4159,7 @@ static void theater_update(struct widget_instance *list)
 		"RECORD: OFF. Turn it on to record the network games you play, from the next one on.");
 	theater_append_wrapped(text, sizeof(text), " ");
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
-	theater_append_wrapped(text, sizeof(text), "EXPORT copies them to a folder you choose.");
+	theater_append_wrapped(text, sizeof(text), "IMPORT adds replays you choose. EXPORT copies them all to a folder you choose.");
 #else
 #ifdef LINK_PAGE
 	if (network_replay_page_address()[0])
@@ -3838,6 +4255,22 @@ static boolean theater_export(void)
 
 	network_replay_folder(folder, sizeof(folder));
 	host_android_export_replays(folder);
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+/* "port theater import" (A on IMPORT, Android's alone): the replays chosen
+are copied into the folder on the app's own thread, and the list finds them
+at its next refresh */
+static boolean theater_import(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	char folder[THEATER_TEXT_LENGTH];
+
+	network_replay_folder(folder, sizeof(folder));
+	host_android_import_replays(folder);
 	return TRUE;
 #else
 	return FALSE;
@@ -4310,6 +4743,7 @@ static boolean map_list_initialize(struct widget_instance *list)
 	/* (the maps folders looked for again as the list opens) */
 	custom_edition_maps_look_again();
 	map_browse_forget();
+	map_import.importing = FALSE;
 	map_list.map_count = ui_widget_port_multiplayer_maps(&names, &last_used);
 	/* (a Custom Edition map's kind, when it was one) */
 	map_list.kind = MAP_KIND_MULTIPLAYER;
@@ -4358,6 +4792,16 @@ static void map_list_update(struct widget_instance *list)
 		map_list.step = MAP_STEP_MAPS;
 		map_list.category[0] = 0;
 		map_list.first = map_list.chosen = 0;
+	}
+	/* (not while a campaign map's difficulties are listed, whose map the
+	new list could move) */
+	if (map_list.step == MAP_STEP_MAPS && map_import_look())
+	{
+		char const *const *names;
+		short last_used;
+
+		map_list.map_count = ui_widget_port_multiplayer_maps(&names, &last_used);
+		map_import_clamp(&map_list.first, &map_list.chosen, map_step_count());
 	}
 	count = map_step_count();
 	entry = map_kind_rows_update(list, &map_list.first, count, map_list.step == MAP_STEP_DIFFICULTIES ?
@@ -9944,6 +10388,28 @@ boolean pc_menu_event_function_invoke(
 		{
 			return theater_export();
 		}
+		else if (!strcmp(name, "port theater import"))
+		{
+			return theater_import();
+		}
+		else if (!strcmp(name, "port mods delete"))
+		{
+			return mods_delete();
+		}
+		else if (!strcmp(name, "port mods import"))
+		{
+			return mods_import();
+		}
+		else if (!strcmp(name, "port map import"))
+		{
+			return map_import_start();
+		}
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+		else if (!strcmp(name, "port vk driver import"))
+		{
+			return vk_driver_import();
+		}
+#endif
 		else if (!strcmp(name, "controls screen init") || !strcmp(name, "controls screen defaults"))
 		{
 			return controls_load(!strcmp(name, "controls screen defaults"));

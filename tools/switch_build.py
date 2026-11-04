@@ -229,7 +229,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # whatever the runner happens to be called.
     nacp_title = "Halo: Combat Evolved"
     nacp_author = "thelinkin3000, nx-mod"
-    nacp_version = "1.5.0-nx"
+    nacp_version = "1.6.0-nx"
     # The icon does not go in the NACP: it is an asset, embedded by elf2nro
     # below. A 256x256 JPEG, converted from the same master the Android icon
     # comes from (port/android/art/android-icon.png, via tools/android_icon.py),
@@ -700,6 +700,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     host_sources += [
         LINUX_DIR / "src" / "posix_files.c",
         TOML_DIR / "tomlc17.c",
+        # a replay's records in the host's memory, as Android's and the PS5's
+        ANDROID_PORT_DIR / "host" / "host_replay.c",
     ]
     # the port's zlib (inflate only, its names z_), for the high-res HUD's
     # PNGs, which the host decodes as a map loads (host_dk_hud.c)

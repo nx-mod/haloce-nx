@@ -98,7 +98,7 @@ To install the data from a computer:
 | --- | --- |
 | Saved games (`z:\` and `u:\`) | `save` |
 | Mods (`docs/mods.md`) | `mods`: `adb push <mod folder> /sdcard/Android/data/com.halo.decomp/files/mods/`; the main menu's Mods orders them and turns them off |
-| Log | `debug.txt` |
+| Log | `debug.txt`, the log of the game, and `halo.log`, the log of the app (`log_files = false` and `halo_log = false` in `[debug]` turn them off) |
 | Settings | `config.toml` |
 
 To make a copy of the saved games, enter
@@ -283,8 +283,8 @@ These settings are only for Android:
 | `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Under OpenGL ES, geometry is streamed in either mode. Refer to "Limits". |
 | `debug.profile_hz` | Refer to "Find problems". |
 | `debug.profile_run` | `true`: each start records a profile of the run into its own folder, `Download/halo_profiles/DDMMYYYY_HHMMSS` (the day and time it started), to send as it is. Refer to "Find problems". `false` (the default): none. Takes effect the next time the game starts. |
-| `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
-| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. `"auto"`: Turnip on an Adreno, which the app downloads (refer to "Turn on Turnip"). Otherwise the file name of a driver archive in the data folder. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK) or `"auto"` (TURNIP). |
+| `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start, which sets it to `"gl"`) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
+| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. Otherwise the file name of a driver archive in `freedreno_drivers` in the data folder (or in the data folder itself): the Turnip build the app downloads on an Adreno (refer to "Turn on Turnip"), or one that you add. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK) or the name of an archive in `freedreno_drivers`. `"auto"`, which was the downloaded Turnip build, is the phone's own driver now: the game writes `""` over it. |
 | `debug.vk_probe` | Refer to "Find problems". |
 | `debug.vk_validation` | Refer to "Find problems". |
 | `debug.vk_present_marker` | Under the Vulkan renderer, draws a red square at the top left and a green one at the top right of the picture, so that a screenshot shows which way up it is. Default `false`. |
@@ -296,7 +296,7 @@ The game can draw in two ways:
 
 | Renderer | `display.renderer` | Driver (`display.vk_driver`) |
 | --- | --- | --- |
-| Vulkan (the default) | `"vulkan"` | `""` (the default): the phone's own Vulkan driver. `"auto"`: Turnip on an Adreno GPU (refer to "Turn on Turnip"). Or the file name of a driver archive that you add. |
+| Vulkan (the default) | `"vulkan"` | `""` (the default): the phone's own Vulkan driver. Or the file name of a driver archive: the Turnip build the app downloads on an Adreno GPU (refer to "Turn on Turnip"), or one that you add. |
 | OpenGL ES | `"gl"` | The phone's own. |
 
 If Vulkan cannot start on a phone, the game uses OpenGL ES.
@@ -307,24 +307,25 @@ If Vulkan cannot start on a phone, the game uses OpenGL ES.
    **VIDEO SETUP**.
 2. At the top of the screen:
    - **GRAPHICS BACKEND:** `VULKAN` or `OPENGL` (OpenGL ES).
-   - **VULKAN DRIVER:** `STOCK` (the phone's own driver) or `TURNIP`
-     (refer to "Turn on Turnip"). This row shows only when the backend is
-     `VULKAN`.
+   - **VULKAN DRIVER:** `STOCK` (the phone's own driver), then every driver
+     archive in `freedreno_drivers` by its file name: the Turnip build the
+     app downloads (refer to "Turn on Turnip") and any that you add. This
+     row, and **IMPORT DRIVER**, show only when the backend is `VULKAN`.
 3. Select **OK**. The menu writes `display.renderer` and
    `display.vk_driver` in `config.toml`.
 4. Close the game and start it again. The renderer and the driver change
    only when the game starts, as the note below the rows says.
 
-**DEFAULTS** sets `VULKAN` and `STOCK`. A driver archive of your own (refer
-to "Try another Turnip build") is set in `config.toml` only: with one set,
-the menu shows `STOCK`, and the archive stays set unless you choose
-another driver and select **OK**.
+**DEFAULTS** sets `VULKAN` and `STOCK`. An archive named in `config.toml`
+that is not in `freedreno_drivers` (one in the data folder itself) is not
+listed: with one set, the menu shows `STOCK`, and the archive stays set
+unless you choose another driver and select **OK**.
 
 On some phones the phone's own driver draws the game with errors: shapes
 that stretch across the screen, textures that are missing or wrong. The
 Vulkan renderer lets the game use another driver. On phones with a
 Qualcomm Adreno GPU, that is Turnip, the open-source Vulkan driver for
-Adreno from the Mesa project. Turnip is off until you turn it on.
+Adreno from the Mesa project. Turnip is off until you choose it.
 
 To see which renderer and driver run, look at the main menu: the line
 below the game's version number (`01.01.14.2342`, at the lower right) says
@@ -368,16 +369,18 @@ value after `=`, and keep the quotes.
 
 1. Start the app one time. On an Adreno 6xx, 7xx or 8xx, the app shows
    "Downloading the Vulkan driver" before the game starts: it downloads
-   the Turnip build for the GPU's series into the data folder
-   (approximately 2.5 to 3.5 MB, from
+   the Turnip build for the GPU's series into `freedreno_drivers` in the
+   data folder (approximately 2.5 to 3.5 MB, from
    [K11MCH1/AdrenoToolsDrivers](https://github.com/K11MCH1/AdrenoToolsDrivers/releases),
    release `v26.0.0-rc08`; the app keeps the file only if it is exactly
    the build that we chose). It does this only one time. If the download
    fails or you push "Skip", the app tries again at the next start.
    The download does not turn Turnip on.
-2. Set **VULKAN DRIVER** to `TURNIP` (refer to "Change the renderer in
-   the game"), select **OK**, close the game and start it again. Then go
-   to step 5. Or, to change `config.toml` instead, close the game.
+2. Set **VULKAN DRIVER** to the downloaded build, listed by its file name
+   without `.zip` (for example `Turnip_v26.0.0_R8`; refer to "Change the
+   renderer in the game"), select **OK**, close the game and start it
+   again. Then go to step 5. Or, to change `config.toml` instead, close
+   the game.
 3. Open `config.toml` (refer to "Get to the settings file"). Find the
    `[display]` section. It has these lines, with comments above them:
 
@@ -389,11 +392,14 @@ value after `=`, and keep the quotes.
    renderer = "vulkan"
    ```
 
-4. Change `vk_driver = ""` to:
+4. Change `vk_driver = ""` to the build's file name, for example:
 
    ```toml
-   vk_driver = "auto"
+   vk_driver = "Turnip_v26.0.0_R8.zip"
    ```
+
+   (`Turnip_v26.0.0_R8_A8xx.zip` on an Adreno 8xx: the name is the file's
+   in `freedreno_drivers`.)
 
    Make sure that `renderer = "vulkan"`. Save the file (and copy it back
    to the phone, if you changed it on a computer).
@@ -404,10 +410,10 @@ value after `=`, and keep the quotes.
    `Mesa Turnip driver v26.0.0 - R8`. If it says only `Vulkan`, Turnip is
    not on: refer to "Make sure that it operates".
 
-`"auto"` uses the build that the app downloaded for this phone (the app
-writes its name in `vk_driver_auto.txt` in the data folder). Instead of
-`"auto"`, you can write the file name of the archive, for example
-`vk_driver = "Turnip_v26.0.0_R8.zip"`.
+The app writes the name of the build it chose for this phone in
+`vk_driver_auto.txt` in the data folder. `vk_driver = "auto"`, which chose
+that build before, now means the phone's own driver: the game writes
+`vk_driver = ""` over it the next time it starts.
 
 To turn Turnip off, set **VULKAN DRIVER** to `STOCK` (or
 `vk_driver = ""` again).
@@ -429,12 +435,26 @@ To turn Turnip off, set **VULKAN DRIVER** to `STOCK` (or
    `meta.json` file and the driver library (`.so`) at its top level. Some
    of these sites also have Qualcomm's own drivers in this format; they
    load in the same way.
-2. Copy the `.zip` file into the data folder, next to `config.toml`.
-3. Set `vk_driver` to the exact file name of the archive, for example
-   `vk_driver = "Turnip_v26.0.0_R7.zip"`, and `renderer = "vulkan"`.
-4. Start the game, and look at the main menu.
+2. In **VIDEO SETUP**, with **GRAPHICS BACKEND** on `VULKAN`, select
+   **IMPORT DRIVER** and choose the `.zip` file (several at once if you
+   like). The app copies each one into the `freedreno_drivers` folder of
+   the data folder, once it has checked that it is a driver archive (a
+   `meta.json` naming a library that is in the zip, 256 MB at most); a
+   name the folder has already is left as it is. Leave Video Setup and open
+   it again to see it listed. Or copy the `.zip` file into that folder
+   yourself (`/sdcard/Android/data/com.halo.decomp/files/freedreno_drivers/`;
+   the app makes the folder when it looks for its own download).
+3. In **VIDEO SETUP**, set **VULKAN DRIVER** to the archive: every `.zip`
+   in `freedreno_drivers` is listed after `STOCK`, by its file
+   name without `.zip` (a long name shows its start and end). Select
+   **OK**. Or set `vk_driver` to the exact file name of the archive, for
+   example `vk_driver = "Turnip_v26.0.0_R7.zip"`, and
+   `renderer = "vulkan"`.
+4. Start the game again, and look at the main menu.
 
-You can keep more than one archive in the folder.
+You can keep more than one archive in the folder. An archive in the data
+folder itself, next to `config.toml`, still loads when `vk_driver` names
+it, but the menu does not list it.
 
 ### Choose another renderer or driver
 
@@ -443,11 +463,15 @@ In **VIDEO SETUP**, or in `config.toml`, in the `[display]` section:
 | You want | In VIDEO SETUP | In `config.toml` |
 | --- | --- | --- |
 | Vulkan on the phone's own driver (the default) | `VULKAN`, `STOCK` | `renderer = "vulkan"` and `vk_driver = ""` |
-| Vulkan on Turnip (Adreno) | `VULKAN`, `TURNIP` | `renderer = "vulkan"` and `vk_driver = "auto"` |
-| Vulkan on a driver archive that you add | (not in the menu) | `renderer = "vulkan"` and `vk_driver = "<file name>.zip"` |
+| Vulkan on Turnip (Adreno) | `VULKAN`, the downloaded build's name (for example `Turnip_v26.0.0_R8`) | `renderer = "vulkan"` and `vk_driver = "Turnip_v26.0.0_R8.zip"` |
+| Vulkan on a driver archive that you add | `VULKAN`, the archive's name | `renderer = "vulkan"` and `vk_driver = "<file name>.zip"` |
 | OpenGL ES | `OPENGL` | `renderer = "gl"` |
 
-Either way, the change applies the next time the game starts.
+Either way, the change applies the next time the game starts. If Vulkan
+does not start (the phone's Vulkan cannot run the renderer, or the driver
+chosen cannot be loaded), the game runs on OpenGL ES and sets `renderer =
+"gl"`, so that VIDEO SETUP shows `OPENGL`; choose `VULKAN` there to try
+again at the next start.
 
 When the app is updated to the version that makes Vulkan the default, it
 changes `renderer = "gl"` in an existing `config.toml` to `"vulkan"` one
@@ -461,7 +485,7 @@ number (`01.01.14.2342`) at the lower right:
 | The main menu shows | Meaning |
 | --- | --- |
 | `Vulkan` and a driver name (for example `Mesa Turnip driver v26.0.0 - R8`) | The Vulkan renderer on that driver. |
-| `Vulkan` | The Vulkan renderer on the phone's own driver. With `vk_driver = "auto"`: the download did not finish yet, or there is no Turnip build for this GPU. With an archive's name: the name is wrong, or the file is not a driver archive. |
+| `Vulkan` | The Vulkan renderer on the phone's own driver. With an archive's name in `vk_driver`: the name is wrong, the file is not a driver archive, or the archive's driver did not load (the log says why). |
 | `OpenGL ES` | The OpenGL ES renderer. With `renderer = "vulkan"`: Vulkan could not start, and the game used OpenGL ES. The phone's Vulkan cannot run the renderer, or the archive's driver was accepted but Android loaded the phone's driver in its place. |
 
 The reasons are in the log of the app: connect the phone to a computer and
@@ -490,6 +514,10 @@ again.
 - For each renderer and driver that you tried: the line from the main menu,
   what looked wrong, and screenshots of the same scene.
 - `debug.txt` from the data folder.
+- `halo.log` from the data folder: the lines of `adb logcat -s halo`,
+  without a computer. If **Write halo.log** in the overlay's System folder
+  (`halo_log` in the `[debug]` section of `config.toml`) is off, turn it
+  on, then start the game again and play until the problem.
 - If you can use adb: the output of `adb logcat -s halo` during the run.
 - If you want to help more: set `vk_probe = "all"` in the `[debug]` section
   of `config.toml` and start the app. The app tests the Vulkan driver
@@ -816,7 +844,9 @@ and reload, address reuse and allocation failure.
 ## Find problems
 
 - Enter `adb logcat -s halo` to see the log of the port and the errors of
-  the game. `files/debug.txt` is the log of the game.
+  the game. `files/debug.txt` is the log of the game, and
+  `files/halo.log` has logcat's lines too, begun again each start
+  (`debug.halo_log`, the overlay's **Write halo.log**, from the next start).
 - If the guest code stops, the log shows the registers and the frame chain
   (`host/host_arch.c`), from a stack of the signal handler's own, so a
   stack overflow is reported too.
@@ -878,8 +908,8 @@ and reload, address reuse and allocation failure.
 - To run the probe on another Vulkan driver (Turnip, for an Adreno GPU), copy
   an adrenotools archive (a zip with a `meta.json` and the driver's library,
   for example `Turnip_v26.0.0_R8.zip` from the K11MCH1/AdrenoToolsDrivers
-  releases) into the data folder and set `display.vk_driver = "<the file's
-  name>"`. The app unpacks it into its private storage (Android loads a library
+  releases) into `freedreno_drivers` in the data folder and set
+  `display.vk_driver = "<the file's name>"`. The app unpacks it into its private storage (Android loads a library
   only from there) and opens it with libadrenotools; the report's `driver.*`
   lines say which driver is running (`driver.check` says if the archive's
   library was really loaded). An archive that does not work is logged

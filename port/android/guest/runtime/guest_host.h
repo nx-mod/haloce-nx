@@ -143,6 +143,29 @@ folder (a path) to the folder chosen (HaloActivity.exportReplays); returns
 at once, the copy done on the app's own thread */
 void host_android_export_replays(const char *folder);
 
+/* the system's file picker, after which the app copies the replays chosen
+into folder (a path; HaloActivity.importReplays); returns at once, the copy
+done on the app's own thread */
+void host_android_import_replays(const char *folder);
+
+/* the system's file picker, after which the app takes each .zip file chosen
+into a folder of its name in folder (a path: the mods folder;
+HaloActivity.importMods); returns at once, the copy done on the app's own
+thread */
+void host_android_import_mods(const char *folder);
+
+/* the system's file picker, after which the app copies each Vulkan driver
+archive chosen (an adrenotools zip) into folder (a path: freedreno_drivers;
+HaloActivity.importVkDrivers); returns at once, the copy done on the app's
+own thread */
+void host_android_import_vk_drivers(const char *folder);
+
+/* the system's file picker, after which the app copies each Custom Edition
+map chosen, or each in a .zip file chosen, into folder (a path: custom_maps;
+HaloActivity.importMaps); returns at once, the copy done on the app's own
+thread */
+void host_android_import_maps(const char *folder);
+
 /* ---------- the on-screen touch controls (host_touch.c, android_imports.list) */
 
 /* the overlay's controller: the SDL axes (left x, y, right x, y, left
@@ -190,5 +213,17 @@ struct host_https_sizes
 status, the headers ("Name: value" lines) and up to body_capacity bytes of
 the body (its size in body_size), else 0 and why in error */
 int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes);
+
+/* ---------- a replay's records, kept in the host's memory (host_replay.c;
+port/linux/game/network_replay_playback.c) */
+
+/* size bytes at data added to the kept replay's end: 1, or 0 if the host has
+not the memory */
+int host_replay_store_append(unsigned int data, unsigned int size);
+/* up to size bytes of the kept replay from offset copied to destination; how
+many */
+unsigned int host_replay_store_read(unsigned int offset, unsigned int destination, unsigned int size);
+/* the kept replay let go */
+void host_replay_store_free(void);
 
 #endif

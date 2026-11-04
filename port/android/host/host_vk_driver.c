@@ -6,7 +6,10 @@ Vulkan driver and hands out its vkGetInstanceProcAddr.
 
 display.vk_driver empty: the phone's own driver, libvulkan.so through the
 system loader. Otherwise the name of an adrenotools archive (a zip with a
-meta.json and the driver's library) in the app's external files folder. Android
+meta.json and the driver's library) in the app's external files folder's
+freedreno_drivers, where the launcher downloads Turnip and Video Setup lists
+the archives (port/linux/game/menu_functions.c), or in that folder itself,
+where archives were before. Android
 loads a library only from the app's private storage, so the archive is
 unpacked into <internal storage>/vk_driver/<archive name>/ (again only when the
 archive's size or modification time differs from what was unpacked), its
@@ -273,6 +276,27 @@ static int name_is_safe(const char *name)
 }
 
 /* ---------- files */
+
+#define DRIVER_FOLDER "freedreno_drivers"
+
+/* where the archive of that name is: the external files folder's
+freedreno_drivers, else that folder (an archive left there before); 0 if in
+neither, path then the first (and errno why) */
+static int archive_find(const char *external, const char *name, char *path, size_t size, struct stat *information)
+{
+	snprintf(path, size, "%s/%s", external, name);
+	if (stat(path, information) == 0)
+	{
+		char preferred[1024];
+		struct stat there;
+
+		snprintf(preferred, sizeof(preferred), "%s/" DRIVER_FOLDER "/%s", external, name);
+		if (stat(preferred, &there) != 0)
+			return 1;
+	}
+	snprintf(path, size, "%s/" DRIVER_FOLDER "/%s", external, name);
+	return stat(path, information) == 0;
+}
 
 static int make_directories(const char *path)
 {
@@ -572,8 +596,7 @@ static int open_archive(const char *setting, void **library, char *description, 
 		snprintf(error, error_size, "Android's storage is unavailable: %s", SDL_GetError());
 		return 0;
 	}
-	snprintf(archive_path, sizeof(archive_path), "%s/%s", external, setting);
-	if (stat(archive_path, &archive_stat) != 0)
+	if (!archive_find(external, setting, archive_path, sizeof(archive_path), &archive_stat))
 	{
 		snprintf(error, error_size, "%s: %s", archive_path, strerror(errno));
 		return 0;
@@ -686,45 +709,9 @@ static int open_archive(const char *setting, void **library, char *description, 
 	return 1;
 }
 
-/* display.vk_driver = "auto": the archive vk_driver_auto.txt names, if it is in the external files folder; else empty */
-static void auto_resolve(char *out, size_t size)
-{
-	const char *external = SDL_GetAndroidExternalStoragePath();
-	char path[1024], line[256] = "";
-	struct stat archive;
-	FILE *file;
-
-	out[0] = 0;
-	if (!external)
-		return;
-	snprintf(path, sizeof(path), "%s/vk_driver_auto.txt", external);
-	file = fopen(path, "r");
-	if (file)
-	{
-		if (!fgets(line, sizeof(line), file))
-			line[0] = 0;
-		fclose(file);
-	}
-	line[strcspn(line, "\r\n")] = 0;
-	if (line[0])
-	{
-		snprintf(path, sizeof(path), "%s/%s", external, line);
-		if (name_is_safe(line) && !strchr(line, '/') && !stat(path, &archive))
-			snprintf(out, size, "%s", line);
-	}
-	if (out[0])
-		host_logf(HOST_LOG_INFO, "vk driver: auto: %s", out);
-	else if (!file)
-		host_logf(HOST_LOG_INFO, "vk driver: auto: the phone's own (the launcher has not chosen one yet)");
-	else if (line[0])
-		host_logf(HOST_LOG_INFO, "vk driver: auto: the phone's own (%s is not in the data folder)", line);
-	else
-		host_logf(HOST_LOG_INFO, "vk driver: auto: the phone's own (no Turnip build for this GPU)");
-}
-
 PFN_vkGetInstanceProcAddr host_vk_driver_open(const char *setting, char *description, size_t size)
 {
-	char error[512] = "", custom_description[384] = "", auto_setting[256];
+	char error[512] = "", custom_description[384] = "";
 	void *library = NULL;
 	PFN_vkGetInstanceProcAddr function;
 
@@ -739,12 +726,12 @@ PFN_vkGetInstanceProcAddr host_vk_driver_open(const char *setting, char *descrip
 		host_logf(HOST_LOG_ERROR, "vk driver: %s", description);
 		return NULL;
 	}
-	/* "auto": the archive the launcher chose for this phone's GPU (LauncherActivity, Updater.java), named in
-	vk_driver_auto.txt; the phone's own driver when it names none or the archive is not there */
+	/* "auto" (Turnip, chosen by the GPU) is no more: the phone's own driver, and the archive the launcher downloads
+	is chosen by its name as any other is (the game writes "" over it: port_config.c) */
 	if (setting && !strcmp(setting, "auto"))
 	{
-		auto_resolve(auto_setting, sizeof(auto_setting));
-		setting = auto_setting;
+		host_logf(HOST_LOG_INFO, "vk driver: \"auto\" is no more; the phone's own");
+		setting = "";
 	}
 	if (setting && setting[0])
 	{

@@ -122,6 +122,11 @@ SCREENS = {
         # row. Below Android's rows, wherever they end (place 6 was below
         # them until Maximum Resolution and Extra Effects came)
         "notes": [("The graphics backend and driver change when the game restarts.", "android", None)],
+        # (buttons of the bar's own, between DEFAULTS and OK: (key, words,
+        # menu function, platform, x). Android's IMPORT DRIVER, the app's file
+        # picker for a driver archive copied into freedreno_drivers:
+        # menu_functions.c, HaloActivity.importVkDrivers)
+        "bar_buttons": [("button_vk_driver_import", "IMPORT DRIVER", "port vk driver import", "android", 130)],
         "rows": [
             ("DISPLAY MODE:", "display.mode",
              [("FULLSCREEN", "fullscreen"), ("BORDERLESS", "borderless"), ("WINDOWED", "windowed")],
@@ -141,10 +146,13 @@ SCREENS = {
             ("WINDOW SIZE:", "display.window_size", [("1280 x 960", "1280x960")],
              "The window's size: 4:3, then 16:10, 16:9 and 21:9\n(its edges can also be dragged).", "desktop"),
             # (port/linux/game/menu_functions.c shows it while the backend
-            # shown is Vulkan; a driver archive's name left there by hand is
-            # kept unless another is chosen: port/android/host/host_vk_driver.c)
-            ("VULKAN DRIVER:", "display.vk_driver", [("STOCK", ""), ("TURNIP", "auto")],
-             "The phone's own driver, or Turnip on an Adreno\nGPU. Takes effect the next time the game starts.",
+            # shown is Vulkan, and lists the archives in freedreno_drivers
+            # after STOCK, as source/interface/ui_widget.c's extra items: the
+            # Turnip build the launcher downloads among them; an archive's
+            # name left there by hand is kept unless another is chosen:
+            # port/android/host/host_vk_driver.c)
+            ("VULKAN DRIVER:", "display.vk_driver", [("STOCK", "")],
+             "The phone's own driver, or a zip from the drivers\nfolder (Turnip's, or one IMPORT DRIVER adds).",
              "android"),
             ("RESOLUTION SCALING:", "display.resolution_scaling", [("NATIVE", "native"), ("ORIGINAL", "original")],
              "Native draws at the resolution; Original draws\nthe Xbox's 640x480 and scales it up.", "desktop web"),
@@ -868,8 +876,13 @@ def _screen(folder: str, spec: dict, rows: list, list_inputs: list, list_handler
                      [("type", "column_list"), ("width", 640), ("height", 28),
                       ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
                      [f'<child{attributes([("widget", f"{base}/button_defaults"), ("y", 1)])}/>',
+                      *[f'<child{attributes([("widget", f"{base}/{key}"), ("x", x), ("y", 1), ("platform", platform)])}/>'
+                        for key, _, _, platform, x in spec.get("bar_buttons", [])],
                       f'<child{attributes([("widget", f"{base}/button_ok"), ("x", 380), ("y", 1)])}/>',
                       '<child widget="common_button_cancel" x="510" y="1"/>'])
+    for key, words, function, _, _ in spec.get("bar_buttons", []):
+        lines += _text_button(f"{base}/{key}", words, [f'<on event="a" run="{function}"/>',
+                                                       f'<on event="start" run="{function}"/>'])
     lines += extra
     return lines
 
@@ -1401,6 +1414,11 @@ OVERRIDE_ORIGINALS = {
 # the map lists' first row: SINGLEPLAYER, MULTIPLAYER, CUSTOM SINGLEPLAYER or
 # CUSTOM MULTIPLAYER maps (_map_kind)
 MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
+# the map lists' IMPORT (Android's: New Game's and the Map screen's button
+# bars, left of OK): the app's file picker, which copies .map files, and the
+# maps in .zip files, into custom_maps (menu_functions.c's map_import_start,
+# HaloActivity.importMaps)
+MAP_IMPORT = "main_menu/new_select/button_map_import"
 
 # the main menu's news: the latest release's notes (tools/embed_assets.py's
 # news_text) in a window the main menu's X opens (WIDGET_PATCHES), its lines
@@ -1550,6 +1568,12 @@ WIDGET_PATCHES = {
         '<on event="back" run="port map list back"/>',
     ]},
     "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER}},
+    # (their IMPORT, Android's: MAP_IMPORT)
+    f"{MT}/mp_map_select/mp_map_select_button_bar": {"insert_before": {
+        f"{MT}/mp_map_select/mp_map_select_button_ok": [f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
+    "main_menu/solo_level_select/solo_level_select_button_bar": {"insert_before": {
+        "main_menu/solo_level_select/solo_level_select_button_ok": [
+            f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     # (each description shows the other kind's maps too: a campaign level's
     # picture, name and words on the Map screen, a multiplayer map's on New
     # Game's)
@@ -2703,6 +2727,7 @@ def _map_kind() -> list:
                      ['<on event="left_mouse" run="mouse spinner 1wide click"/>'])
     lines += _strings("main_menu/new_select/var_map_kinds",
                       ["SINGLEPLAYER", "MULTIPLAYER", "CUSTOM SINGLEPLAYER", "CUSTOM MULTIPLAYER"])
+    lines += _text_button(MAP_IMPORT, "IMPORT", ['<on event="a" run="port map import"/>'])
     return lines
 
 
@@ -2918,7 +2943,9 @@ def _mods() -> list:
     is on and its priority, and what its mod.toml says. A turns the mod chosen
     on or off, left and right (and MOVE UP and MOVE DOWN, for the mouse) move
     it; OK keeps it all (load_order.toml) and plays them, Cancel forgets it
-    (menu_functions.c)"""
+    (menu_functions.c). Android has a row fewer, and in its place a second
+    bar: IMPORT (a mod's .zip file, the app's file picker,
+    HaloActivity.importMods) and DELETE (the mod chosen, at a second press)"""
     base = MODS
     lines = _widget("main_menu/main_menu_item_mods",
                     [("type", "text"), ("width", 256), ("height", 33), ("bitmap", "main_menu/menu_mods")],
@@ -2936,8 +2963,10 @@ def _mods() -> list:
                       *[f'<child widget="{base}/{key}" x="{x}" y="{y}" platform="{platform}"/>'
                         for key, x, y, platform in MOD_HINT_PLACES]])
     lines += _header(f"{base}/header_mods", f"{base}/header_mods")
-    # (the lobby's rows, MOD_ROWS of them, scrolling over more mods)
-    rows = [f'<child widget="{base}/op_mod_{index + 1}" x="20" y="{73 + 30 * index}"/>' for index in range(MOD_ROWS)]
+    # (the lobby's rows, MOD_ROWS of them, scrolling over more mods; the
+    # last not on Android, where IMPORT and DELETE are)
+    rows = [f'<child{attributes([("widget", f"{base}/op_mod_{index + 1}"), ("x", 20), ("y", 73 + 30 * index), ("platform", "desktop switch ps5 web" if index == MOD_ROWS - 1 else None)])}/>'
+            for index in range(MOD_ROWS)]
     lines += _widget(f"{base}/mods_list", [("type", "column_list"), ("width", 640), ("height", 480),
                                            ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
                                            ("description", f"{base}/mod_details")],
@@ -2949,6 +2978,7 @@ def _mods() -> list:
                       # focus)
                       '<on event="y" run="port mods toggle"/>', '<on event="white" run="port mods move up"/>',
                       '<on event="black" run="port mods move down"/>', *rows,
+                      f'<child widget="{base}/button_bar_files" y="384" platform="android"/>',
                       f'<child widget="{base}/button_bar" y="414"/>'])
     for index in range(MOD_ROWS):
         lines += _widget(f"{base}/op_mod_{index + 1}",
@@ -2991,6 +3021,16 @@ def _mods() -> list:
                       f'<child widget="{base}/button_down" x="130" y="1" platform="desktop android web"/>',
                       f'<child widget="{base}/button_ok" x="380" y="1" platform="desktop android web"/>',
                       '<child widget="common_button_cancel" x="510" y="1" platform="desktop android web"/>'])
+    # (Android's, under MOVE UP and MOVE DOWN)
+    lines += _widget(f"{base}/button_bar_files",
+                     [("type", "column_list"), ("width", 640), ("height", 28),
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     [f'<child widget="{base}/button_import" y="1"/>',
+                      f'<child widget="{base}/button_delete" x="130" y="1"/>'])
+    lines += _text_button(f"{base}/button_import", "IMPORT", ['<on event="a" run="port mods import"/>',
+                                                             '<on event="start" run="port mods import"/>'])
+    lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port mods delete"/>',
+                                                             '<on event="start" run="port mods delete"/>'])
     lines += _text_button(f"{base}/button_up", "MOVE UP", ['<on event="a" run="port mods move up"/>',
                                                           '<on event="start" run="port mods move up"/>'])
     lines += _text_button(f"{base}/button_down", "MOVE DOWN", ['<on event="a" run="port mods move down"/>',
@@ -3007,9 +3047,10 @@ def _mods() -> list:
 # newest first (its map and when, and its length), scrolling over more, A
 # playing the one chosen (network_replay_playback.c); on the right, in the
 # lobby's frame, what the one chosen is; and the buttons: RECORD (ON or OFF,
-# network.record_replays), DELETE (the one chosen, at a second press), EXPORT
-# (Android's: the app's folder picker, HaloActivity.exportReplays) and BACK
-# (menu_functions.c's "port theater" functions). The Switch and the PS5 have
+# network.record_replays), DELETE (the one chosen, at a second press), IMPORT
+# and EXPORT (Android's: the app's file and folder pickers,
+# HaloActivity.importReplays and exportReplays) and BACK (menu_functions.c's
+# "port theater" functions). The Switch and the PS5 have
 # fewer rows: under them a QR code of their replay page
 # (network_replay_page.c)
 
@@ -3084,10 +3125,13 @@ def _theater() -> list:
     lines += _widget(f"{base}/button_bar",
                      [("type", "column_list"), ("width", 640), ("height", 28),
                       ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     # (five buttons of 128 across the 640: Android's IMPORT
+                     # and EXPORT between DELETE and BACK)
                      [f'<child widget="{base}/button_record" y="1" platform="desktop android web"/>',
-                      f'<child widget="{base}/button_delete" x="130" y="1" platform="desktop android web"/>',
-                      f'<child widget="{base}/button_export" x="260" y="1" platform="android"/>',
-                      f'<child widget="{base}/button_back" x="510" y="1" platform="desktop android web"/>'])
+                      f'<child widget="{base}/button_delete" x="128" y="1" platform="desktop android web"/>',
+                      f'<child widget="{base}/button_import" x="256" y="1" platform="android"/>',
+                      f'<child widget="{base}/button_export" x="384" y="1" platform="android"/>',
+                      f'<child widget="{base}/button_back" x="512" y="1" platform="desktop android web"/>'])
     # (its words a string list's, OFF and ON, which "port theater update"
     # chooses between: a text widget's own words are its string list's again
     # each time it is drawn, so words set on it would not show)
@@ -3118,6 +3162,8 @@ def _theater() -> list:
                                                      ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"),
                                                      ("text_y", 2),
                                                      ("text_flags", "no_focus_test")], [])
+    lines += _text_button(f"{base}/button_import", "IMPORT", ['<on event="a" run="port theater import"/>',
+                                                             '<on event="start" run="port theater import"/>'])
     lines += _text_button(f"{base}/button_export", "EXPORT", ['<on event="a" run="port theater export"/>',
                                                              '<on event="start" run="port theater export"/>'])
     lines += _text_button(f"{base}/button_back", "BACK", ['<on event="a" back="true"/>',

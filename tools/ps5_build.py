@@ -94,15 +94,16 @@ TOMLC17_DIR = Path("port/third_party/tomlc17")
 # the Android host library's files the PS5's host uses as they are
 # (port/ps5/PS5.md, phase 2); the rest are replaced by port/ps5/host's
 # (and the server browser's requests to the master servers, host_https.c, on
-# posix_update.c's HTTPS as Android's)
+# posix_update.c's HTTPS as Android's; and a replay's records in the host's
+# memory, host_replay.c)
 SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thread.c", "host_watch_hash.c",
-                     "host_https.c")
+                     "host_https.c", "host_replay.c")
 # and the Vulkan renderer's host half (port/ps5/PS5.md, phase 4), less
 # host_vk_driver.c (port/ps5/host/host_vk_driver_ps5.c is the console's) and
 # the probe, host_vk_probe.c
 SHARED_RENDERER_FILES = ("host_vk.c", "host_vk_data.c", "host_vk_draw.c", "host_vk_post.c", "host_vk_present.c",
                          "host_vk_hud.c", "host_vk_profile.c", "host_vk_render.c", "host_vk_shaders.c", "host_vk_texture.c",
-                         "host_vk_visibility.c")
+                         "host_vk_visibility.c", "host_vk_passes.c")
 # posix.h's helpers (port/linux/src) the game imports, as the Linux host
 # compiles them (port/ps5/PS5.md, phases 2 and 5), and the Linux updater's
 # HTTPS download, which the title's updater fetches with (phase 8:

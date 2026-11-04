@@ -283,7 +283,8 @@ but its GL context is a stand-in. Set once, before the guest starts. */
 extern int host_renderer_vulkan;
 
 /* config.toml's debug.gpu_stats: under Vulkan, host_gl.c reports the GL calls the
-shared files still make (host_gl_resolve) every 10 seconds */
+shared files still make (host_gl_resolve) every 10 seconds, and host_vk_render.c
+its counts every 60 frames */
 extern int host_gl_statistics;
 /* once per frame, under Vulkan (host_gl.c): the report of the GL calls still made */
 void host_gl_frame(void);
@@ -297,10 +298,16 @@ destroying what it made. line is the text of the log line "renderer: ...", for
 either outcome. Not thread safe; called once, by the thread that starts the
 game, after the image's range is reserved and SDL's video is up */
 int host_vk_startup(const char *vk_driver, int validation, char *line, size_t size);
-/* the Vulkan renderer's commands from the guest (port/android/guest/vk_commands.h), run during the call;
-commands is a guest address. host_vk_retired is the highest submission number the GPU has finished */
+/* the Vulkan renderer's commands from the guest (port/android/guest/vk_commands.h): run on the render thread
+(debug.vk_render_thread) once the call has returned, or else during it; commands is a guest address, a stream the guest
+writes again only VK_COMMAND_STREAMS - 1 hand-overs later. host_vk_retired is the highest submission number the GPU has
+finished */
 void host_vk_submit(uint32_t commands, uint32_t size);
 uint32_t host_vk_retired(void);
+/* the game's geometry at [address, address + size) (guest), written once as a map loads, copied now into a buffer the
+GPU reads: its id (draws name it with VK_DATA_STATIC), or 0 if there is none (the draws put the bytes as before).
+VK_COMMAND_STATIC_FREE lets it go (host_vk_data.c) */
+uint32_t host_vk_static_make(uint32_t address, uint32_t size);
 /* the shader service (host_vk_shaders.c): see port/android/VULKAN.md, phase 5. find returns a handle (1 or more) of the
 shader's module, or 0 and writes a VK_SHADER_STATUS_* to the guest address status_out; compile queues GLSL (a guest
 address, copied during the call) for the compile thread. A 64-bit hash travels in one register */
@@ -331,6 +338,8 @@ not the stand-in window's swap (phase 2) */
 extern int host_vk_presenting;
 /* config.toml's debug.vk_present_marker (host_vk_present.c) */
 extern int host_vk_present_marker;
+/* debug.vk_render_thread: the guest's commands are recorded and presented on a thread of their own (host_vk_render.c) */
+extern int host_vk_render_thread;
 /* debug.vk_self_test: the backend's self-tests, run once at the device's creation (host_vk_render.c) */
 extern int host_vk_self_test;
 /* the game's window, the last made under Vulkan: an SDL_Window (host_sdl.c) */

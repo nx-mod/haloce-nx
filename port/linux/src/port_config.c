@@ -95,6 +95,13 @@ enum
 #define PLATFORM_VULKAN _platform_android
 #endif
 
+/* the rows the hosts read: Android's and the Switch's, and the PS5's */
+#ifdef HALO_PS5
+#define PLATFORM_HOST (_platform_android | _platform_ps5)
+#else
+#define PLATFORM_HOST _platform_android
+#endif
+
 /* the gyroscope's rows: Android's (the phone's, and the Switch's controllers),
 and the PS5's (the DualSense's) */
 #ifdef HALO_PS5
@@ -165,17 +172,17 @@ static const struct config_setting config_settings[] =
 	/* read by the Android host (port/android/host/host_vk_driver.c) */
 	{ "display.vk_driver", _config_string, "\"\"", "HALO_VK_DRIVER", _environment_value, _platform_android,
 		"The Vulkan driver the Vulkan renderer runs on: empty for the phone's own;\n"
-		"\"auto\" for Turnip, the open-source driver, on an Adreno GPU (the app\n"
-		"downloads the build for its series; the phone's own on any other GPU); or the\n"
-		"name of a driver archive (an adrenotools zip) left in the game's folder. One\n"
-		"that does not load is logged and the phone's own is used." },
+		"or the name of a driver archive (an adrenotools zip) in freedreno_drivers\n"
+		"in the game's folder, which Video Setup lists: the Turnip build the app\n"
+		"downloads on an Adreno GPU, and any other put or imported there. One that\n"
+		"does not load is logged and the phone's own is used." },
 	/* read by the Android host before the game starts, to choose the game
 	image built with that renderer (port/android/VULKAN.md) */
 	{ "display.renderer", _config_string, "\"vulkan\"", "HALO_RENDERER", _environment_value, _platform_android,
 		"How the game draws: \"vulkan\" (over display.vk_driver; OpenGL ES if Vulkan\n"
-		"cannot start) or \"gl\" (OpenGL ES over the phone's driver). Takes effect the\n"
-		"next time the game starts. See the Android README, \"Graphics: OpenGL ES and\n"
-		"Vulkan\"." },
+		"cannot start, which sets this to \"gl\") or \"gl\" (OpenGL ES over the\n"
+		"phone's driver). Takes effect the next time the game starts. See the Android\n"
+		"README, \"Graphics: OpenGL ES and Vulkan\"." },
 #endif
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
@@ -1270,6 +1277,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.benchmark_bots", _config_integer, "63", "HALO_BENCHMARK_BOTS", _environment_value, _platform_all,
 		"The computer players in the benchmark's multiplayer games: 63, with the\n"
 		"player 64 in all; 0 to 63." },
+	{ "debug.benchmark_manual", _config_boolean, "false", "HALO_BENCHMARK_MANUAL", _environment_set_is_true,
+		_platform_all,
+		"The benchmark leaves the player's view to the player rather than turning\n"
+		"it, to measure the game as it is played (the player still cannot be hurt)." },
 	{ "debug.benchmark_quit", _config_boolean, "true", "HALO_BENCHMARK_QUIT", _environment_value, _platform_all,
 		"Quit the game once the benchmark is done; false goes back to the main\n"
 		"menu." },
@@ -1403,7 +1414,8 @@ static const struct config_setting config_settings[] =
 		"Flush the GPU's pipeline every this many draws: -1 for every 3 on Intel\n"
 		"graphics with Mesa's driver (which can hang without), 0 never." },
 	{ "debug.gpu_stats", _config_boolean, "false", "HALO_GPU_STATS", _environment_set_is_true, _platform_all,
-		"Log the renderer's draw counts once a second." },
+		"Log the renderer's draw counts once a second (otherwise, on Android's Vulkan,\n"
+		"only a second whose draws were skipped)." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,
@@ -1425,10 +1437,18 @@ static const struct config_setting config_settings[] =
 	{ "debug.texture_dump_directory", _config_string, "\"\"", "HALO_TEXTURE_DUMP", _environment_value, _platform_all,
 		"A folder to write every texture to as it is uploaded; empty none." },
 	{ "debug.log_files", _config_boolean, "true", "HALO_LOG_FILES", _environment_value, _platform_all,
-		"Write the logs to files: the game's debug.txt (beside the data, and on the\n"
-		"Switch the program's halo.log too). false writes neither, which spares the\n"
-		"storage a write for each line; nothing is kept to say what went wrong.\n"
-		"halo.log takes it the next start." },
+		"Write the game's log to debug.txt, beside the data. false writes none,\n"
+		"which spares the storage a write for each line; nothing is kept to say\n"
+		"what went wrong. Changes at once." },
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (read by the host before the game starts: port/android/host/host_main.c,
+	port/switch/host/host_main.c, port/ps5/host/host_main.c) */
+	{ "debug.halo_log", _config_boolean, "true", "HALO_HALO_LOG", _environment_value, PLATFORM_HOST,
+		"Write the program's log to halo.log too, begun again each start: beside\n"
+		"the data on Android (logcat's lines of tag \"halo\"), beside the program\n"
+		"on the Switch (nxlink's), in /data/halo on the PS5 (the kernel log's).\n"
+		"false writes none. Takes effect the next start." },
+#endif
 	{ "debug.texture_log", _config_boolean, "false", "HALO_TEXTURE_LOG", _environment_set_is_true, _platform_all,
 		"Log texture uploads." },
 	{ "debug.texture_no_cache", _config_boolean, "false", "HALO_TEXTURE_NO_CACHE", _environment_set_is_true, _platform_all,
@@ -1656,6 +1676,23 @@ static const struct config_setting config_settings[] =
 	{ "debug.vk_present_marker", _config_boolean, "false", "HALO_VK_PRESENT_MARKER", _environment_set_is_true, PLATFORM_VULKAN,
 		"Under the Vulkan renderer, draw a red square at the top left and a green one\n"
 		"at the top right of the picture, so that a screenshot shows which way up it is." },
+	{ "debug.vk_static_geometry", _config_boolean, "true", "HALO_VK_STATIC_GEOMETRY", _environment_set_is_true,
+		PLATFORM_VULKAN,
+		"Under the Vulkan renderer, draw the map's geometry (written once as it loads)\n"
+		"from a copy made the first time it is drawn, rather than copying it at each\n"
+		"draw. false copies it at each draw, as before." },
+	{ "debug.custom_edition_elsewhere", _config_boolean, "false", "HALO_CUSTOM_EDITION_ELSEWHERE", _environment_set_is_true,
+		PLATFORM_HOST,
+		"Put Custom Edition's tag cache somewhere other than 0x40440000 even where\n"
+		"that address is free, and move its maps' addresses there, as on a phone\n"
+		"whose Java runtime holds 0x40440000. For testing that move." },
+	{ "debug.vk_static_check", _config_boolean, "false", "HALO_VK_STATIC_CHECK", _environment_set_is_true, PLATFORM_VULKAN,
+		"Under the Vulkan renderer, compare the game's static geometry with what was\n"
+		"copied every 60 frames and log a range that changed (it would be drawn stale)." },
+	{ "debug.vk_render_thread", _config_boolean, "true", "HALO_VK_RENDER_THREAD", _environment_set_is_true, _platform_android,
+		"Under the Vulkan renderer, record the game's commands, hand them to the\n"
+		"driver and present on a thread of their own, while the game makes the next\n"
+		"frame. false runs them on the game's thread, as before." },
 	{ "debug.vk_self_test", _config_boolean, "false", "HALO_VK_SELF_TEST", _environment_set_is_true, PLATFORM_VULKAN,
 		"Under the Vulkan renderer, try the renderer's clears and the copying of a\n"
 		"draw's data on small targets of its own at start-up; the log says ok or FAILED." },
@@ -2410,7 +2447,8 @@ static void config_replace_string(const char *name, const char *text)
 
 /* settings added after an older one that meant both: a file that has
 game.ragdoll and not game.ragdoll_players or game.ragdoll_ai gives that
-value to the one it lacks (a new file has both, at "none") */
+value to the one it lacks (a new file has both, at "none"), and one with
+debug.log_files false and no debug.halo_log has that false too */
 static void config_apply_older_settings(toml_datum_t table)
 {
 	toml_datum_t legacy = toml_seek(table, "game.ragdoll");
@@ -2422,6 +2460,16 @@ static void config_apply_older_settings(toml_datum_t table)
 		if (toml_seek(table, "game.ragdoll_ai").type == TOML_UNKNOWN)
 			config_replace_string("game.ragdoll_ai", legacy.u.s);
 	}
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (debug.log_files false once meant no log file at all: the Switch's
+	halo.log neither) */
+	legacy = toml_seek(table, "debug.log_files");
+	if (legacy.type == TOML_BOOLEAN && !legacy.u.boolean &&
+		toml_seek(table, "debug.halo_log").type == TOML_UNKNOWN && config_setting_index("debug.halo_log") >= 0)
+	{
+		config_values[config_setting_index("debug.halo_log")].boolean = 0;
+	}
+#endif
 }
 
 /* whether length bytes of text are word, in any case (ASCII) */
@@ -2913,16 +2961,39 @@ static void config_load(void)
 	config_check_words();
 }
 
+/* values a setting no longer takes, written over as the file is first read:
+display.vk_driver's "auto" (Turnip, which the launcher downloads, chosen by
+the GPU) is the phone's own driver now, and the downloaded archive a driver
+of the list like any other (Video Setup) */
+static void config_retire_values(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH) && !defined(HALO_PS5)
+	long index = config_setting_index("display.vk_driver");
+
+	if (index >= 0 && config_values[index].string && !strcmp(config_values[index].string, "auto"))
+	{
+		platform_log("settings: display.vk_driver \"auto\" is no more; \"\" (the phone's own driver)");
+		config_write("display.vk_driver", "");
+	}
+#endif
+}
+
 /* the file read, the first time a setting is asked for */
 static void config_ensure_loaded(void)
 {
+	int first = 0;
+
 	pthread_mutex_lock(&config_lock);
 	if (!config_loaded)
 	{
 		config_load();
 		config_loaded = 1;
+		first = 1;
 	}
 	pthread_mutex_unlock(&config_lock);
+	/* (config_write takes the lock itself) */
+	if (first)
+		config_retire_values();
 }
 
 static const struct config_value *config_profile_value(int player, long index);

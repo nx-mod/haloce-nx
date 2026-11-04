@@ -1,5 +1,51 @@
 # Changelog
 
+## Build 135: Hotfix for the Turnip crash, and mod packs import!
+
+- Vulkan: on some phones with the Turnip driver (an Adreno 750 phone, for one), the game crashed a moment after it started drawing at the screen's size. It was a bug in the driver, which the game no longer runs into. (thelinkin3000)
+- Mods: on Android, IMPORT takes a .zip with a whole pack of mods, each in a folder of its own at the .zip's top, as well as a .zip of one mod. Mods you already have are skipped and named, and a .zip that can't be imported no longer stops the others. (thelinkin3000)
+- Android: how an import or an export went (maps, mods, drivers, replays) is written to the log as well as shown on screen, so a log you send in says what happened. (thelinkin3000)
+- Vulkan: the renderer's counts, two long lines every second, are only written with `debug.gpu_stats`. Without it, a line is written only when draws were skipped. They were most of the log. (thelinkin3000)
+
+## Build 134: Vulkan runs faster, and long replays play on Switch!
+
+- Custom Edition maps: on phones where Android already uses the memory Custom Edition maps are made for (a Galaxy Z Fold, for one), the maps now load somewhere else and play, instead of never showing up in the map lists. Where they can't run at all, IMPORT says so instead of importing maps you would never see. (thelinkin3000)
+- Vulkan: the renderer now records and presents its frames on its own thread, so the game's thread no longer waits on the graphics driver. A frame's work goes to the GPU before the game waits for a screen image, so the GPU starts sooner. (thelinkin3000)
+- Vulkan: a map's walls and floors are copied to the GPU once when the map loads, instead of being sent again every frame. Small effects (HUD, text, particles) send only what changed. This takes a large share of the CPU's per-frame work off. (thelinkin3000)
+- Vulkan: the GPU waits less between drawing a picture and reading it back, and the finished picture is shown with a draw instead of a copy, which is cheaper on phone GPUs. (thelinkin3000)
+- Android: the on-screen touch controls are redrawn only when something on them changes. Before, they were redrawn every frame, so the game ran faster with them hidden. (thelinkin3000)
+- Maps: on Android, IMPORT on the level lists copies .map files, and the maps inside .zip files, into custom_maps. (thelinkin3000)
+- Theater: long replays play on every platform. A 22-minute match's replay (46 MB, 152 MB unpacked) used to fail with "The replay cannot be read." It's now kept in the app's own memory instead of the game's. (thelinkin3000)
+- Switch: a map's mod textures are read from the SD card ahead of time, so the game no longer pauses to read each one the first time it shows up. In a 48-bot match the slowest 1% of frames went from 19 to 32 fps. (thelinkin3000)
+- Switch: a frame's work goes to the GPU before the game waits for a screen image, as on Vulkan. Looking up cached data now takes the game's thread less time. (thelinkin3000)
+- Benchmark: `debug.benchmark` accepts `replay:<file>:<seconds>` to measure a replay as it plays, and `debug.benchmark_manual` lets you play the benchmark match yourself. (thelinkin3000)
+
+## Build 133: Vulkan runs faster, and long replays play on Switch!
+
+- Vulkan: the renderer now records and presents its frames on its own thread, so the game's thread no longer waits on the graphics driver. A frame's work goes to the GPU before the game waits for a screen image, so the GPU starts sooner. (thelinkin3000)
+- Vulkan: a map's walls and floors are copied to the GPU once when the map loads, instead of being sent again every frame. Small effects (HUD, text, particles) send only what changed. This takes a large share of the CPU's per-frame work off. (thelinkin3000)
+- Vulkan: the GPU waits less between drawing a picture and reading it back, and the finished picture is shown with a draw instead of a copy, which is cheaper on phone GPUs. (thelinkin3000)
+- Android: the on-screen touch controls are redrawn only when something on them changes. Before, they were redrawn every frame, so the game ran faster with them hidden. (thelinkin3000)
+- Maps: on Android, IMPORT on the level lists copies .map files, and the maps inside .zip files, into custom_maps. (thelinkin3000)
+- Theater: long replays play on every platform. A 22-minute match's replay (46 MB, 152 MB unpacked) used to fail with "The replay cannot be read." It's now kept in the app's own memory instead of the game's. (thelinkin3000)
+- Switch: a map's mod textures are read from the SD card ahead of time, so the game no longer pauses to read each one the first time it shows up. In a 48-bot match the slowest 1% of frames went from 19 to 32 fps. (thelinkin3000)
+- Switch: a frame's work goes to the GPU before the game waits for a screen image, as on Vulkan. Looking up cached data now takes the game's thread less time. (thelinkin3000)
+- Benchmark: `debug.benchmark` accepts `replay:<file>:<seconds>` to measure a replay as it plays, and `debug.benchmark_manual` lets you play the benchmark match yourself. (thelinkin3000)
+
+## Build 132: Faster Vulkan and compatibility with older phones!
+
+- Vulkan: phones whose own Vulkan driver lacks dynamic rendering (Samsung's Mali phones, older Adreno phones such as the Nokia 8) now run the Vulkan renderer on that driver instead of falling back to OpenGL ES. A 48-bot match on a Galaxy S21 FE (Exynos 2100) runs at about 71 fps, where the open-source PanVK driver managed 33 to 39. (thelinkin3000)
+- Vulkan: the renderer no longer makes the GPU finish all its work at every change of render target, which phone GPUs pay for most; on a Galaxy S21 FE with its own driver that took about a tenth off the GPU's time in a busy frame. (thelinkin3000)
+- Vulkan: Video Setup's VULKAN DRIVER lists STOCK and then every driver archive in the freedreno_drivers folder by its name, including the Turnip build the app downloads for Adreno phones. TURNIP is gone from the list, and a vk_driver = "auto" left in config.toml becomes STOCK. (thelinkin3000)
+- Vulkan: IMPORT DRIVER in Video Setup (Android, with VULKAN chosen) adds Vulkan driver archives (.zip) from your phone's files, checking each one is a driver first; it's listed the next time you open Video Setup. (thelinkin3000)
+- Vulkan: if Vulkan can't start on your phone, the game sets GRAPHICS BACKEND to OPENGL, so Video Setup shows what's actually running. (thelinkin3000)
+- Android: on phones whose CPU timer reports the wrong speed (the Galaxy S21 FE's Exynos 2100), the game no longer freezes: the main menu's background moves, a campaign loads after Choose Difficulty, and the menus keep responding after you create a profile. (thelinkin3000)
+- Theater: on Android, IMPORT adds replays from your phone's files. (thelinkin3000)
+- Mods: on Android, IMPORT adds a mod from a .zip of its folder, and DELETE deletes the selected mod after asking. (thelinkin3000)
+- Saved games: checkpoints are kept in memory instead of written to storage, so a checkpoint no longer holds up the game's other reads and writes for seconds (most noticeable on Switch in co-op). (thelinkin3000)
+- Replays and logs: the replay recording and debug.txt are written in the background, so writing them no longer drops frames (on Switch, a dropped frame every five seconds while recording). The overlay menu's System folder can turn off Write debug.txt and Write halo.log, on every platform. (thelinkin3000)
+- Switch: a large write to the SD card no longer keeps the game's other reads and writes waiting until it finishes. (thelinkin3000)
+
 ## Build 131
 
 - Saved games: a checkpoint or Save and Quit made on Android, Switch or PS5 is no longer lost between runs. The game's memory can land somewhere else each time it starts, and a save made with it elsewhere was refused; such saves now load, and so do saves made before this build. (thelinkin3000)

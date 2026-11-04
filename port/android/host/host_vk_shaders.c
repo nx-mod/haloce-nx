@@ -1078,6 +1078,10 @@ static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule ve
 	info.pDynamicState = &dynamic;
 	info.layout = B.draw_layout;
 	info.basePipelineIndex = -1;
+	/* (a driver without dynamic rendering: a render pass of the renderings' formats and samples, host_vk_passes.c) */
+	info.renderPass = host_vk_pass_for_pipeline(&rendering, multisample.rasterizationSamples, 1);
+	if (info.renderPass)
+		info.pNext = rendering.pNext;
 	if (!HOST_VK_CHECK(vkCreateGraphicsPipelines(B.device, B.pipeline_cache, 1, &info, NULL, &pipeline)))
 		return VK_NULL_HANDLE;
 	return pipeline;
@@ -1432,6 +1436,8 @@ void host_vk_services_tick(void)
 
 void host_vk_exit(void)
 {
+	/* (what was handed over is run first: its pipelines go into the cache) */
+	host_vk_render_thread_drain();
 	if (S.started)
 	{
 		pthread_mutex_lock(&S.lock);
@@ -1464,6 +1470,10 @@ int host_vk_backend_ensure(void)
 
 	if (!host_vk.instance)
 		return 0;
+	/* (made already: without the lock, which the render thread holds while it runs a stream - the shader service is
+	asked on the game's thread) */
+	if (__atomic_load_n(&B.state, __ATOMIC_ACQUIRE) == 1)
+		return !__atomic_load_n(&B.dead, __ATOMIC_RELAXED);
 	pthread_mutex_lock(&B.lock);
 	if (B.state == 0)
 		host_vk_device_ensure_locked();
