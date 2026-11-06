@@ -16,6 +16,11 @@ def test_depth_batch():
     status,output=run(build('plasma_collision',(('under_test.inc',code()),)),'batch')
     assert status==0,output
 
+def test_past_the_object_limit_negative_control():
+    broken=code().replace('if (batch.count == TRACE_OBJECTS) return NULL;','if (batch.count == TRACE_OBJECTS) { batch.failed = 1; return NULL; }')
+    status,output=run(build('plasma_collision',(('under_test.inc',broken),)),'batch')
+    assert status==CHECK_FAILED and 'no stock queries' in output,output
+
 def test_child_gating_regression():
     broken=code().replace('object->eligible && trace_sphere(object, vector)', 'object->eligible')
     status,output=run(build('plasma_collision',(('under_test.inc',broken),)),'batch')

@@ -105,8 +105,15 @@ int main(int argc,char **argv)
  setup();debug_collision_skip_objects=1;plasma_collision_begin(flags,&p,NONE);
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==2,"debug skips objects");plasma_collision_end();
  setup();bad_leaf=1;plasma_collision_begin(flags,&p,NONE);CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f && stock_calls==1,"malformed leaf uses diagnostic stock path");plasma_collision_end();
- setup();root_count=600;plasma_collision_begin(flags,&p,NONE);CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f && stock_calls==1,"capacity overflow falls back");
- CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f && stock_calls==2,"overflow remains stock for batch");plasma_collision_end();
+ setup();root_count=600;plasma_collision_begin(flags,&p,NONE);
+ CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls,"past the object limit, those it has still block, with no stock queries");
+ CHECK(batch.count==512 && !batch.failed,"and the batch stays a batch");
+ CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls,"for its other rays too");plasma_collision_end();
+ setup();root_count=600;object_depth[599]=.1f;structure_depth=.65f;plasma_collision_begin(flags,&p,NONE);
+ CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.65f && !stock_calls,"the BSP's hit stands for every ray, and an object past the limit is not tested");plasma_collision_end();
+ setup();root_count=1;objects[0].object.first_child_object_index=1;object_depth[1]=.1f;
+ plasma_collision_begin(flags,&p,NONE);batch.count=512;batch.lookup[0]=1;batch.objects[0].index=0;batch.objects[0].eligible=1;batch.objects[0].child=1;batch.objects[0].next=NONE;batch.objects[0].sphere_distance=-1;
+ CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls && !batch.failed,"a child past the limit is left out, not a failure");plasma_collision_end();
  setup();plasma_collision_begin(0,&p,NONE);CHECK(plasma_collision_depth(0,&p,&v,NONE)==.123f,"unsupported flags use stock");plasma_collision_end();
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f,"inactive query uses stock");
  setup();plasma_collision_begin(flags,&p,NONE);

@@ -1,7 +1,9 @@
 /* A depth-only batch for the visibility field. The simulation cannot advance
    during these synchronous render queries. Cache cluster membership and object
    metadata for this batch, but use the engine's exact BSP/model intersection
-   routines for every ray. Overflow or unsupported inputs use the stock query. */
+   routines for every ray. Unsupported or malformed inputs use the stock query.
+   port: past the object limit, the objects it has count, and the BSP for every
+   ray: rerunning all of them through the stock query would double a busy view. */
 #include "cseries.h"
 #include "plasma_collision.h"
 #include "physics/collisions.h"
@@ -160,7 +162,7 @@ static struct trace_object *trace_object(long index)
 		batch.failed = 1;
 		return NULL;
 	}
-	if (batch.count == TRACE_OBJECTS) { batch.failed = 1; return NULL; }
+	if (batch.count == TRACE_OBJECTS) return NULL;
 	object = object_get(index);
 	cached = &batch.objects[batch.count++];
 	batch.lookup[slot] = (unsigned short)batch.count;
@@ -250,9 +252,13 @@ static void trace_cluster(long cluster, real_vector3d const *vector, real *depth
 			index = cluster_get_next_collideable_object(&reference))
 		{
 			struct trace_object *object = trace_object(index);
-			if (!object) return;
+			if (!object)
+			{
+				if (batch.failed) return;
+				break;
+			}
 			if (!object->eligible && object->next == NONE) continue;
-			if (batch.references == TRACE_REFERENCES) { batch.failed = 1; return; }
+			if (batch.references == TRACE_REFERENCES) break;
 			batch.roots[batch.references++] = index;
 		}
 		batch.clusters[cluster].count = batch.references - batch.clusters[cluster].first;
