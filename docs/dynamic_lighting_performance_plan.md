@@ -53,8 +53,8 @@ All on the Switch Lite at 720p with the profiler on. Each comparison is two pass
 ## What's next
 
 1. **Check the Nokia 8.** It is a target, and nothing has run on it. Its 4 ms budget is a guess, and a result there could change the rest of this list. Android's other phones and the PS5 get checked for the picture at the same time, once their images are built.
-2. **Fewer light reconnects** (Phase 5, item 2). The largest cost not yet touched, and it should show the most in 48-player matches. The audit comes first: if simulation queries depend on them, this stops here.
-3. **A cap on promoted lights** (Phase 5, item 3). The most direct cut to lighting's cost in a firefight, about a third of which is outside occlusion. It changes the picture, so you judge it.
+2. **Fewer light reconnects** (Phase 5, item 2). The per-tick path is done, not yet measured. See that item for what's left.
+3. **A cap on promoted lights** (Phase 5, item 3). Occlusion's cost is already limited by the budget, so a cap wouldn't cut most of that. It would cut the promoted lights' reconnects, their part of the draws and some of their selection, perhaps 2 to 3 ms in a 48-player match by estimate. How many lights are promoted a view isn't measured yet. It changes the picture, so you judge it.
 4. **NEON** (Phase 4). Estimated at 0.5 to 1 ms a frame on both targets, as `update_field` is about 1.6 ms in a firefight. Most useful in campaign firefights.
 5. **Android's limits adapt** (Phase 5, items 4 and 5), after the Nokia 8 shows what they need to do.
 6. **The rest of Phase 3, by what a profile still shows.** Tag names are now a small part of what's left. PS5's profile (item 8) stays on the list.
@@ -144,7 +144,7 @@ Port the SSE field rebuild (`plasma_occlusion.c:295`) to NEON, and vectorize the
 ## Phase 5: Limit firefight lights
 
 1. **Constant-time attachment lookup,** removing the quadratic scans (up to 128 attachments).
-2. **Fewer reconnects:** only attachments that are lit and near the view reconnect to the map. Whether glows can stay connected between frames depends on what simulation queries see, so that gets audited first, and is left alone if it isn't safe.
+2. **Fewer reconnects:** the audit found only one simulation read of the light lists, a unit's `ambient_illumination`. Only a debug line uses it, and it already depends on what that machine drew, so this can't affect sync. An attached light now always takes its new position on a tick, and only leaves and joins its clusters once it is a quarter of a unit from where it joined (or a quarter of its radius, if that is less), or its radius changes. Still reconnecting every time: promoted lights, twice a view (`light_port_refresh_attachment`, 29% of reconnect time when joining a 48-player match), which a cap on promoted lights reduces directly. Filtering by lit or near the view wasn't needed for this step.
 3. **A per-platform cap on promoted lights per view,** ranked by importance, with a per-platform radius scale (today 1.75 to 2.75 times, so about 3 to 7.5 times the lit area). Lights over the cap stay stock. Starting caps, to tune by eye: Switch 6, Android 8, PS5 none.
 
 4. **Android's time limit adapts.** N becomes what's left of the frame after everything else on the game thread, smoothed over about half a second, with a floor that keeps a held-weapon light working on the Nokia 8 and a ceiling of 4 to 5 ms, so fast phones don't heat up until they throttle. It uses the game thread's busy time, excluding the wait for present, against the display's real refresh rate. A debug key pins N, so test runs stay comparable.

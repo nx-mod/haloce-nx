@@ -53,6 +53,7 @@ void lights_illumination_at_point(union real_point3d const *point, struct locati
 
 void light_disconnect_from_map(long light_index);
 void light_reconnect_to_map(long light_index);
+void light_move_with_object(long light_index);
 void lights_disconnect_from_structure_bsp(
 	void);
 void lights_reconnect_to_structure_bsp(

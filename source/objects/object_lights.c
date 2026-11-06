@@ -527,6 +527,15 @@ struct lights_port_entry
 	real_point3d position;
 	real radius;
 };
+/* port: the sphere each light last joined its clusters with (light_move_with_object).
+Not in the game state: a light not found here just joins them again. */
+static struct lights_port_connection
+{
+	long light_index;
+	long cluster_reference;
+	real_point3d center;
+	real radius;
+} lights_port_connections[MAXIMUM_LIGHTS_PER_MAP];
 static struct
 {
 	/* each light's radius or rasterizer light written (lights_preprocess_scene) */
@@ -886,6 +895,7 @@ int light_port_dynamic_set(long light_index, long object_index, int enabled)
 void lights_initialize_for_new_map(
 	void)
 {
+	memset(lights_port_connections, 0, sizeof(lights_port_connections));
 	muzzle_lighting_forget(); /* port: discard render-owned pulse identities */
 	covenant_lighting_forget(); /* port: discard owned Covenant light identities */
 	covenant_emitter_lighting_forget(); /* port: discard render-owned emitter identities */
@@ -904,6 +914,7 @@ void lights_initialize_for_new_map(
 void lights_dispose_from_old_map(
 	void)
 {
+	memset(lights_port_connections, 0, sizeof(lights_port_connections));
 	muzzle_lighting_forget(); /* port: discard render-owned pulse identities */
 	covenant_lighting_forget(); /* port: discard owned Covenant light identities */
 	covenant_emitter_lighting_forget(); /* port: discard render-owned emitter identities */
@@ -1689,6 +1700,7 @@ void light_disconnect_from_map(
 			light_index,
 			&light->cluster_reference);
 		SET_FLAG(light->flags, _point_light_connected_to_map_bit, FALSE);
+		lights_port_connections[DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index)].light_index = NONE;
 	}
 
 	return;
@@ -2211,15 +2223,11 @@ void lights_render_specular(
 	return;
 }
 
-void light_reconnect_to_map(
-	long light_index)
+/* port: where a light is now, from what it is attached to */
+static void light_compute_pose(
+	struct light_datum *light)
 {
-	struct light_datum *light = light_get(light_index);
-	struct point_light_definition *definition = light_definition_get(light->definition_index);
 	struct object_marker markers[1];
-	struct location location;
-	real_point3d position;
-	real radius;
 
 	if (light->parent_light_index == NONE)
 	{
@@ -2242,8 +2250,21 @@ void light_reconnect_to_map(
 		normalize3d(&light->up);
 	}
 
+	return;
+}
+
+static void light_connect_to_clusters(
+	long light_index)
+{
+	struct light_datum *light = light_get(light_index);
+	struct location location;
+	real_point3d position;
+	real radius;
+
 	if (TEST_FLAG(light->flags, _point_light_connects_to_map_bit))
 	{
+		struct lights_port_connection *connection;
+
 		light_compute_bounding_sphere(
 			light_index,
 			TRUE,
@@ -2271,7 +2292,84 @@ void light_reconnect_to_map(
 			radius,
 			&location);
 		SET_FLAG(light->flags, _point_light_connected_to_map_bit, TRUE);
+		connection = &lights_port_connections[DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index)];
+		connection->light_index = light_index;
+		connection->cluster_reference = light->cluster_reference;
+		connection->center = position;
+		connection->radius = radius;
 	}
+
+	return;
+}
+
+void light_reconnect_to_map(
+	long light_index)
+{
+	light_compute_pose(light_get(light_index));
+	light_connect_to_clusters(light_index);
+
+	return;
+}
+
+/* port: whether a light's clusters still hold for where it is now: it joined them
+with this radius, a short way from here. At the edge of a sphere a light gives
+almost nothing, so a cluster it reaches a little late or leaves a little late
+doesn't show. */
+static boolean light_stays_connected(
+	long light_index,
+	struct light_datum const *light)
+{
+	struct lights_port_connection const *connection =
+		&lights_port_connections[DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index)];
+	real_point3d position;
+	real radius, reach, dx, dy, dz;
+
+	if (connection->light_index != light_index ||
+		connection->cluster_reference != light->cluster_reference ||
+		!TEST_FLAG(light->flags, _point_light_connected_to_map_bit))
+	{
+		return FALSE;
+	}
+	light_compute_bounding_sphere(light_index, TRUE, FALSE, TRUE, &position, &radius);
+	if (radius != connection->radius)
+	{
+		return FALSE;
+	}
+	reach = MIN(0.25f, radius * 0.25f);
+	dx = position.x - connection->center.x;
+	dy = position.y - connection->center.y;
+	dz = position.z - connection->center.z;
+	return dx * dx + dy * dy + dz * dz <= reach * reach;
+}
+
+/* port: a light on an object that moved, on every tick, for every attached light:
+at 48 players, 5 to 8% of the game thread, nearly all of it leaving and joining
+clusters. Only what is drawn reads the lists (units' ambient_illumination, the
+one simulation read, depends on what was drawn, and only a debug line uses it),
+so a light always takes its new position, and only joins its clusters again once
+it has gone far enough. */
+void light_move_with_object(
+	long light_index)
+{
+	struct light_datum *light = light_get(light_index);
+	real_point3d previous = light->position;
+
+	light_compute_pose(light);
+	if (!TEST_FLAG(light->flags, _point_light_connects_to_map_bit))
+	{
+		return;
+	}
+	if (light_stays_connected(light_index, light))
+	{
+		/* (what lights_port_cluster kept has its old position) */
+		if (previous.x != light->position.x || previous.y != light->position.y || previous.z != light->position.z)
+		{
+			lights_port.radius_writes++;
+		}
+		return;
+	}
+	light_disconnect_from_map(light_index);
+	light_connect_to_clusters(light_index);
 
 	return;
 }
@@ -2346,8 +2444,8 @@ static void find_point_light_for_object(
 far it reaches, kept while none of that changes: while the light partition's
 lists (cluster_partitions.c's port_modification_count) and the lights' radii
 and rasterizer lights (lights_port.radius_writes, written as a frame's lights
-are prepared) are as they were; a light only moves as it joins its clusters
-again. An object lit (each object drawn, each shadow) then passes over the
+are prepared) are as they were; a light that moves either joins its clusters
+again or counts as a radius write (light_move_with_object). An object lit (each object drawn, each shadow) then passes over the
 lights too far to reach it without their datums or the list's: with hundreds
 of lights in a cluster (network co-op's extra enemies), reading them was
 most of a frame's lighting. FALSE: not kept (the list walked as before). */

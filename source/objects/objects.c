@@ -4761,6 +4761,12 @@ static void object_connect_lights(
 		{
 			if (!object->object.attachment_types[i] && object->object.attachment_indices[i]!=NONE)
 			{
+				/* port: moved: its clusters may well still hold */
+				if (disconnect && reconnect)
+				{
+					light_move_with_object(object->object.attachment_indices[i]);
+					continue;
+				}
 				if (disconnect)
 				{
 					light_disconnect_from_map(object->object.attachment_indices[i]);
