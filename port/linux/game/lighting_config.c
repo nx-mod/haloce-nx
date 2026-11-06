@@ -140,8 +140,15 @@ int lighting_config_boolean(const char *name)
 	return config_boolean(name);
 }
 
-/* the overlay's comparison of grids for a moving light: for this run, not saved */
+/* A moving light's grid. The Switch traces 384 rays: at a Pillar of Autumn firefight,
+   59.6 fps to 1,536's 57.1, with room for more lights to have occlusion
+   (docs/dynamic_lighting_performance_plan.md). The overlay can change it for this
+   run, to compare; it is not saved. */
+#if defined(HALO_SWITCH)
+static int moving_lights_384 = 1;
+#else
 static int moving_lights_384;
+#endif
 int lighting_moving_lights_384(void)
 {
 	return moving_lights_384;

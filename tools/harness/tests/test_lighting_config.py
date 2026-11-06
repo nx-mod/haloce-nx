@@ -58,3 +58,14 @@ def test_lookups_negative_controls(before,after,expected):
     assert code.count(before)==1
     status,output=run(build('lighting_config',(('under_test.inc',code.replace(before,after)),)),'lookups')
     assert status==CHECK_FAILED and expected in output,output
+
+
+@pytest.mark.parametrize('flags,expected', [
+    (('-DHALO_ANDROID=1', '-DHALO_SWITCH'), 'MOVING 1'),
+    (('-DHALO_ANDROID=1', '-DHALO_PS5=1'), 'MOVING 0'),
+    (('-DHALO_ANDROID=1',), 'MOVING 0'),
+])
+def test_each_platform_has_its_moving_grid(flags,expected):
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'moving')
+    assert status==0 and expected in output,output
