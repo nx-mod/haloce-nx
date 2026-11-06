@@ -24,14 +24,14 @@ The Android GL image links the lighting stub, so a phone that fell back to `disp
 ## Phase 1: Cut the rays
 
 1. **Held-weapon lights use the 96-ray grid** in place of 1,536, and keep occlusion. That covers the AR screen, Needler crystals, held fuel rods, and first-person and hand-held muzzle flashes. Vehicle guns keep the full grid, as their radius is 5 to 7 units.
-2. **A per-frame ray budget replaces the 12 ms limit** (`plasma_occlusion.c:460`), which never limits anything at 60 fps. New lights go first, then the most out-of-date. The rest reuse their depths, which the field rebuild can already offset for a moved light, up to a limit on how far it has moved.
-3. **A per-platform budget table** goes in `lighting_config.c`, for active fields and rays per frame. Starting values, to tune by eye:
+2. **A per-frame budget for occlusion.** The 12 ms limit (`plasma_occlusion.c:460`) never limits anything at 60 fps, so it stays only as the shortest gap between traces, which matters at 120 fps. New lights go first, then the most out-of-date. The rest reuse their depths, which the field rebuild can already offset for a moved light, up to a limit on how far it has moved. Each frame always traces at least one light.
+3. **A per-platform budget table** goes in `lighting_config.c`. The Switch and PS5 count rays. Android counts time, because its phones differ too much for one ray count:
 
-   | Platform | Fields | Rays per frame |
+   | Platform | Fields | Limit per frame |
    | --- | --- | --- |
-   | Switch | 3 | 1,800 |
-   | Android | 4 | 3,200 |
-   | PS5 | 8 | No limit |
+   | Switch | 3 | 1,800 rays |
+   | Android | 8 | 4 ms of occlusion work (fixed for now: Phase 5 makes it adapt) |
+   | PS5 | 8 | None yet (Phase 3 profiles it) |
 
 4. **A batch overflow stops costing double.** Past 512 objects (`plasma_collision.c:163,364`), keep the BSP results and skip the objects, without rerunning every ray through the stock query.
 
@@ -65,6 +65,8 @@ This matters most on the Nokia 8, where every upload now splits a render pass.
 6. **Moving lights:** skip the scene check (`plasma_occlusion.c:477`) until the light stops.
 7. **Lighting off:** stop the frame-end dispose from running every frame (`plasma_lighting.c:156`).
 
+8. **PS5 profile:** at 4K 120 fps the whole frame is 8.3 ms, so 12,288 rays could matter even on that CPU. Profile it here, and set its limit from that. It can use the time limit if a fixed one doesn't fit.
+
 **Done when:** the harnesses pass, and the forced-off switches and menu behave as before.
 
 ## Phase 4: NEON
@@ -76,6 +78,9 @@ Port the SSE field rebuild (`plasma_occlusion.c:295`) to NEON, and vectorize the
 1. **Constant-time attachment lookup,** removing the quadratic scans (up to 128 attachments).
 2. **Fewer reconnects:** only attachments that are lit and near the view reconnect to the map. Whether glows can stay connected between frames depends on what simulation queries see, so that gets audited first, and is left alone if it isn't safe.
 3. **A per-platform cap on promoted lights per view,** ranked by importance, with a per-platform radius scale (today 1.75 to 2.75 times, so about 3 to 7.5 times the lit area). Lights over the cap stay stock. Starting caps, to tune by eye: Switch 6, Android 8, PS5 none.
+
+4. **Android's time limit adapts.** N becomes what's left of the frame after everything else on the game thread, smoothed over about half a second, with a floor that keeps a held-weapon light working on the Nokia 8 and a ceiling of 4 to 5 ms, so fast phones don't heat up until they throttle. It uses the game thread's busy time, excluding the wait for present, against the display's real refresh rate. A debug key pins N, so test runs stay comparable.
+5. **The promoted-light cap adapts on Android.** The time limit can't help if the GPU is the bottleneck, so the cap steps down and up like the Switch's `dynamic_resolution` (`d3d8_dk.c:112`): drop quickly, rise slowly, with a hold in between. Vulkan's per-frame GPU time outside its profiler still needs checking.
 
 This phase visibly changes the picture, so you judge it.
 
@@ -95,7 +100,3 @@ This phase visibly changes the picture, so you judge it.
 - Harnesses show no new failures against the 159 that already fail.
 - After each phase, the Switch Lite and Nokia 8 are tried in a firefight, and PS5 is checked for the picture, since most of this code is shared. You run those, or tell me when I can use a device.
 - Each phase can be reverted on its own, so a visual regression stays easy to isolate.
-
-## Open decision
-
-**One Android budget, or tiers?** Android's budget is compile-time, so sizing it for the Nokia 8 also limits the Adreno 750 tablet. The recommendation is one budget now, with a `display.*` setting to raise it added in Phase 1 if faster phones look worse.
