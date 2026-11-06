@@ -8,4 +8,6 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 void ammo_counter_falloff_window(void);
 void ammo_counter_falloff_dispose(void);
 
+int plasma_direction_moved(const float from[3], const float to[3]);
+
 #endif

@@ -724,6 +724,43 @@ int main(int argc, char **argv)
 		budget_now.fields=8;held_emitter=NONE;rasterizer_lights.light_count=1;
 		plasma_occlusion_reset();
 	}
+	/* a weapon's sway doesn't rebuild its mask; a real turn does */
+	{
+		int before;
+		IDirect3DVolumeTexture8 *t;
+		unsigned long pixel;
+		float tr[4];
+		blocked=0;directional_on=1;directional_axis[0]=-.8f;directional_axis[1]=0;directional_axis[2]=.6f;
+		time_ms+=200;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		t=plasma_occlusion_texture(0,0);before=uploads;pixel=t->pixels[(8*16+8)*16];
+		/* 2 degrees */
+		directional_axis[0]=-.7986f;directional_axis[2]=.6018f;
+		before=uploads;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		t=plasma_occlusion_texture(0,0);
+		CHECK(uploads==before&&t->pixels[(8*16+8)*16]==pixel,"a small sway rebuilds nothing, and the mask stays as built");
+		/* 25 degrees */
+		directional_axis[0]=-.47f;directional_axis[2]=.883f;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		plasma_occlusion_texture(0,0);
+		CHECK(uploads==before+1,"a real turn rebuilds the mask");
+		plasma_occlusion_reset();
+		/* without a field: the unoccluded mask behaves the same */
+		emitter_on=1;emitter_occlusion=0;
+		directional_axis[0]=-.8f;directional_axis[2]=.6f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)!=NULL,"the unoccluded mask is made");
+		before=uploads;
+		directional_axis[0]=-.7986f;directional_axis[2]=.6018f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==before,"and sways without a rebuild too");
+		directional_axis[0]=-.47f;directional_axis[2]=.883f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==before+1,"and turns with one");
+		emitter_on=emitter_occlusion=directional_on=0;
+		directional_axis[0]=-.8f;directional_axis[2]=.6f;
+		plasma_occlusion_reset();
+	}
 	/* a limit in rays: three moving lights share it, in turn, and none is left out */
 	{
 		int traced[3],light,frame,seen[3]={0,0,0};

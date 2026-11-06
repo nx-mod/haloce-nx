@@ -278,3 +278,17 @@ def test_lights_come_before_the_first_draw():
     flares = source.index('lights_submit_queued_lens_flares();')
     assert lights < sky < flares
     assert 'queued_lens_flares[queued' not in __import__('harness').function(read('source/objects/object_lights.c'), 'lights_preprocess_scene')
+
+
+@pytest.mark.parametrize('after,expected', [
+    # always rebuilds: the unchanged direction's check is the first to see it
+    ('< 1.1f', 'specular reuses'),
+    # never rebuilds
+    ('< -2.0f', 'rotating a counter'),
+])
+def test_sway_negative_controls(after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    before = '< 0.9962f'
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
+    assert status == CHECK_FAILED and expected in output, output

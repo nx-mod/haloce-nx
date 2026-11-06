@@ -913,7 +913,7 @@ static void *field_texture(struct occlusion_field *field, int pass, long rasteri
 	/* Directional profiles can rotate without changing collision visibility.
 	   Needler's lower-height fade is independent of the weapon's aim. */
 	if (directional != field->directional ||
-		(directional && directional != 2 && memcmp(axis, field->direction, sizeof(field->direction))))
+		(directional && directional != 2 && plasma_direction_moved(field->direction, axis)))
 	{
 		field->texture_mask = 0;
 		field->directional = directional;
@@ -930,7 +930,8 @@ static void *field_texture(struct occlusion_field *field, int pass, long rasteri
 		return field->texture[pass];
 	{
 		unsigned long started = budget_clock();
-		void *texture = prepare_field_texture(field, pass, directional, axis);
+		/* (the direction it was last built for: see plasma_direction_moved) */
+		void *texture = prepare_field_texture(field, pass, directional, field->direction);
 		budget_charge(started);
 		return texture;
 	}

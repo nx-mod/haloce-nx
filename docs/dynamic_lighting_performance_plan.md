@@ -1,6 +1,6 @@
 # Dynamic Lighting Performance: Plan
 
-Written 2026-11-06, after a code audit of the `dynamic-lighting` branch. **Phase 1's code is done, and hasn't run on a device.** The later phases haven't been started.
+Written 2026-11-06, after a code audit of the `dynamic-lighting` branch. **The code for Phases 1 and 2 is done, and hasn't run on a device.** The later phases haven't been started.
 
 **Target devices:** the Switch Lite and the Nokia 8 (Snapdragon 835, Vulkan), the slowest phone at hand.
 
@@ -39,7 +39,7 @@ The Android GL image links the lighting stub, so a phone that fell back to `disp
 
 - A limit only changes who traces. With no limit (PS5), the planning step doesn't run.
 - Draws can't pick the order, or the first light drawn would always win, so the rays are given out before a view's first field.
-- A light that a draw asked for and was refused gets room held for it on the next view. Off-screen lights never reach that list, so they can't take the room. It fades in as overflow lights already did.
+- A light in view, or one a draw asked for, that was refused gets room held for it on the next view. Lights out of view with no draw asking never reach that list, so they can't take the room. It fades in as overflow lights already did.
 - A light short of rays offsets the depths it has. Past half its extent from them, it draws with no occlusion that view.
 - On Android, once the time is spent, a light with no new depths reuses last view's field if it is within a quarter of its extent, and otherwise draws with no occlusion. That also bounds the rebuild's cost, not only the rays'.
 
@@ -49,17 +49,19 @@ The Android GL image links the lighting stub, so a phone that fell back to `disp
 
 This matters most on the Nokia 8, where every upload now splits a render pass.
 
-1. **Update fields once per view, at the end of `lights_preprocess_scene`,** for lights that pass a frustum test, not lazily during draws. The on-demand path stays as a fallback for anything missed.
-2. **Upload them together,** so a view has one barrier pair on deko3d and one render pass split on Vulkan, not one per texture.
-3. **Try moving `render_sky` after light setup** (`render.c`). The sky is drawn first today, so the pass has already begun when fields upload. If nothing in the sky depends on the order, there is no split at all.
-4. **Build only the texture passes the light used last view.** A pass that turns out to be needed is built on demand.
-5. **Add a direct field upload on both backends:** linear pixels straight into the stream. This removes:
+1. **Update fields once per view, at the end of `lights_preprocess_scene`,** for lights that pass a frustum test, not lazily during draws. The on-demand path stays as a fallback for anything missed. A light in view that no draw has read for 4 views stops being updated, until one does. Short lights choose their fields first, so a held weapon doesn't lose out to a far light.
+2. **Upload them together,** so a view has one barrier pair on deko3d, not one per texture.
+3. **Light setup moves before `render_sky`,** which is the first draw, so under Vulkan the uploads interrupt no rendering. It draws nothing itself. The sky queues lens flares for it to submit, so `lights_submit_queued_lens_flares` runs just after the sky, still after the scene's own flares. A copy into a texture, and its barrier, also no longer make a waiting clear run in a rendering of its own.
+4. **Build only the texture passes the light used last view.** A new field gets a guess, the world's diffuse pass and models. A pass that turns out to be needed is built on demand.
+5. **Add a direct field upload on both backends:** linear pixels straight into the stream (`halo_field_texture_write`). This removes:
    - the swizzle and the unswizzle
    - `reach_note` (a known constant replaces it, for radial fields)
-   - the `malloc`
-   - the texture cache invalidation (`xbox_textures_dk.c:1056`, and the same in `xbox_textures_vk.c`)
+   - the `malloc` on Vulkan, which copies into its ring
+   - the texture cache invalidation (`xbox_textures_dk.c`, and the same in `xbox_textures_vk.c`)
    - Android's `mprotect` calls
-6. **Round the AR and prong direction,** here and in `ammo_counter_falloff.c:87`, so that a small sway doesn't rebuild the mask each frame.
+6. **Round the AR and prong direction** to 5 degree steps, here and in `ammo_counter_falloff.c`, so that a small sway doesn't rebuild the mask each frame.
+
+**What can still interrupt a pass under Vulkan:** a field missed by the frustum test or the pass guess, an image's first creation, and every view after a frame's first, which has already drawn when its uploads come.
 
 **Done when:** barriers and pass splits per view no longer grow with the field count, and the picture matches Phase 1 on both backends.
 

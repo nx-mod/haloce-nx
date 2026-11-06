@@ -52,6 +52,13 @@ float plasma_prong_falloff_factor(const float axis[3], float x, float y, float z
 	return t*t*(3.0f - 2.0f*t);
 }
 
+/* These masks are soft and broad, and rebuilding one costs all 4,096 texels and an
+   upload. A weapon sways on every frame, so one follows it in 5 degree steps. */
+int plasma_direction_moved(const float from[3], const float to[3])
+{
+	return from[0]*to[0] + from[1]*to[1] + from[2]*to[2] < 0.9962f;
+}
+
 void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[4])
 {
 	float axis[3], origin[3], radius, scale = 1.0f;
@@ -82,8 +89,7 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 	if (!counter)
 		return NULL;
 	/* Translation and radius change the transform, not the normalized mask. */
-	if (counter->profile != profile || (profile != 2 && (counter->axis[0] != axis[0] ||
-		counter->axis[1] != axis[1] || counter->axis[2] != axis[2])))
+	if (counter->profile != profile || (profile != 2 && plasma_direction_moved(counter->axis, axis)))
 	{
 		counter->mask = 0;
 		counter->profile = profile;
@@ -111,8 +117,8 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 				float dx = 2.0f*(x+0.5f)/COUNTER_SIZE - 1.0f;
 				float dy = 2.0f*(y+0.5f)/COUNTER_SIZE - 1.0f;
 				float dz = 2.0f*(z+0.5f)/COUNTER_SIZE - 1.0f;
-				float value = profile == 3 ? plasma_prong_falloff_factor(axis, dx, dy, dz) : profile == 2 ? needler_falloff_factor(dz * scale) :
-					ammo_counter_falloff_factor(axis, dx, dy, dz);
+				float value = profile == 3 ? plasma_prong_falloff_factor(counter->axis, dx, dy, dz) : profile == 2 ? needler_falloff_factor(dz * scale) :
+					ammo_counter_falloff_factor(counter->axis, dx, dy, dz);
 				float remaining = MAX(0.0f, 1.0f - dx*dx - dy*dy - dz*dz);
 				if (radial) value *= remaining*remaining;
 				pixels[(z*COUNTER_SIZE+y)*COUNTER_SIZE+x] = (unsigned long)(255.0f*value+0.5f)*0x01010101UL;
