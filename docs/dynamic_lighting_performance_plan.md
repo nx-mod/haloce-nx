@@ -70,7 +70,7 @@ This matters most on the Nokia 8, where every upload now splits a render pass.
 
 ## Phase 3: Remove the repeated CPU work
 
-1. **Config lookups:** enum-indexed flags in place of string comparisons (`lighting_config.c:67`), refreshed when settings change. Forced-off and `platform_off` keep working.
+1. **Config lookups:** done, with a small table from a name's address to its setting, so call sites and harness stubs stay as they are. Each source file has its own copy of a literal, so a setting has several addresses. With lighting off they took 5.9% of the game thread in a 48-bot Blood Gulch, more than with it on (2.7%), because a check then walks every setting it depends on.
 2. **Tag names:** a per-map table from tag to lighting profile, replacing the per-frame `strcmp` calls in the emitter, Covenant, rocket and muzzle modules.
 3. **Object walks:** one shared walk per view fills candidate lists for all the modules and the scene checks, replacing up to 5 walks plus 1 per field.
 4. **Ray batch:** generation stamps in place of the 307 KB memset (`plasma_collision.c:278`) and the 98 KB one at its end.

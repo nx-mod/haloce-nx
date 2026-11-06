@@ -2,6 +2,7 @@
    Cache values only until the settings generation changes; names and defaults
    remain owned by port_config.c. No map, object or host-policy state is cached. */
 #include "lighting_config.h"
+#include <stdint.h>
 #include <string.h>
 #include <xtl.h>
 
@@ -83,11 +84,48 @@ unsigned long lighting_budget_clock_us(void)
 	return (unsigned long)(count.QuadPart * 1000000 / frequency);
 }
 
+/* This runs per light and per draw, and with lighting off a check walks every
+   setting it depends on. Callers name settings with string literals, so a name's
+   address, once looked up, says which it is with no string comparison. Each
+   source file has its own copy of a literal (the guest's link doesn't merge them),
+   so there are many addresses, not one a setting. An entry is only ever added:
+   past the table's room, a name is compared as it always was. */
+enum { PREFERENCE_ADDRESSES = 256 };
+static struct
+{
+	const char *name;
+	int preference;
+} preference_addresses[PREFERENCE_ADDRESSES];
+static int preference_by_name(const char *name)
+{
+	unsigned int i;
+	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
+		if (!strcmp(name, preferences[i].name)) return (int)i;
+	return -1;
+}
+static int preference_index(const char *name)
+{
+	unsigned int slot = ((unsigned int)(uintptr_t)name * 2654435761u) >> 24, probes;
+	for (probes = 0; probes < 8; probes++, slot = (slot + 1) % PREFERENCE_ADDRESSES)
+	{
+		if (preference_addresses[slot].name == name)
+			return preference_addresses[slot].preference;
+		if (!preference_addresses[slot].name)
+		{
+			preference_addresses[slot].preference = preference_by_name(name);
+			preference_addresses[slot].name = name;
+			return preference_addresses[slot].preference;
+		}
+	}
+	return preference_by_name(name);
+}
+
 int lighting_config_boolean(const char *name)
 {
 	static unsigned long changes;
 	static int ready;
 	unsigned int i;
+	int preference;
 	if (!ready || changes != config_changes())
 	{
 		/* A concurrent settings change must cause another refresh, rather
@@ -97,8 +135,8 @@ int lighting_config_boolean(const char *name)
 			preferences[i].value = platform_allows(preferences[i].name) && config_boolean(preferences[i].name);
 		ready = 1;
 	}
-	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
-		if (!strcmp(name, preferences[i].name)) return preferences[i].value && !preferences[i].forced_off;
+	preference = preference_index(name);
+	if (preference >= 0) return preferences[preference].value && !preferences[preference].forced_off;
 	return config_boolean(name);
 }
 
