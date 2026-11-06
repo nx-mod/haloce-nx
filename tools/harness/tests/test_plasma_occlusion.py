@@ -292,3 +292,27 @@ def test_sway_negative_controls(after, expected):
     assert code.count(before) == 1
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
     assert status == CHECK_FAILED and expected in output, output
+
+
+def test_lighting_stats():
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code),)), 'stats')
+    assert status == 0, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    ('stats.trace_moved++', 'stats.trace_scene++', 'a moved light counts as moved'),
+    ('stats.trace_held++', 'stats.trace_moved++', 'and moving, it counts as held'),
+    ('stats.rebuild_stationary++', 'stats.rebuild_moved++', 'a still light in a changed scene'),
+    ('stats.fade_settled++', '', 'a fade counts as settled'),
+    ('stats.textures++', '', 'a texture build is counted'),
+    ('stats.refused++', '', 'one traced, the other refused'),
+    ('stats.too_far++', '', 'one traced, the other refused'),
+    ('memset(&stats, 0, sizeof(stats));', '', 'then counting starts over'),
+    ('now - stats.logged < 1000', 'now - stats.logged < 1', 'an unchanged light only fades'),
+])
+def test_lighting_stats_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
+    assert status == CHECK_FAILED and expected in output, output

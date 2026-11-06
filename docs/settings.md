@@ -258,7 +258,7 @@ For finding problems and measuring the game. You should not need these to play.
 | `debug.null_renderer` | `false` | All | Run drawing nothing. |
 | `debug.gl_debug` | `false` | All | Report OpenGL errors in the log. |
 | `debug.menu_open` | `""` | All | Start on this screen of the menus instead of the main menu, a player profile being edited; empty for the main menu. |
-| `debug.gpu_stats` | `false` | All | Log the renderer's draw counts once a second (otherwise, on Android's Vulkan, only a second whose draws were skipped). |
+| `debug.gpu_stats` | `false` | All | Log the renderer's draw counts once a second (otherwise, on Android's Vulkan, only a second whose draws were skipped), and what dynamic lighting's fields did. |
 | `debug.gpu_trace_frame` | `-1` | All | Log every draw of this frame; -1 none. |
 | `debug.gpu_trace_constants` | `false` | All | With gpu_trace_frame, also the vertex shader constants. |
 | `debug.gpu_skip_vertex_shaders` | `""` | All | Comma-separated ids of vertex shaders not to draw with. |

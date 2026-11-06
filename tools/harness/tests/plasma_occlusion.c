@@ -164,6 +164,8 @@ static void D3DResource_Release(D3DResource *p)
 	free(p);
 	allocations--;
 }
+static int log_lines;
+void platform_log(char const *format, ...) { log_lines++; }
 void plasma_occlusion_window(void);
 int plasma_lighting_vehicle_occlusion(long i) { return vehicle_on && i == 500; }
 int authored_emitter_lighting_enabled(void) { return vehicle_on; }
@@ -188,6 +190,73 @@ int main(int argc, char **argv)
 	float transform[4];
 	rasterizer_lights.light_count = 1;
 	rasterizer_lights.lights[0].radius = 1;
+	if (argc > 1 && !strcmp(argv[1], "stats"))
+	/* debug.gpu_stats: each thing a field does is counted as what it was */
+	{
+		int views;
+		blocked=1;door=0;
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		#define STATS_VIEW(id) (time_ms+=16,plasma_occlusion_window(),plasma_occlusion_submit(id,0),field_for(0))
+		f=STATS_VIEW(880);
+		CHECK(f&&stats.trace_new==1&&stats.rays==1536&&stats.rebuild_moved==1,"a new field counts as new");
+		CHECK(STATS_VIEW(880)&&stats.fade==1&&stats.rays==1536,"an unchanged light only fades");
+		rasterizer_lights.lights[0].position.y=.01f;
+		CHECK(STATS_VIEW(880)&&stats.trace_moved==1&&stats.rebuild_moved==2,"a moved light counts as moved");
+		blocked=0;
+		CHECK(STATS_VIEW(880)&&stats.trace_scene==1&&stats.rebuild_stationary==1,"a still light in a changed scene counts as that");
+		CHECK(!stats.trace_held&&!stats.rebuild_held,"and none of them as held");
+		for(views=0;views<200;views++){stats.logged=time_ms;STATS_VIEW(880);}
+		CHECK(stats.fade_settled>0&&stats.fade_settled<stats.fade,"a fade counts as settled once it changes nothing");
+		n=stats.textures;
+		CHECK(field_texture(f,1,0)&&stats.textures==n+1,"a texture build is counted");
+		CHECK(field_texture(f,1,0)&&stats.textures==n+1,"a texture reused is not");
+		CHECK(stats.uploads>=1,"nor is an upload missed");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		held_muzzle=881;
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		CHECK(STATS_VIEW(881)&&stats.trace_new==1&&stats.rays==96,"a held light's rays are its own count");
+		rasterizer_lights.lights[0].position.y=.01f;
+		CHECK(STATS_VIEW(881)&&stats.trace_held==1&&stats.rebuild_held==2&&stats.rays==192,"and moving, it counts as held");
+		held_muzzle=NONE;
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		/* out of rays */
+		rasterizer_lights.light_count=2;
+		rasterizer_lights.lights[1].radius=1;rasterizer_lights.lights[1].position.y=0;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(882,0);plasma_occlusion_submit(883,1);
+		CHECK(field_for(0)&&field_for(1),"both admitted");
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		budget_now.rays=1536;
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=.9f;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(882,0);plasma_occlusion_submit(883,1);
+		field_for(0);field_for(1);
+		CHECK(stats.trace_moved==1&&stats.refused==1&&stats.too_far==1,"one traced, the other refused and too far");
+		budget_now.rays=0;
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=0;
+		plasma_occlusion_reset();
+		budget_now.fields=1;
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(884,0);plasma_occlusion_submit(885,1);
+		CHECK(field_for(0)&&!field_for(1)&&stats.overflow==1,"past the field limit counts as overflow");
+		budget_now.fields=8;
+		rasterizer_lights.light_count=1;
+		/* once a second, only with something to say, and then from nothing */
+		log_lines=0;stats.logged=time_ms;time_ms+=999;
+		plasma_occlusion_window();
+		CHECK(!log_lines&&stats.views,"nothing before the second is up");
+		time_ms+=1;
+		plasma_occlusion_window();
+		CHECK(log_lines==1&&!stats.views&&!stats.rays&&stats.logged==time_ms,"a line a second, then counting starts over");
+		time_ms+=1000;
+		plasma_occlusion_window();
+		CHECK(log_lines==1,"a second with no fields says nothing");
+		plasma_occlusion_reset();
+	}
+	if (argc > 1 && !strcmp(argv[1], "stats"))
+		return 0;
 	plasma_occlusion_window();
 	plasma_occlusion_submit(1, 0);
 	f = field_for(0);

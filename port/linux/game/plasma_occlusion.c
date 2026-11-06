@@ -22,6 +22,7 @@
 #include <xtl.h>
 
 #include "lighting_config.h"
+void platform_log(char const *format, ...);
 enum
 {
 	OCC_SIZE = 16,
@@ -98,6 +99,18 @@ static struct
 	long rays, us, reserved_rays, reserved_us;
 	int traces, planned;
 } view_budget;
+/* debug.gpu_stats: what the fields of the last second came to, so a profile's
+   time can be put down to the lights that spent it. */
+static struct
+{
+	unsigned long logged;
+	long views, rays;
+	long trace_new, trace_held, trace_moved, trace_scene;
+	long rebuild_held, rebuild_moved, rebuild_stationary;
+	long fade, fade_settled;
+	long textures, uploads;
+	long refused, too_far, overflow;
+} stats;
 static int submitted_count;
 static int updates_this_window;
 static int fields_dirty;
@@ -472,6 +485,16 @@ static real field_extent(long rasterizer_index)
 static void trace_field(struct occlusion_field *field, struct rasterizer_light_submit_parameters *light, real extent,
 	int resolution, int vehicles, unsigned long scene_revision, unsigned long now)
 {
+	if (!field->valid)
+		stats.trace_new++;
+	else if (resolution != OCC_SIZE)
+		stats.trace_held++;
+	else if (light->position.x != field->trace_center[0] || light->position.y != field->trace_center[1] ||
+		light->position.z != field->trace_center[2] || field->trace_extent != extent)
+		stats.trace_moved++;
+	else
+		stats.trace_scene++;
+	stats.rays += resolution * resolution * 6;
 	trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
 		vehicles, resolution, field->depths);
 	view_budget.rays += resolution * resolution * 6;
@@ -625,11 +648,13 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	{
 		retrace = FALSE;
 		refused = TRUE;
+		stats.refused++;
 	}
 	if (refused && trace_dx * trace_dx + trace_dy * trace_dy + trace_dz * trace_dz > extent * extent * 0.25f)
 	{
 		field->too_far = TRUE;
 		field->window = current_window;
+		stats.too_far++;
 		return NULL;
 	}
 	field->too_far = FALSE;
@@ -672,11 +697,18 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	   ray construction or history-reprojection branches. */
 	if (stationary && !retraced)
 	{
+		stats.fade++;
 		for (i = 0; i < OCC_COUNT; i++)
 			field->visibility[i] = filter_visibility(previous[i], field->targets[i], clear_alpha, block_alpha);
 	}
 	else
 	{
+		if (resolution != OCC_SIZE)
+			stats.rebuild_held++;
+		else if (stationary)
+			stats.rebuild_stationary++;
+		else
+			stats.rebuild_moved++;
 		reconstruct_visibility(field->depths, extent, field->trace_resolution, trace_dx, trace_dy, trace_dz, field->targets);
 		for (z = 0; z < OCC_SIZE; z++)
 			for (y = 0; y < OCC_SIZE; y++)
@@ -705,7 +737,11 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 		memcmp(previous, field->visibility, sizeof(previous)))
 		field->texture_mask = 0;
 	else
+	{
 		field->texture_mask &= 7; /* failed uploads retry next view */
+		if (stationary && !retraced)
+			stats.fade_settled++;
+	}
 	field->center[0] = light->position.x;
 	field->center[1] = light->position.y;
 	field->center[2] = light->position.z;
@@ -758,6 +794,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 	}
 	if (updates_this_window >= budget->fields)
 	{
+		stats.overflow++;
 		remember_overflow(identity, now);
 		return NULL;
 	}
@@ -766,6 +803,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 		int resolution = light_trace_resolution(identity, rasterizer_index);
 		if (!budget_allows((long)resolution * resolution * 6, 0, 0))
 		{
+			stats.overflow++;
 			remember_overflow(identity, now);
 			return NULL;
 		}
@@ -777,6 +815,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 			}
 		if (!field)
 		{
+			stats.overflow++;
 			remember_overflow(identity, now);
 			return NULL; /* active lights are never evicted */
 		}
@@ -819,6 +858,7 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 	struct sample_axis half_axes[3][OCC_SIZE];
 	int x, y, z, i;
 	real scale;
+	stats.textures++;
 	scale = (pass == 2 ? field->specular : 1.0f) * field->radius / field->extent;
 	if (pass && scale == 0.5f)
 	{
@@ -897,6 +937,7 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 			field->texture_mask |= 8 << pass;
 			return NULL;
 		}
+		stats.uploads++;
 		memcpy(field->uploaded[pass], pixels, sizeof(pixels));
 		field->uploaded_mask |= 1 << pass;
 	}
@@ -959,8 +1000,26 @@ void plasma_occlusion_reset(void)
 }
 
 
+static void stats_second(void)
+{
+	unsigned long now = GetTickCount();
+	stats.views++;
+	if (now - stats.logged < 1000)
+		return;
+	if (lighting_config_boolean("debug.gpu_stats") &&
+		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow))
+		platform_log("lighting: %ld views; traces %ld new, %ld held, %ld moved, %ld scene changed (%ld rays, %ld refused); "
+			"rebuilds %ld held, %ld moved, %ld stationary; fades %ld (%ld settled); textures %ld built, %ld uploaded; "
+			"%ld too far, %ld overflow",
+			stats.views, stats.trace_new, stats.trace_held, stats.trace_moved, stats.trace_scene, stats.rays, stats.refused,
+			stats.rebuild_held, stats.rebuild_moved, stats.rebuild_stationary, stats.fade, stats.fade_settled,
+			stats.textures, stats.uploads, stats.too_far, stats.overflow);
+	memset(&stats, 0, sizeof(stats));
+	stats.logged = now;
+}
 void plasma_occlusion_window(void)
 {
+	stats_second();
 	ammo_counter_falloff_window();
 	current_window++;
 	submitted_count = 0;
