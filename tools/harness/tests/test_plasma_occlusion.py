@@ -71,6 +71,9 @@ def test_stationary_history_matches_reprojection():
     marker = '\tfield->valid = 1;'
     assert code.count(marker) == 1
     code = code.replace(marker, marker + '\n\tfor (i = 0; i < OCC_COUNT; i++) printf("CELL %.9g\\n", field->visibility[i]);')
+    # (every update is compared, and the reference never settles: nor does this)
+    assert code.count('field->settled = TRUE;') == 1
+    code = code.replace('field->settled = TRUE;', '')
     samples = []
     reference = code.replace('if (stationary)', 'if (stationary && FALSE)')
     reference = reference.replace('if (stationary && !retraced)', 'if (stationary && !retraced && FALSE)')
@@ -329,6 +332,29 @@ def test_lighting_stats_negative_controls(before, after, expected):
     (' || field->trace_resolution < resolution;', ';', 'once it stops, the full grid again'),
 ])
 def test_moving_grid_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
+    assert status == CHECK_FAILED and expected in output, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    # never rests: three still lights fill the limit again, the bug this fixes
+    ('field->settled = TRUE;', '', 'and it does no work'),
+    # the limit counts all the slots again
+    ('for (i = 0; i < OCC_LIGHTS; i++)\n\t\t\tif (!fields[i].valid || now - fields[i].used > 100)',
+     'for (i = 0; i < budget->fields; i++)\n\t\t\tif (!fields[i].valid || now - fields[i].used > 100)', 'three lights at rest still leave a new one room'),
+    # what wakes it
+    ('field->center[0] == light->position.x && field->center[1] == light->position.y &&\n\t\tfield->center[2] == light->position.z && field->radius', 'field->radius', 'a moved light counts as moved'),
+    # (not field->radius's: a new radius always changes the extent or the specular too)
+    ('field->specular == specular && field->extent', 'field->extent', 'a new specular wakes it'),
+    ('field->scene_revision == plasma_collision_scene_revision(&field->scene, &light->position, extent, field_vehicles(field->identity))',
+     'TRUE', 'a changed scene wakes it'),
+    ('field->settled && !(field->texture_mask & ~7) &&', 'field->settled &&', 'a failed upload gets its retry'),
+    # a stale flag: waking must clear it
+    ('\tfield->settled = FALSE;\n\tlight = &rasterizer_lights', '\tlight = &rasterizer_lights', 'a fade counts as settled'),
+])
+def test_rest_negative_controls(before, after, expected):
     code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
     assert code.count(before) == 1
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')

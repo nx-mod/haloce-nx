@@ -47,6 +47,7 @@ static struct occlusion_field
 	real targets[OCC_COUNT];
 	real depths[6][OCC_SIZE * OCC_SIZE], trace_center[3], trace_extent;
 	int trace_resolution; /* the ray grid its depths were traced with */
+	int settled; /* still, and its last fade changed nothing: nothing to do until that changes */
 	unsigned long traced_window; /* the view plan_traces traced it for */
 	int too_far; /* this view: it could not be traced, and has moved too far from its depths */
 	unsigned long consumed; /* the view a draw last asked for it */
@@ -111,7 +112,7 @@ static struct
 	long rebuild_held, rebuild_moved, rebuild_stationary;
 	long fade, fade_settled;
 	long textures, uploads;
-	long refused, too_far, overflow;
+	long refused, too_far, overflow, at_rest;
 } stats;
 static int submitted_count;
 static int updates_this_window;
@@ -555,7 +556,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 			for (i = 0; i < OCC_SUBMITTED; i++)
 				if (overflow[i].valid && overflow[i].identity == submitted[s].identity && now - overflow[i].seen <= 50)
 				{
-					for (j = 0; j < budget->fields; j++)
+					for (j = 0; j < OCC_LIGHTS; j++)
 						if (!fields[j].valid || now - fields[j].used > 100)
 						{
 							int resolution = light_trace_resolution(submitted[s].identity, rasterizer_index);
@@ -621,6 +622,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	real trace_dx, trace_dy, trace_dz;
 	fields_dirty = 1;
 	field->used = now;
+	field->settled = FALSE;
 	light = &rasterizer_lights.lights[rasterizer_index];
 	specular = plasma_occlusion_specular_scale(rasterizer_index);
 	extent = field_extent(rasterizer_index);
@@ -754,7 +756,10 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	{
 		field->texture_mask &= 7; /* failed uploads retry next view */
 		if (stationary && !retraced)
+		{
 			stats.fade_settled++;
+			field->settled = TRUE;
+		}
 	}
 	field->center[0] = light->position.x;
 	field->center[1] = light->position.y;
@@ -767,6 +772,21 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	field->window = current_window;
 	field->valid = 1;
 	return field;
+}
+/* port: a settled field has no work this view, so the light costs a scene check
+   and doesn't count against budget->fields: still lights can't keep a moving one
+   from having a field. Anything that would change its texels wakes it. */
+static int field_at_rest(struct occlusion_field *field, long rasterizer_index)
+{
+	struct rasterizer_light_submit_parameters const *light = &rasterizer_lights.lights[rasterizer_index];
+	real specular = plasma_occlusion_specular_scale(rasterizer_index);
+	real extent = field_extent(rasterizer_index);
+	return field->settled && !(field->texture_mask & ~7) &&
+		field->center[0] == light->position.x && field->center[1] == light->position.y &&
+		field->center[2] == light->position.z && field->radius == light->radius &&
+		field->specular == specular && field->extent == extent && field->trace_extent == extent &&
+		field->trace_resolution >= field_trace_resolution(field, rasterizer_index) &&
+		field->scene_revision == plasma_collision_scene_revision(&field->scene, &light->position, extent, field_vehicles(field->identity));
 }
 static struct occlusion_field *field_update_for(long rasterizer_index)
 {
@@ -793,6 +813,13 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 			field = &fields[i];
 	if (field && field->window == current_window)
 		return field->too_far ? NULL : field;
+	if (field && field_at_rest(field, rasterizer_index))
+	{
+		stats.at_rest++;
+		field->used = field->updated = now;
+		field->window = current_window;
+		return field;
+	}
 	/* port: out of time: last view's field, if the light is still near it. One
 	   plan_traces traced this view still gets the good of its rays. */
 	if (field && field->traced_window != current_window && budget->time_us && view_budget.us >= budget->time_us)
@@ -821,7 +848,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 			remember_overflow(identity, now);
 			return NULL;
 		}
-		for (i = 0; i < budget->fields; i++)
+		for (i = 0; i < OCC_LIGHTS; i++)
 			if (!fields[i].valid || now - fields[i].used > 100)
 			{
 				field = &fields[i];
@@ -839,6 +866,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 		field->consumed = current_window;
 		field->passes_used = 0;
 		field->prepared = FALSE;
+		field->settled = FALSE;
 		view_budget.reserved_rays = view_budget.reserved_us = 0;
 		field->identity = identity;
 		field->admitted = now;
@@ -1021,13 +1049,13 @@ static void stats_second(void)
 	if (now - stats.logged < 1000)
 		return;
 	if (lighting_config_boolean("debug.gpu_stats") &&
-		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow))
+		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow || stats.at_rest))
 		platform_log("lighting: %ld views; traces %ld new, %ld held, %ld moved, %ld scene changed (%ld rays, %ld refused); "
 			"rebuilds %ld held, %ld moved, %ld stationary; fades %ld (%ld settled); textures %ld built, %ld uploaded; "
-			"%ld too far, %ld overflow",
+			"%ld too far, %ld overflow, %ld at rest",
 			stats.views, stats.trace_new, stats.trace_held, stats.trace_moved, stats.trace_scene, stats.rays, stats.refused,
 			stats.rebuild_held, stats.rebuild_moved, stats.rebuild_stationary, stats.fade, stats.fade_settled,
-			stats.textures, stats.uploads, stats.too_far, stats.overflow);
+			stats.textures, stats.uploads, stats.too_far, stats.overflow, stats.at_rest);
 	memset(&stats, 0, sizeof(stats));
 	stats.logged = now;
 }

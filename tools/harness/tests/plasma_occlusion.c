@@ -259,6 +259,90 @@ int main(int argc, char **argv)
 	}
 	if (argc > 1 && !strcmp(argv[1], "stats"))
 	{
+		/* still lights at rest leave room: budget_now.fields is lights at work a view */
+		#define REST_VIEW(lights) (time_ms+=16,stats.logged=time_ms,queries=0,plasma_occlusion_window())
+		{
+			int rest;
+			blocked=1;door=0;
+			budget_now.fields=3;budget_now.rays=1800;
+			rasterizer_lights.light_count=4;
+			for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=(float)n*.01f;}
+			plasma_occlusion_reset();
+			for(rest=0;rest<200;rest++)
+			{
+				REST_VIEW(0);
+				for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+				for(n=0;n<3;n++)field_for(n);
+			}
+			memset(&stats,0,sizeof(stats));
+			REST_VIEW(0);
+			for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a light at rest keeps its field");
+			CHECK(stats.at_rest==3&&!stats.fade&&!queries&&!updates_this_window,"and it does no work");
+			n=stats.textures;
+			{
+				struct occlusion_field *resting=field_for(0);
+				CHECK(field_texture(resting,1,0),"its texture is there");
+				n=uploads;
+				REST_VIEW(0);
+				for(step=0;step<3;step++)plasma_occlusion_submit(850+step,step);
+				CHECK(field_for(0)==resting&&field_texture(resting,1,0)&&uploads==n,"and isn't made again");
+			}
+			/* the case that found this: three still lights in view, and a shot */
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(850+n,n);
+			for(n=0;n<3;n++)field_for(n);
+			stats.overflow=0;
+			CHECK(field_for(3)&&queries==1536&&!stats.overflow,"three lights at rest still leave a new one room");
+			/* what is at work still counts */
+			rasterizer_lights.light_count=8;
+			for(n=0;n<8;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=0;}
+			budget_now.rays=0;
+			plasma_occlusion_reset();
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(860+n,n);
+			CHECK(field_for(0)&&field_for(1)&&field_for(2)&&!field_for(3),"new lights count against the limit");
+			budget_now.rays=1800;
+			rasterizer_lights.light_count=3;
+			plasma_occlusion_reset();
+			for(rest=0;rest<200;rest++)
+			{
+				REST_VIEW(0);
+				for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+				for(n=0;n<3;n++)field_for(n);
+			}
+			/* anything that changes its texels wakes it */
+			#define REST_WAKES(what) {stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);CHECK(field_for(0)&&!stats.at_rest,what);for(rest=0;rest<200;rest++){REST_VIEW(0);plasma_occlusion_submit(850,0);field_for(0);}stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);CHECK(field_for(0)&&stats.at_rest==1,"and it comes to rest again");}
+			rasterizer_lights.lights[0].position.x=.02f;
+			REST_WAKES("moving wakes it");
+			rasterizer_lights.lights[0].radius=1.1f;
+			REST_WAKES("a new radius wakes it");
+			rasterizer_lights.lights[0].radius=1;
+			REST_WAKES("the old radius wakes it");
+			blocked=0;
+			REST_WAKES("a changed scene wakes it");
+			blocked=1;
+			REST_WAKES("the scene changing back wakes it");
+			{
+				/* (smaller, or the extent would change with it) */
+				float specular_was=specular_scale;
+				specular_scale=specular_was*.5f;
+				REST_WAKES("a new specular wakes it");
+				specular_scale=specular_was;
+				REST_WAKES("the old specular wakes it");
+			}
+			{
+				struct occlusion_field *failed=field_for(0);
+				failed->texture_mask|=8;
+				stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);
+				CHECK(field_for(0)&&!stats.at_rest&&!(failed->texture_mask&8),"a failed upload gets its retry");
+			}
+			rasterizer_lights.lights[0].position.x=0;
+			rasterizer_lights.light_count=1;
+			rasterizer_lights.lights[0].position.y=0;
+			budget_now.fields=8;budget_now.rays=0;
+			plasma_occlusion_reset();
+		}
 		/* the overlay's comparison: a moving light's grid, and nothing else's */
 		#define GRID_VIEW(id) (time_ms+=16,queries=0,plasma_occlusion_window(),plasma_occlusion_submit(id,0),field_for(0))
 		blocked=1;

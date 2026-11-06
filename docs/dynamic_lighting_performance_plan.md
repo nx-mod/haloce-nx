@@ -37,6 +37,7 @@ The Android GL image links the lighting stub, so a phone that fell back to `disp
 
 **How the budget behaves:**
 
+- Fields counts lights at work in a view, not lights with a field: a still light whose fade has settled costs only a scene check and doesn't count, until it moves, changes size or its scene changes. Otherwise three still lights would keep a shot from having a field at all, and it would draw with no occlusion.
 - A limit only changes who traces. With no limit (PS5), the planning step doesn't run.
 - Draws can't pick the order, or the first light drawn would always win, so the rays are given out before a view's first field.
 - A light in view, or one a draw asked for, that was refused gets room held for it on the next view. Lights out of view with no draw asking never reach that list, so they can't take the room. It fades in as overflow lights already did.
