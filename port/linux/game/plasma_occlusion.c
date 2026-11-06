@@ -17,7 +17,6 @@
 #include "covenant_emitter_lighting.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_lights.h"
-#include "rasterizer/rasterizer_swizzle.h"
 #include <math.h>
 #include <string.h>
 #include <xtl.h>
@@ -416,19 +415,15 @@ static real filter_visibility(real history, real target, real clear_alpha, real 
 	if (value < 1.0e-20f) value = 0;
 	return value;
 }
-static int upload(IDirect3DVolumeTexture8 **texture, unsigned long const *pixels)
+/* port: straight to the backend, sent in order with the draws (the texture's
+   memory is never read: halo_field_texture_write). Texels past a radial pass's
+   sphere are zero, so it says how far the pass reaches for the world-light clip. */
+static int upload(IDirect3DVolumeTexture8 **texture, unsigned long const *pixels, int pass)
 {
-	D3DLOCKED_BOX box;
 	if (!*texture && D3DDevice_CreateVolumeTexture(OCC_SIZE, OCC_SIZE, OCC_SIZE, 1, 0, D3DFMT_A8R8G8B8,
 												   D3DPOOL_MANAGED, texture) < 0)
 		return 0;
-	/* port: no wait for the GPU: every backend draws a decoded copy, sent in order
-	   with the draws, and never this memory (a wait here would stall the Switch's
-	   game thread for each rewritten field: d3d8_resources.c's lock_wait). */
-	if (IDirect3DVolumeTexture8_LockBox(*texture, 0, &box, NULL, D3DLOCK_NOOVERWRITE) < 0 || !box.pBits)
-		return 0;
-	rasterizer_xbox_bitmap_swizzle3d_long(box.pBits, (void *)pixels, OCC_SIZE, OCC_SIZE, OCC_SIZE);
-	return IDirect3DVolumeTexture8_UnlockBox(*texture, 0) >= 0;
+	return halo_field_texture_write(*texture, pixels, pass ? PLASMA_FIELD_RADIAL_REACH : -1.0f);
 }
 /* The ray grid per cube face. Prong glows, and lights on a weapon in a hand, are
    short, and move with the weapon on every frame: 96 rays, not 1536. They keep
@@ -879,7 +874,7 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 	}
 	if (!(field->uploaded_mask & (1 << pass)) || memcmp(field->uploaded[pass], pixels, sizeof(pixels)))
 	{
-		if (!upload(&field->texture[pass], pixels))
+		if (!upload(&field->texture[pass], pixels, pass))
 		{
 			/* A failed unlock may have changed backing storage. */
 			field->uploaded_mask &= ~(1 << pass);
@@ -935,7 +930,10 @@ void plasma_occlusion_reset(void)
 		for (i = 0; i < OCC_LIGHTS; i++)
 			for (j = 0; j < 3; j++)
 				if (fields[i].texture[j])
+				{
+					halo_field_texture_forget(fields[i].texture[j]);
 					D3DResource_Release((D3DResource *)fields[i].texture[j]);
+				}
 		memset(fields, 0, sizeof(fields));
 		fields_dirty = 0;
 	}

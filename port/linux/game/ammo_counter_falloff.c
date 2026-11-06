@@ -2,7 +2,6 @@
    the optional collision field and its admission budget. */
 #include "cseries.h"
 #include <xtl.h>
-#include "rasterizer/rasterizer_swizzle.h"
 #include "covenant_emitter_lighting.h"
 #include "ammo_counter_falloff.h"
 #include "plasma_occlusion.h"
@@ -57,7 +56,6 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 {
 	float axis[3], origin[3], radius, scale = 1.0f;
 	struct counter_texture *counter = NULL;
-	D3DLOCKED_BOX box;
 	unsigned long pixels[COUNTER_COUNT];
 	int i, x, y, z;
 	int profile = covenant_emitter_lighting_cone(rasterizer, axis, origin, &radius);
@@ -106,8 +104,6 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 	if (!counter->texture[radial] && D3DDevice_CreateVolumeTexture(COUNTER_SIZE, COUNTER_SIZE,
 		COUNTER_SIZE, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &counter->texture[radial]) < 0)
 		return NULL;
-	if (IDirect3DVolumeTexture8_LockBox(counter->texture[radial], 0, &box, NULL, D3DLOCK_NOOVERWRITE) < 0 || !box.pBits)
-		return NULL;
 	for (z = 0; z < COUNTER_SIZE; z++)
 		for (y = 0; y < COUNTER_SIZE; y++)
 			for (x = 0; x < COUNTER_SIZE; x++)
@@ -121,8 +117,7 @@ void *ammo_counter_falloff_texture(long rasterizer, int radial, float transform[
 				if (radial) value *= remaining*remaining;
 				pixels[(z*COUNTER_SIZE+y)*COUNTER_SIZE+x] = (unsigned long)(255.0f*value+0.5f)*0x01010101UL;
 			}
-	rasterizer_xbox_bitmap_swizzle3d_long(box.pBits, pixels, COUNTER_SIZE, COUNTER_SIZE, COUNTER_SIZE);
-	if (IDirect3DVolumeTexture8_UnlockBox(counter->texture[radial], 0) < 0)
+	if (!halo_field_texture_write(counter->texture[radial], pixels, radial ? PLASMA_FIELD_RADIAL_REACH : -1.0f))
 		return NULL;
 	counter->mask |= 1 << radial;
 	return counter->texture[radial];
@@ -141,6 +136,9 @@ void ammo_counter_falloff_dispose(void)
 	for (i = 0; i < COUNTER_LIGHTS; i++)
 		for (j = 0; j < 3; j++)
 			if (counters[i].texture[j])
+			{
+				halo_field_texture_forget(counters[i].texture[j]);
 				D3DResource_Release((D3DResource *)counters[i].texture[j]);
+			}
 	memset(counters, 0, sizeof(counters));
 }

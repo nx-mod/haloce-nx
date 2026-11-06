@@ -422,11 +422,41 @@ static struct
 } reaches[REACH_LIMIT];
 static unsigned long reach_count, reach_next;
 
+static void reach_record(const struct xgpu_texture_description *description, unsigned long address, float reach)
+{
+	unsigned long index;
+
+	for (index = 0; index < reach_count && reaches[index].address != address; index++)
+		;
+	if (index == reach_count)
+	{
+		if (reach_count < REACH_LIMIT)
+			reach_count++;
+		else
+		{
+			unsigned long tried;
+
+			index = reach_next++ % REACH_LIMIT;
+			for (tried = 0; tried < REACH_LIMIT && reaches[index].writes < 2; tried++)
+				index = (index + 1) % REACH_LIMIT;
+			if (tried == REACH_LIMIT)
+				index = reach_next % REACH_LIMIT;
+		}
+		reaches[index].writes = 0;
+		/* (once for each: the dynamic lighting's fields are written many times) */
+		platform_log("3D texture %lux%lux%lu at %08lx: reaches %.3f of its box's 0.866 from its centre", description->width,
+			description->height, description->depth, address, reach);
+	}
+	reaches[index].address = address;
+	reaches[index].reach = reach;
+	reaches[index].writes++;
+}
+
 static void reach_note(const struct xgpu_texture_description *description, unsigned long address,
 	const unsigned char *decoded)
 {
 	float reach = 0.0f;
-	unsigned long level, index;
+	unsigned long level;
 
 	/* (its two finest levels: a coarser one is sampled only where the whole
 	of the texture is a few pixels on the screen, a light whose pixels are
@@ -458,30 +488,7 @@ static void reach_note(const struct xgpu_texture_description *description, unsig
 				}
 		decoded += decoded_bytes(description, level);
 	}
-	for (index = 0; index < reach_count && reaches[index].address != address; index++)
-		;
-	if (index == reach_count)
-	{
-		if (reach_count < REACH_LIMIT)
-			reach_count++;
-		else
-		{
-			unsigned long tried;
-
-			index = reach_next++ % REACH_LIMIT;
-			for (tried = 0; tried < REACH_LIMIT && reaches[index].writes < 2; tried++)
-				index = (index + 1) % REACH_LIMIT;
-			if (tried == REACH_LIMIT)
-				index = reach_next % REACH_LIMIT;
-		}
-		reaches[index].writes = 0;
-		/* (once for each: the dynamic lighting's fields are written many times) */
-		platform_log("3D texture %lux%lux%lu at %08lx: reaches %.3f of its box's 0.866 from its centre", description->width,
-			description->height, description->depth, address, reach);
-	}
-	reaches[index].address = address;
-	reaches[index].reach = reach;
-	reaches[index].writes++;
+	reach_record(description, address, reach);
 }
 
 float dk_texture_reach(unsigned long address)
@@ -594,6 +601,8 @@ struct texture_entry
 	struct xgpu_texture_description description;
 	unsigned long address, size;
 	unsigned long generation;
+	/* the dynamic lighting's: only halo_field_texture_write gives it texels, never its memory */
+	BOOL field;
 	unsigned long last_used_frame;
 	/* the high-res HUD bitmap that stands for it (hud_hires.h), or -1 */
 	long override;
@@ -1037,6 +1046,110 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 	return entry->id;
 }
 
+/* ---------- the dynamic lighting's fields (plasma_occlusion.c)
+
+A field is rewritten as often as every frame, from a CPU copy of what it holds.
+Through a lock it would be swizzled into the game's memory, which announces the
+write, so every texture's recent lookup is forgotten and, where pages are really
+protected, more system calls are made; then unswizzled again here. So its linear
+texels come straight here, and its memory is never read. */
+
+static struct texture_entry *field_entry(const DWORD *resource)
+{
+	DWORD data = resource[1], format_word = resource[3], size_word = resource[4];
+	struct texture_entry **bucket = &texture_buckets[bucket_index(data, format_word, size_word)];
+	struct texture_entry *entry;
+	uint32_t id;
+
+	for (entry = *bucket; entry; entry = entry->next)
+	{
+		if (entry->data == data && entry->format_word == format_word && entry->size_word == size_word)
+			return entry;
+	}
+	id = id_take();
+	if (!id)
+		return NULL;
+	entry = calloc(1, sizeof(*entry));
+	if (!entry)
+	{
+		id_free[id_free_count++] = id;
+		return NULL;
+	}
+	entry->data = data;
+	entry->format_word = format_word;
+	entry->size_word = size_word;
+	xgpu_texture_describe(format_word, size_word, &entry->description);
+	entry->kind = DK_TEXTURE_3D;
+	entry->address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);
+	entry->size = xgpu_texture_face_size(&entry->description);
+	entry->generation = 1;
+	entry->override = -1;
+	entry->id = id;
+	entry->next = *bucket;
+	*bucket = entry;
+	return entry;
+}
+
+int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
+{
+	struct texture_entry *entry = field_entry((const DWORD *)texture);
+	struct dk_command_texture *command;
+	unsigned char *decoded;
+	unsigned long bytes;
+
+	if (!entry)
+		return 0;
+	bytes = decoded_bytes(&entry->description, 0);
+	decoded = malloc(bytes);
+	if (!decoded)
+		return 0;
+	memcpy(decoded, pixels, bytes);
+	if (reach >= 0.0f)
+		reach_record(&entry->description, entry->address, reach);
+	command = dk_stream_command(DK_COMMAND_TEXTURE, sizeof(*command));
+	command->id = entry->id;
+	command->kind = entry->kind;
+	command->format = DK_TEXTURE_BGRA;
+	command->width = (uint32_t)entry->description.width;
+	command->height = (uint32_t)entry->description.height;
+	command->depth = (uint32_t)entry->description.depth;
+	command->levels = 1;
+	command->swizzle = custom_edition_texels_swizzle(entry->address);
+	command->source = (uint32_t)(uintptr_t)decoded;
+	command->face_bytes = (uint32_t)bytes;
+	command->source_bytes = (uint32_t)bytes;
+	/* (last: it may hand the stream over, which the command is in) */
+	dk_stream_free_after_handover(decoded, bytes);
+	entry->field = TRUE;
+	entry->last_used_frame = texture_frame;
+	return 1;
+}
+
+/* before the texture is released: its image goes too, and another texture may
+come to live at its address */
+void halo_field_texture_forget(const void *texture)
+{
+	const DWORD *resource = (const DWORD *)texture;
+	struct texture_entry **link = &texture_buckets[bucket_index(resource[1], resource[3], resource[4])];
+
+	for (; *link; link = &(*link)->next)
+	{
+		struct texture_entry *entry = *link;
+
+		if (entry->data == resource[1] && entry->format_word == resource[3] && entry->size_word == resource[4])
+		{
+			struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
+
+			command->id = entry->id;
+			*link = entry->next;
+			id_free[id_free_count++] = entry->id;
+			texture_drop_serial++;
+			free(entry);
+			return;
+		}
+	}
+}
+
 uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kind,
 	struct xgpu_texture_description *description)
 {
@@ -1107,7 +1220,7 @@ uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	if (no_cache < 0)
 		no_cache = config_boolean("debug.texture_no_cache");
 	generation = memory_watch_generation(entry->address, entry->size);
-	if (!entry->generation || generation > entry->generation || no_cache)
+	if (!entry->field && (!entry->generation || generation > entry->generation || no_cache))
 	{
 		/* mark first, so a write racing with the upload is noticed */
 		memory_watch_protect(entry->address, entry->size);
@@ -1170,7 +1283,8 @@ void xgpu_texture_cache_begin_frame(void)
 		{
 			struct texture_entry *entry = *link;
 
-			if (texture_frame - entry->last_used_frame > TEXTURE_IDLE_FRAMES)
+			/* (a field's texels are nowhere but the host's image: it goes when the field does) */
+			if (!entry->field && texture_frame - entry->last_used_frame > TEXTURE_IDLE_FRAMES)
 			{
 				struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
 

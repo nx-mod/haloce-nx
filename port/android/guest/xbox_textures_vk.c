@@ -639,6 +639,8 @@ struct texture_entry
 	struct xgpu_texture_description description;
 	unsigned long address, size;
 	unsigned long generation;
+	/* the dynamic lighting's: only halo_field_texture_write gives it texels, never its memory */
+	BOOL field;
 	unsigned long last_used_frame;
 	/* the high-res HUD bitmap that stands for it (hud_hires.h), or -1 */
 	long override;
@@ -1141,6 +1143,106 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 }
 
 
+/* ---------- the dynamic lighting's fields (plasma_occlusion.c)
+
+A field is rewritten as often as every frame, from a CPU copy of what it holds.
+Through a lock it would be swizzled into the game's memory, which announces the
+write, so every texture's recent lookup is forgotten and, where pages are really
+protected, more system calls are made; then unswizzled again here. So its linear
+texels come straight here, and its memory is never read. */
+
+static struct texture_entry *field_entry(const DWORD *resource)
+{
+	DWORD data = resource[1], format_word = resource[3], size_word = resource[4];
+	struct texture_entry **bucket = &texture_buckets[bucket_index(data, format_word, size_word)];
+	struct texture_entry *entry;
+	uint32_t id;
+
+	for (entry = *bucket; entry; entry = entry->next)
+	{
+		if (entry->data == data && entry->format_word == format_word && entry->size_word == size_word)
+			return entry;
+	}
+	id = id_take();
+	if (!id)
+		return NULL;
+	entry = calloc(1, sizeof(*entry));
+	if (!entry)
+	{
+		id_free[id_free_count++] = id;
+		return NULL;
+	}
+	entry->data = data;
+	entry->format_word = format_word;
+	entry->size_word = size_word;
+	xgpu_texture_describe(format_word, size_word, &entry->description);
+	entry->kind = VK_IMAGE_3D;
+	entry->address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);
+	entry->size = xgpu_texture_face_size(&entry->description);
+	entry->generation = 1;
+	entry->override = -1;
+	entry->id = id;
+	entry->next = *bucket;
+	*bucket = entry;
+	return entry;
+}
+
+int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
+{
+	struct texture_entry *entry = field_entry((const DWORD *)texture);
+	unsigned long bytes;
+	BOOL first;
+
+	if (!entry)
+		return 0;
+	first = !entry->field;
+	bytes = decoded_bytes(&entry->description, 0);
+	(void)reach;
+	/* (the image is described once: the same one, its texels are replaced by the data that follows) */
+	if (first)
+	{
+		struct vk_command_texture *command = vk_stream_command(VK_COMMAND_TEXTURE, sizeof(*command));
+
+		command->id = entry->id;
+		command->kind = entry->kind;
+		command->format = VK_IMAGE_FORMAT_BGRA;
+		command->width = (uint32_t)entry->description.width;
+		command->height = (uint32_t)entry->description.height;
+		command->depth = (uint32_t)entry->description.depth;
+		command->levels = 1;
+		command->swizzle = custom_edition_texels_swizzle(entry->address);
+	}
+	data_send(entry->id, 0, 0, pixels, bytes, 0, 0);
+	entry->field = TRUE;
+	entry->last_used_frame = texture_frame;
+	return 1;
+}
+
+/* before the texture is released: its image goes too, and another texture may
+come to live at its address */
+void halo_field_texture_forget(const void *texture)
+{
+	const DWORD *resource = (const DWORD *)texture;
+	struct texture_entry **link = &texture_buckets[bucket_index(resource[1], resource[3], resource[4])];
+
+	for (; *link; link = &(*link)->next)
+	{
+		struct texture_entry *entry = *link;
+
+		if (entry->data == resource[1] && entry->format_word == resource[3] && entry->size_word == resource[4])
+		{
+			struct vk_command_texture_free *command = vk_stream_command(VK_COMMAND_TEXTURE_FREE, sizeof(*command));
+
+			command->id = entry->id;
+			*link = entry->next;
+			id_free[id_free_count++] = entry->id;
+			texture_drop_serial++;
+			free(entry);
+			return;
+		}
+	}
+}
+
 uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kind,
 	struct xgpu_texture_description *description)
 {
@@ -1211,7 +1313,7 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	if (no_cache < 0)
 		no_cache = config_boolean("debug.texture_no_cache");
 	generation = memory_watch_generation(entry->address, entry->size);
-	if (!entry->generation || generation > entry->generation || no_cache)
+	if (!entry->field && (!entry->generation || generation > entry->generation || no_cache))
 	{
 		/* mark first, so a write racing with the upload is noticed */
 		memory_watch_protect(entry->address, entry->size);
@@ -1272,7 +1374,8 @@ void vk_texture_cache_begin_frame(void)
 		{
 			struct texture_entry *entry = *link;
 
-			if (texture_frame - entry->last_used_frame > TEXTURE_IDLE_FRAMES)
+			/* (a field's texels are nowhere but the host's image: it goes when the field does) */
+			if (!entry->field && texture_frame - entry->last_used_frame > TEXTURE_IDLE_FRAMES)
 			{
 				struct vk_command_texture_free *command = vk_stream_command(VK_COMMAND_TEXTURE_FREE, sizeof(*command));
 

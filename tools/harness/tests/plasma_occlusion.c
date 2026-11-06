@@ -144,25 +144,23 @@ static int D3DDevice_CreateVolumeTexture(int w, int h, int d, int levels, int us
 	allocations++;
 	return 0;
 }
-static int IDirect3DVolumeTexture8_LockBox(IDirect3DVolumeTexture8 *t, int l, D3DLOCKED_BOX *box, void *b,
-										   int f)
+static int field_forgotten;
+static float last_reach;
+static int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
 {
 	uploads++;
-	box->pBits = t->pixels;
-	return 0;
+	last_reach = reach;
+	if (fail_unlock)
+		return 0;
+	memcpy(((IDirect3DVolumeTexture8 *)texture)->pixels, pixels, 4096 * sizeof(long));
+	return 1;
 }
-static int IDirect3DVolumeTexture8_UnlockBox(IDirect3DVolumeTexture8 *t, int l)
-{
-	return fail_unlock ? -1 : 0;
-}
+static void halo_field_texture_forget(const void *texture) { field_forgotten++; }
+#define PLASMA_FIELD_RADIAL_REACH (0.5f + 0.10826f)
 static void D3DResource_Release(D3DResource *p)
 {
 	free(p);
 	allocations--;
-}
-static void rasterizer_xbox_bitmap_swizzle3d_long(void *d, void *s, int w, int h, int depth)
-{
-	memcpy(d, s, 4096 * sizeof(long));
 }
 void plasma_occlusion_window(void);
 int plasma_lighting_vehicle_occlusion(long i) { return vehicle_on && i == 500; }
@@ -593,6 +591,27 @@ int main(int argc, char **argv)
 	plasma_occlusion_reset();
 	/* the scene is looked at only when it can decide, and an extent change
 	   between traces rescales what was traced */
+	/* the texture goes to the backend directly: it says how far a radial pass
+	   reaches, and forgets the image with the texture */
+	field_forgotten=0;
+	plasma_occlusion_window();plasma_occlusion_submit(940,0);
+	CHECK(plasma_occlusion_texture(0,0)&&last_reach>.6f&&last_reach<.61f,"a radial pass says its reach");
+	f=field_for(0);f->texture_mask=0;
+	CHECK(field_texture(f,0,0)&&last_reach<0,"the model mask, which fills the box, says none");
+	{
+		int x,y,z;
+		real worst=0;
+		IDirect3DVolumeTexture8 *t=field_texture(f,1,0);
+		for(z=0;z<16;z++)for(y=0;y<16;y++)for(x=0;x<16;x++)
+			if(t->pixels[(z*16+y)*16+x])
+			{
+				real u=(x+.5f)/16-.5f,v=(y+.5f)/16-.5f,w=(z+.5f)/16-.5f,reach=sqrtf(u*u+v*v+w*w)+sqrtf(3.0f/(16*16));
+				if(reach>worst)worst=reach;
+			}
+		CHECK(worst<=PLASMA_FIELD_RADIAL_REACH,"no radial texel lies past the reach it says");
+	}
+	plasma_occlusion_reset();
+	CHECK(field_forgotten==2,"a released field's images go with it");
 	blocked=1;rasterizer_lights.lights[0].radius=1;
 	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
 	CHECK(f&&f->trace_extent==1,"traced at its extent");

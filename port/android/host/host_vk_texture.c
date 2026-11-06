@@ -517,7 +517,10 @@ void host_vk_texture_data_command(const struct vk_command_texture_data *command)
 		B.counts.textures_skipped++;
 		return;
 	}
-	host_vk_rendering_end();
+	/* (a clear waiting for the next rendering can go on waiting: a copy into a texture has nothing to do with the targets,
+	and a rendering of the clear alone would be stored, and loaded again by the next) */
+	if (B.rendering)
+		host_vk_rendering_end();
 	cmd = host_vk_frame_command();
 	if (!copy_ready(cmd, image))
 		return;
@@ -554,7 +557,9 @@ void host_vk_textures_flush(void)
 
 	if (!dirty_count)
 		return;
-	host_vk_rendering_end();
+	/* (as above: a waiting clear goes on waiting) */
+	if (B.rendering)
+		host_vk_rendering_end();
 	cmd = host_vk_frame_command();
 	for (index = 0; index < dirty_count; index++)
 		barrier(cmd, dirty[index], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
