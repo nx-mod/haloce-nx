@@ -49,6 +49,7 @@ static struct occlusion_field
 	int trace_resolution; /* the ray grid its depths were traced with */
 	int settled; /* still, and its last fade changed nothing: nothing to do until that changes */
 	unsigned long traced_window; /* the view plan_traces traced it for */
+	unsigned long waits_window; /* the view it sits out, so that another light has the slot */
 	int too_far; /* this view: it could not be traced, and has moved too far from its depths */
 	unsigned long consumed; /* the view a draw last asked for it */
 	int passes_used; /* which texture passes draws asked for since the last prepare */
@@ -101,6 +102,7 @@ static struct
 {
 	long rays, us, reserved_rays, reserved_us;
 	int traces, planned;
+	int weapon_limit, weapon_updates; /* a limit is only set by plan_traces */
 } view_budget;
 /* debug.gpu_stats: what the fields of the last second came to, so a profile's
    time can be put down to the lights that spent it. */
@@ -112,7 +114,7 @@ static struct
 	long rebuild_held, rebuild_moved, rebuild_stationary;
 	long fade, fade_settled;
 	long textures, uploads;
-	long refused, too_far, overflow, at_rest;
+	long refused, too_far, overflow, at_rest, waited;
 } stats;
 static int submitted_count;
 static int updates_this_window;
@@ -535,9 +537,11 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 {
 	const struct lighting_budget *budget = lighting_budget();
 	struct occlusion_field *order[OCC_LIGHTS];
+	struct occlusion_field *weapons[OCC_LIGHTS];
 	long lights[OCC_LIGHTS];
 	real scores[OCC_LIGHTS];
-	int count = 0, s, i, j;
+	long reserve_rays = 0, reserve_us = 0;
+	int count = 0, weapon_count = 0, at_work = 0, other_wanted = FALSE, s, i, j;
 	for (s = 0; s < submitted_count; s++)
 	{
 		struct occlusion_field *field = NULL;
@@ -560,8 +564,10 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 						if (!fields[j].valid || now - fields[j].used > 100)
 						{
 							int resolution = light_trace_resolution(submitted[s].identity, rasterizer_index);
-							view_budget.reserved_rays = MAX(view_budget.reserved_rays, (long)resolution * resolution * 6);
-							view_budget.reserved_us = budget->time_us / 2;
+							reserve_rays = MAX(reserve_rays, (long)resolution * resolution * 6);
+							reserve_us = budget->time_us / 2;
+							if (resolution == OCC_SIZE)
+								other_wanted = TRUE;
 							break;
 						}
 					break;
@@ -570,6 +576,16 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 		}
 		if (current_window - field->consumed > OCC_UNREAD_VIEWS || count == OCC_LIGHTS)
 			continue;
+		if (!field->settled)
+		{
+			if (light_trace_resolution(field->identity, rasterizer_index) != OCC_HELD_RESOLUTION)
+			{
+				at_work++;
+				other_wanted = TRUE;
+			}
+			else if (weapon_count < OCC_LIGHTS)
+				weapons[weapon_count++] = field;
+		}
 		light = &rasterizer_lights.lights[rasterizer_index];
 		extent = field_extent(rasterizer_index);
 		if (!(extent > 0.001f && extent < 1000.0f))
@@ -593,6 +609,26 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 		scores[i] = score;
 		count++;
 	}
+	/* Weapon lights go first, and three of them would leave every other light with
+	   no field at all, so no occlusion. When another light wants one, they leave it
+	   a slot: the one updated most lately sits out, so none waits two views running. */
+	view_budget.weapon_limit = other_wanted ? MAX(budget->fields - 1, 1) : budget->fields;
+	while (weapon_count > view_budget.weapon_limit)
+	{
+		int latest = 0;
+		for (i = 1; i < weapon_count; i++)
+			if ((long)(weapons[i]->updated - weapons[latest]->updated) > 0)
+				latest = i;
+		weapons[latest]->waits_window = current_window;
+		weapons[latest] = weapons[--weapon_count];
+	}
+	/* Rays are only held for a light that can get in: with every slot taken they
+	   would go unused, and short the lights that are at work. */
+	if (at_work + weapon_count < budget->fields)
+	{
+		view_budget.reserved_rays = reserve_rays;
+		view_budget.reserved_us = reserve_us;
+	}
 	for (i = 0; i < count; i++)
 	{
 		int resolution = field_trace_resolution(order[i], lights[i]);
@@ -600,7 +636,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 		struct rasterizer_light_submit_parameters *light = &rasterizer_lights.lights[lights[i]];
 		real extent = field_extent(lights[i]);
 		unsigned long started;
-		if (order[i]->traced_window == current_window ||
+		if (order[i]->traced_window == current_window || order[i]->waits_window == current_window ||
 			!budget_allows((long)resolution * resolution * 6, view_budget.reserved_rays, view_budget.reserved_us))
 			continue;
 		started = budget_clock();
@@ -788,13 +824,33 @@ static int field_at_rest(struct occlusion_field *field, long rasterizer_index)
 		field->trace_resolution >= field_trace_resolution(field, rasterizer_index) &&
 		field->scene_revision == plasma_collision_scene_revision(&field->scene, &light->position, extent, field_vehicles(field->identity));
 }
+/* A field with no work this view keeps last view's texels, if the light is still
+   near where they were made. */
+static int field_near(struct occlusion_field const *field, long rasterizer_index)
+{
+	struct rasterizer_light_submit_parameters const *light = &rasterizer_lights.lights[rasterizer_index];
+	real dx = light->position.x - field->center[0];
+	real dy = light->position.y - field->center[1];
+	real dz = light->position.z - field->center[2];
+	return dx * dx + dy * dy + dz * dz <= field->extent * field->extent * 0.0625f;
+}
+static int field_wait(struct occlusion_field *field, long rasterizer_index, unsigned long now)
+{
+	if (!field_near(field, rasterizer_index))
+		return FALSE;
+	stats.waited++;
+	field->used = now;
+	field->window = current_window;
+	field->too_far = FALSE;
+	return TRUE;
+}
 static struct occlusion_field *field_update_for(long rasterizer_index)
 {
 	struct occlusion_field *field = NULL, *updated;
 	const struct lighting_budget *budget = lighting_budget();
 	unsigned long now = GetTickCount(), started;
 	long identity = NONE;
-	int i;
+	int i, resolution;
 	if (!enabled() || rasterizer_index < 0 || rasterizer_index >= rasterizer_lights.light_count)
 		return NULL;
 	for (i = 0; i < submitted_count; i++)
@@ -824,24 +880,34 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 	   plan_traces traced this view still gets the good of its rays. */
 	if (field && field->traced_window != current_window && budget->time_us && view_budget.us >= budget->time_us)
 	{
-		struct rasterizer_light_submit_parameters *light = &rasterizer_lights.lights[rasterizer_index];
-		real dx = light->position.x - field->center[0];
-		real dy = light->position.y - field->center[1];
-		real dz = light->position.z - field->center[2];
 		field->used = now;
 		field->window = current_window;
-		field->too_far = dx * dx + dy * dy + dz * dz > field->extent * field->extent * 0.0625f;
+		field->too_far = !field_near(field, rasterizer_index);
 		return field->too_far ? NULL : field;
 	}
+	/* (past its limit, one too far from its texels asks like any other) */
+	if (field && field->waits_window == current_window && field_wait(field, rasterizer_index, now))
+		return field;
 	if (updates_this_window >= budget->fields)
 	{
+		/* a light that woke from rest and was turned away is still asking */
+		if (field)
+			field->settled = FALSE;
+		stats.overflow++;
+		remember_overflow(identity, now);
+		return NULL;
+	}
+	resolution = light_trace_resolution(identity, rasterizer_index);
+	if (resolution == OCC_HELD_RESOLUTION && view_budget.weapon_limit && view_budget.weapon_updates >= view_budget.weapon_limit)
+	{
+		if (field && field_wait(field, rasterizer_index, now))
+			return field;
 		stats.overflow++;
 		remember_overflow(identity, now);
 		return NULL;
 	}
 	if (!field)
 	{
-		int resolution = light_trace_resolution(identity, rasterizer_index);
 		if (!budget_allows((long)resolution * resolution * 6, 0, 0))
 		{
 			stats.overflow++;
@@ -862,6 +928,7 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 		}
 		field->valid = 0;
 		field->traced_window = 0;
+		field->waits_window = 0;
 		field->too_far = FALSE;
 		field->consumed = current_window;
 		field->passes_used = 0;
@@ -877,6 +944,8 @@ static struct occlusion_field *field_update_for(long rasterizer_index)
 		for (i = 0; i < OCC_COUNT; i++)
 			field->visibility[i] = 1;
 	}
+	if (resolution == OCC_HELD_RESOLUTION)
+		view_budget.weapon_updates++;
 	started = budget_clock();
 	updated = update_field(field, rasterizer_index, now);
 	budget_charge(started);
@@ -1049,13 +1118,13 @@ static void stats_second(void)
 	if (now - stats.logged < 1000)
 		return;
 	if (lighting_config_boolean("debug.gpu_stats") &&
-		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow || stats.at_rest))
+		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow || stats.at_rest || stats.waited))
 		platform_log("lighting: %ld views; traces %ld new, %ld held, %ld moved, %ld scene changed (%ld rays, %ld refused); "
 			"rebuilds %ld held, %ld moved, %ld stationary; fades %ld (%ld settled); textures %ld built, %ld uploaded; "
-			"%ld too far, %ld overflow, %ld at rest",
+			"%ld too far, %ld overflow, %ld at rest, %ld waited",
 			stats.views, stats.trace_new, stats.trace_held, stats.trace_moved, stats.trace_scene, stats.rays, stats.refused,
 			stats.rebuild_held, stats.rebuild_moved, stats.rebuild_stationary, stats.fade, stats.fade_settled,
-			stats.textures, stats.uploads, stats.too_far, stats.overflow, stats.at_rest);
+			stats.textures, stats.uploads, stats.too_far, stats.overflow, stats.at_rest, stats.waited);
 	memset(&stats, 0, sizeof(stats));
 	stats.logged = now;
 }

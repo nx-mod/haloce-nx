@@ -251,7 +251,7 @@ def test_stale_depths_need_their_own_grid_negative_control():
     # the least out-of-date first: the same light wins, and the others never have a turn
     ('scores[i - 1] < score', 'scores[i - 1] > score', 'has its turn'),
     # nothing held back: a refused light never gets in
-    ('view_budget.reserved_rays = MAX(view_budget.reserved_rays, (long)resolution * resolution * 6);', '(void)resolution;', 'one a frame'),
+    ('reserve_rays = MAX(reserve_rays, (long)resolution * resolution * 6);', '(void)resolution;', 'one a frame'),
     # a light too far from its depths draws from them anyway
     ('* 0.0625f;', '* 1000.0f;', 'misplaced field'),
 ])
@@ -357,5 +357,33 @@ def test_moving_grid_negative_controls(before, after, expected):
 def test_rest_negative_controls(before, after, expected):
     code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
     assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
+    assert status == CHECK_FAILED and expected in output, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    # weapon lights fill every slot again: the bug this fixes
+    ('view_budget.weapon_limit = other_wanted ? MAX(budget->fields - 1, 1) : budget->fields;',
+     'view_budget.weapon_limit = other_wanted ? budget->fields : budget->fields;', 'a weapon light sits out for a light that asks'),
+    # they leave a slot with nothing there to take it
+    ('view_budget.weapon_limit = other_wanted ? MAX(budget->fields - 1, 1) : budget->fields;',
+     'view_budget.weapon_limit = other_wanted ? MAX(budget->fields - 1, 1) : MAX(budget->fields - 1, 1);', 'a weapon light has its field'),
+    # a light sitting out spends rays all the same
+    ('order[i]->waits_window == current_window ||', '', 'a weapon light sits out for a light that asks'),
+    # the same light always waits
+    ('(long)(weapons[i]->updated - weapons[latest]->updated) > 0', '(long)(weapons[i]->updated - weapons[latest]->updated) < 0', 'none waits two views running'),
+    # one that woke and was turned away stops asking
+    ('if (field)\n\t\t\tfield->settled = FALSE;\n', '', 'woken and turned away'),
+    # a waiting light draws from texels made too far away
+    ('if (!field_near(field, rasterizer_index))\n\t\treturn FALSE;\n', '', 'a waiting light too far'),
+    # a new weapon light takes the slot
+    ('view_budget.weapon_updates >= view_budget.weapon_limit', 'FALSE', 'a new weapon light'),
+    # rays held for a light with no slot: the other half of the bug
+    ('if (at_work + weapon_count < budget->fields)', 'if (at_work + weapon_count < budget->fields + 99)', 'no rays are held'),
+    ('if (at_work + weapon_count < budget->fields)', 'if (at_work + weapon_count < 0)', 'but they are held'),
+])
+def test_weapon_slot_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1, before
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
     assert status == CHECK_FAILED and expected in output, output

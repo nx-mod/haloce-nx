@@ -68,8 +68,8 @@ unsigned long plasma_collision_scene_revision(struct plasma_collision_scene *sce
 }
 static float directional_axis[3]={-.8f,0,.6f}, directional_origin, directional_radius=1;
 int muzzle_lighting_vehicle_occlusion(long light) { return muzzle_on && light==500; }
-static long held_muzzle=NONE, held_emitter=NONE;
-int muzzle_lighting_held_weapon(long light) { return light!=NONE&&light==held_muzzle; }
+static long held_muzzle=NONE, held_emitter=NONE, held_third=NONE;
+int muzzle_lighting_held_weapon(long light) { return light!=NONE&&(light==held_muzzle||light==held_third); }
 int covenant_emitter_lighting_held_weapon(long light) { return light!=NONE&&light==held_emitter; }
 int covenant_emitter_lighting_cone(long r,float axis[3],float origin[3],float *radius)
 {
@@ -341,6 +341,118 @@ int main(int argc, char **argv)
 			rasterizer_lights.light_count=1;
 			rasterizer_lights.lights[0].position.y=0;
 			budget_now.fields=8;budget_now.rays=0;
+			plasma_occlusion_reset();
+		}
+		/* three weapon lights at work: they go first, and must leave another light a slot */
+		{
+			struct occlusion_field *waiter, *last_waiter=NULL, *seen_waiter=NULL;
+			float sway=0, wide=0;
+			int view, turns=0, again=0, waiting;
+			#define WEAPON_VIEW(wides) {sway+=.001f;for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;rasterizer_lights.lights[3].position.y=.03f+wide;REST_VIEW(0);for(n=0;n<3;n++)plasma_occlusion_submit(870+n,n);for(n=0;n<(wides);n++)plasma_occlusion_submit(873+n,3+n);}
+			blocked=1;door=0;
+			budget_now.fields=3;budget_now.rays=1800;
+			held_muzzle=870;held_emitter=871;held_third=872;
+			rasterizer_lights.light_count=4;
+			for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=0;}
+			plasma_occlusion_reset();
+			WEAPON_VIEW(0);
+			for(n=0;n<3;n++)field_for(n);
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(0);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a weapon light has its field");
+			CHECK(updates_this_window==3&&!stats.waited&&!stats.refused&&queries==288,"with nothing else wanting one, weapon lights have every slot");
+			/* the case that found this */
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(!field_for(3),"a light that first asks with the slots full is turned away");
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a weapon light that sits out still has its field");
+			CHECK(stats.waited==1&&updates_this_window==2&&!stats.refused&&queries==192,"a weapon light sits out for a light that asks");
+			CHECK(field_for(3)&&!stats.overflow&&queries==192+1536,"and that light has the slot");
+			/* taking turns, while the other light moves */
+			for(view=0;view<30;view++)
+			{
+				wide+=.001f;
+				WEAPON_VIEW(1);
+				view_budget.planned=TRUE;plan_traces(time_ms);
+				waiter=NULL;waiting=0;
+				for(n=0;n<OCC_LIGHTS;n++)if(fields[n].valid&&fields[n].waits_window==current_window){waiter=&fields[n];waiting++;}
+				CHECK(waiting==1,"one weapon light sits out a view");
+				if(waiter==last_waiter)again++;
+				if(waiter!=seen_waiter){turns++;seen_waiter=waiter;}
+				last_waiter=waiter;
+				for(n=0;n<4;n++)field_for(n);
+			}
+			CHECK(!again,"none waits two views running");
+			CHECK(turns>2,"they take turns");
+			/* once the other light rests, the slot is theirs again */
+			for(view=0;view<200;view++){WEAPON_VIEW(1);for(n=0;n<4;n++)field_for(n);}
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<4;n++)field_for(n);
+			CHECK(stats.at_rest==1&&!stats.waited&&updates_this_window==3,"once that light rests, weapon lights have every slot again");
+			/* it wakes with them all taken: turned away once, then in */
+			wide+=.01f;
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(!field_for(3),"woken with the slots full, it is turned away");
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(field_for(3)&&stats.waited==1&&!stats.overflow,"a light woken and turned away has the slot next view");
+			/* too far from what it has, a waiting light can't keep it */
+			WEAPON_VIEW(1);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			memset(&stats,0,sizeof(stats));
+			for(n=0;n<OCC_LIGHTS;n++)if(fields[n].valid&&fields[n].waits_window==current_window)
+			{
+				long far_light=fields[n].identity-870;
+				rasterizer_lights.lights[far_light].position.y+=.6f;
+				CHECK(field_for(far_light)&&!stats.waited&&fields[n].center[1]==rasterizer_lights.lights[far_light].position.y,"a waiting light too far from its field asks like any other");
+				break;
+			}
+			/* a new weapon light can't take the slot either */
+			plasma_occlusion_reset();
+			for(view=0;view<2;view++)
+			{
+				wide+=.001f;
+				WEAPON_VIEW(1);
+				field_for(0);field_for(1);field_for(3);
+			}
+			memset(&stats,0,sizeof(stats));
+			/* (still and fading: at work, with rays to spare, so only the limit stops it) */
+			WEAPON_VIEW(1);
+			field_for(0);field_for(1);
+			CHECK(!field_for(2)&&stats.overflow==1,"a new weapon light doesn't take the slot");
+			CHECK(field_for(3),"which stays with the other light");
+			/* rays are only held for a light that can get in */
+			held_muzzle=held_emitter=held_third=NONE;
+			budget_now.rays=6000; /* so that three can be at work at once */
+			plasma_occlusion_reset();
+			for(view=0;view<2;view++)
+			{
+				sway+=.001f;
+				for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+				REST_VIEW(0);
+				for(n=0;n<4;n++)plasma_occlusion_submit(880+n,n);
+				for(n=0;n<4;n++)field_for(n);
+			}
+			sway+=.001f;
+			for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(880+n,n);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			CHECK(!view_budget.reserved_rays,"no rays are held for a light with no slot to go to");
+			sway+=.001f;
+			for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+			REST_VIEW(0);
+			plasma_occlusion_submit(880,0);plasma_occlusion_submit(881,1);plasma_occlusion_submit(883,3);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			CHECK(view_budget.reserved_rays==1536,"but they are held for one with a slot");
+			budget_now.fields=8;budget_now.rays=0;
+			rasterizer_lights.light_count=1;
+			rasterizer_lights.lights[0].position.y=0;
 			plasma_occlusion_reset();
 		}
 		/* the overlay's comparison: a moving light's grid, and nothing else's */
