@@ -1,14 +1,66 @@
 # Dynamic Lighting Performance: Plan
 
-Written 2026-11-06, after a code audit of the `dynamic-lighting` branch. **The code for Phases 1 and 2 is done, and hasn't run on a device.** The later phases haven't been started.
+Written 2026-11-06, after a code audit of the `dynamic-lighting` branch, and revised the same day with measurements from a Switch Lite. **Phases 1 and 2 are done and running on the Switch Lite, and one item of Phase 3 is done. None of this has run on the Nokia 8 or the PS5.** [What's next](#whats-next) has the order of the remaining work, which replaces the order of the phases below.
 
 **Target devices:** the Switch Lite and the Nokia 8 (Snapdragon 835, Vulkan), the slowest phone at hand.
 
 **Goal:** with all lighting on, a scene holds as close as possible to the frame rate it has with lighting off. A user reported a firefight falling from 60 fps to the 30s on a Switch, with one thread pinned at 100% even when nothing visibly lights up.
 
-**Approach:** cut every cost we can, without a measured baseline first. The Switch profiler (`debug.profiler`) and Android's (`debug.profile_run`) stay available if a result is surprising.
+**Approach:** cut every cost we can, then measure what is left. The Switch profiler (`debug.profiler`), `debug.gpu_stats` and Android's `debug.profile_run` say where the time goes.
 
-The costs in this document come from reading the code and from symbol sizes in the Switch build. None was measured on a device.
+Costs in the phases below come from reading the code, and from symbol sizes in the Switch build, unless they say otherwise. The measurements are in [What we measured](#what-we-measured).
+
+## What we measured
+
+All on the Switch Lite at 720p with the profiler on. Each comparison is two passes played by hand, so treat small differences with caution.
+
+**Pillar of Autumn firefight, from a checkpoint, 35 seconds of each pass:**
+
+| Moving lights | Average fps | Lowest 5 seconds | Game thread, average and peak | Rays per view |
+| --- | --- | --- | --- | --- |
+| 1,536 rays | 57.1 | 50.8 | 16.0 and 19.0 ms | 1,208 |
+| 384 rays | 59.6 | 58.1 | 14.6 and 16.2 ms | 547 |
+
+**Blood Gulch, 60 seconds, steering by hand (`debug.benchmark_manual`):**
+
+| Run | Average fps | 1% low | Frames over 33 ms |
+| --- | --- | --- | --- |
+| Hosting 48 bots, lighting on (384 rays for the last 13 seconds or so) | 32.6 | 17.3 | 739 of 1,954 |
+| Hosting 48 bots, lighting off | 45.7 | 25.7 | 147 of 2,743 |
+| Joining a phone's match, 47 other players, lighting on with 384 rays (about 95 seconds, not 60) | 29.1 | Not recorded | Not recorded |
+
+**Share of the game thread's time in those Blood Gulch runs:**
+
+| Work | Hosting, lighting off | Hosting, lighting on | Joining, lighting on |
+| --- | --- | --- | --- |
+| Game update | 43.3% | 39.8% | 46.6% |
+| Object updates (part of the game update) | 30.9% | 28.1% | 39.3% |
+| Light reconnects (part of the object updates) | 6.2% | 8.4% | 11.7% |
+| Rendering | 42.0% | 48.6% | 38.6% |
+| Lighting setup (part of rendering) | 5.7% | 17.4% | 16.6% |
+| Occlusion (part of lighting setup) | None | 11.8% | 11.2% |
+
+**What that means for the plan:**
+
+- **A moving light's rays were the first thing to cut,** and 384 rays did that on the Switch. With them, tracing was about 8% of the Pillar of Autumn run, down from 13.5%. `update_field` stayed at about 10%, which rays don't touch.
+- **In a 48-player match, the simulation is the limit, not lighting.** Lighting costs about 13 fps there, and with it off the Switch still only averaged 45.7 fps. 60 fps at that player count isn't a realistic goal for lighting work. The goal there is to close the gap to lighting off.
+- **Bot AI is cheap,** about 2% of the game thread. Hosting the bots elsewhere didn't help, because every machine updates every object.
+- **Light reconnects are a large cost that nothing here has touched yet.** They happen on every tick for every attached light, lit or not.
+- **Each lookup of a setting used to walk the table by name:** 5.9% of the game thread with lighting off, 2.7% with it on. With the fix, `strcmp` is 0.5% with lighting on. It hasn't been measured with lighting off.
+
+**Not measured yet:** whether the picture holds up in a firefight with weapon lights taking turns. Past three weapon lights, some wait more than one view (2.2 waits a view at the Pillar of Autumn, with 384 rays).
+
+## What's next
+
+1. **Check the Nokia 8.** It is a target, and nothing has run on it. Its 4 ms budget is a guess, and a result there could change the rest of this list. Android's other phones and the PS5 get checked for the picture at the same time, once their images are built.
+2. **Fewer light reconnects** (Phase 5, item 2). The largest cost not yet touched, and it should show the most in 48-player matches. The audit comes first: if simulation queries depend on them, this stops here.
+3. **A cap on promoted lights** (Phase 5, item 3). The most direct cut to lighting's cost in a firefight, about a third of which is outside occlusion. It changes the picture, so you judge it.
+4. **NEON** (Phase 4). Estimated at 0.5 to 1 ms a frame on both targets, as `update_field` is about 1.6 ms in a firefight. Most useful in campaign firefights.
+5. **Android's limits adapt** (Phase 5, items 4 and 5), after the Nokia 8 shows what they need to do.
+6. **The rest of Phase 3, by what a profile still shows.** Tag names are now a small part of what's left. PS5's profile (item 8) stays on the list.
+7. **Phase 6, only if that isn't enough.** Moving field jobs off the game thread could save the most, but it is the riskiest work here, and the Switch's other two cores are shared.
+
+Once measuring is done, `debug.profiler` goes back off on the test Switch.
 
 ## What differs per target
 
@@ -71,11 +123,13 @@ This matters most on the Nokia 8, where every upload now splits a render pass.
 
 ## Phase 3: Remove the repeated CPU work
 
+Item 1 is done, and item 5 is mostly done: a settled light skips its fade and copies, but still checks the scene. As written, the remaining items are worth little in a firefight, so they wait for a profile that asks for them.
+
 1. **Config lookups:** done, with a small table from a name's address to its setting, so call sites and harness stubs stay as they are. Each source file has its own copy of a literal, so a setting has several addresses. With lighting off they took 5.9% of the game thread in a 48-bot Blood Gulch, more than with it on (2.7%), because a check then walks every setting it depends on.
 2. **Tag names:** a per-map table from tag to lighting profile, replacing the per-frame `strcmp` calls in the emitter, Covenant, rocket and muzzle modules.
 3. **Object walks:** one shared walk per view fills candidate lists for all the modules and the scene checks, replacing up to 5 walks plus 1 per field.
 4. **Ray batch:** generation stamps in place of the 307 KB memset (`plasma_collision.c:278`) and the 98 KB one at its end.
-5. **Stationary lights:** skip the fade and its copies once a field has settled, and check the scene less often.
+5. **Stationary lights:** a light skips the fade and its copies once its field has settled (done). Still to do: check the scene less often.
 6. **Moving lights:** skip the scene check (`plasma_occlusion.c:477`) until the light stops.
 7. **Lighting off:** stop the frame-end dispose from running every frame (`plasma_lighting.c:156`).
 
@@ -112,5 +166,5 @@ This phase visibly changes the picture, so you judge it.
 
 - Each step is its own commit, in phase order. Nothing is pushed unless you ask.
 - Harnesses show no new failures against the 159 that already fail.
-- After each phase, the Switch Lite and Nokia 8 are tried in a firefight, and PS5 is checked for the picture, since most of this code is shared. You run those, or tell me when I can use a device.
+- After each step, the Switch Lite is tried in a firefight, and Nokia 8 too once it has had its first run. PS5 is checked for the picture, since most of this code is shared. You run those, or tell me when I can use a device.
 - Each phase can be reverted on its own, so a visual regression stays easy to isolate.
