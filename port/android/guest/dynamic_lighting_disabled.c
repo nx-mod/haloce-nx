@@ -102,3 +102,4 @@ int lighting_menu_write(const char *name, const char *value) { return -1; }
 int lighting_menu_available(void) { return 0; }
 int lighting_force_off(const char *name, int forced) { return 0; }
 int lighting_forced_off(const char *name) { return 0; }
+int lighting_moving_lights_384(void) { return 0; }

@@ -316,3 +316,20 @@ def test_lighting_stats_negative_controls(before, after, expected):
     assert code.count(before) == 1
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
     assert status == CHECK_FAILED and expected in output, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    # the toggle does nothing
+    ('lighting_moving_lights_384() &&', 'FALSE &&', 'a moving light has 384 rays'),
+    # a new light has it too
+    ('resolution == OCC_SIZE && field->valid &&', 'resolution == OCC_SIZE &&', 'a new light has the full grid'),
+    # a held light has it too
+    ('resolution == OCC_SIZE && field->valid &&', 'field->valid &&', 'a held light keeps its own grid'),
+    # a light that stops stays coarse
+    (' || field->trace_resolution < resolution;', ';', 'once it stops, the full grid again'),
+])
+def test_moving_grid_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
+    assert status == CHECK_FAILED and expected in output, output

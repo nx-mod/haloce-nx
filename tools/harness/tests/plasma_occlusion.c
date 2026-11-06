@@ -164,6 +164,8 @@ static void D3DResource_Release(D3DResource *p)
 	free(p);
 	allocations--;
 }
+static int moving_384;
+int lighting_moving_lights_384(void) { return moving_384; }
 static int log_lines;
 void platform_log(char const *format, ...) { log_lines++; }
 void plasma_occlusion_window(void);
@@ -256,7 +258,45 @@ int main(int argc, char **argv)
 		plasma_occlusion_reset();
 	}
 	if (argc > 1 && !strcmp(argv[1], "stats"))
+	{
+		/* the overlay's comparison: a moving light's grid, and nothing else's */
+		#define GRID_VIEW(id) (time_ms+=16,queries=0,plasma_occlusion_window(),plasma_occlusion_submit(id,0),field_for(0))
+		blocked=1;
+		rasterizer_lights.lights[0].position.y=.005f; /* (away from a new field's zeros) */
+		plasma_occlusion_reset();
+		moving_384=1;
+		CHECK(GRID_VIEW(870)&&queries==1536&&TRUE,"a new light has the full grid");
+		CHECK(GRID_VIEW(870)&&queries==0,"a still one traces nothing");
+		rasterizer_lights.lights[0].position.y=.01f;
+		f=GRID_VIEW(870);
+		CHECK(f&&queries==384&&f->trace_resolution==8,"a moving light has 384 rays");
+		CHECK(sample_field(f->visibility,.9f,.5f,.5f)<.5f,"which still stop at a wall");
+		rasterizer_lights.lights[0].position.y=.02f;
+		CHECK(GRID_VIEW(870)&&queries==384,"and so it stays while it moves");
+		f=GRID_VIEW(870);
+		CHECK(f&&queries==1536&&f->trace_resolution==16,"once it stops, the full grid again");
+		CHECK(GRID_VIEW(870)&&queries==0,"and only the once");
+		held_muzzle=871;
+		plasma_occlusion_reset();
+		GRID_VIEW(871);
+		rasterizer_lights.lights[0].position.y=.03f;
+		CHECK(GRID_VIEW(871)&&queries==96,"a held light keeps its own grid");
+		held_muzzle=NONE;
+		plasma_occlusion_reset();
+		GRID_VIEW(872);
+		rasterizer_lights.lights[0].position.y=.04f;
+		moving_384=0;
+		CHECK(GRID_VIEW(872)&&queries==1536,"OFF, a moving light has the full grid");
+		moving_384=1;
+		rasterizer_lights.lights[0].position.y=.05f;
+		CHECK(GRID_VIEW(872)&&queries==384,"and ON takes effect at the next trace");
+		moving_384=0;
+		f=GRID_VIEW(872);
+		CHECK(f&&queries==1536,"and OFF again, even for one that stops");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
 		return 0;
+	}
 	plasma_occlusion_window();
 	plasma_occlusion_submit(1, 0);
 	f = field_for(0);

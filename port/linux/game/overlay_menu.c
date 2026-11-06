@@ -418,6 +418,9 @@ static struct overlay_entry overlay_lighting_entries[] =
 	OVERLAY_FORCE_OFF("World Emitters", "display.world_lighting"),
 	OVERLAY_FORCE_OFF("Light Occlusion", "display.plasma_occlusion"),
 	OVERLAY_FORCE_OFF("Shield Glow", "display.shield_glow"),
+	OVERLAY_TOGGLE_NOTE("Moving Lights: 384 Rays", _overlay_state_lighting_forced,
+		"lighting_force_off debug.moving_lights_384 true", "lighting_force_off debug.moving_lights_384 false",
+		"debug.moving_lights_384", "ON traces a moving light with 384 rays, OFF with 1536. Until restart"),
 };
 static struct overlay_source overlay_lighting = OVERLAY_FOLDER_OF("Force Lighting Off", overlay_lighting_entries);
 

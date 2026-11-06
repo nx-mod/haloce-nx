@@ -28,6 +28,8 @@ enum
 	OCC_SIZE = 16,
 	OCC_COUNT = 4096,
 	OCC_LIGHTS = 8,
+	OCC_HELD_RESOLUTION = 4,
+	OCC_MOVING_RESOLUTION = 8,
 	OCC_SUBMITTED = 128,
 	/* (views: more than one frame's, with split screen) */
 	OCC_UNREAD_VIEWS = 4
@@ -450,7 +452,19 @@ static int light_trace_resolution(long identity, long rasterizer_index)
 {
 	real axis[3], origin[3], radius;
 	return plasma_lighting_prong_cone(rasterizer_index, axis, origin, &radius) ||
-		covenant_emitter_lighting_held_weapon(identity) || muzzle_lighting_held_weapon(identity) ? 4 : OCC_SIZE;
+		covenant_emitter_lighting_held_weapon(identity) || muzzle_lighting_held_weapon(identity) ? OCC_HELD_RESOLUTION : OCC_SIZE;
+}
+/* The grid for a field's next trace. A new light has no depths to have moved
+   from, and one that stops goes back to the full grid (update_field). */
+static int field_trace_resolution(struct occlusion_field const *field, long rasterizer_index)
+{
+	struct rasterizer_light_submit_parameters const *light = &rasterizer_lights.lights[rasterizer_index];
+	int resolution = light_trace_resolution(field->identity, rasterizer_index);
+	if (resolution == OCC_SIZE && field->valid && lighting_moving_lights_384() &&
+		(light->position.x != field->trace_center[0] || light->position.y != field->trace_center[1] ||
+		 light->position.z != field->trace_center[2]))
+		return OCC_MOVING_RESOLUTION;
+	return resolution;
 }
 /* Keep the large reconstruction scratch off the repeated per-draw lookup
    path. Clang otherwise inlines this back into field_for, reserving/probing
@@ -487,7 +501,7 @@ static void trace_field(struct occlusion_field *field, struct rasterizer_light_s
 {
 	if (!field->valid)
 		stats.trace_new++;
-	else if (resolution != OCC_SIZE)
+	else if (resolution == OCC_HELD_RESOLUTION)
 		stats.trace_held++;
 	else if (light->position.x != field->trace_center[0] || light->position.y != field->trace_center[1] ||
 		light->position.z != field->trace_center[2] || field->trace_extent != extent)
@@ -580,7 +594,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 	}
 	for (i = 0; i < count; i++)
 	{
-		int resolution = light_trace_resolution(order[i]->identity, lights[i]);
+		int resolution = field_trace_resolution(order[i], lights[i]);
 		int vehicles = field_vehicles(order[i]->identity);
 		struct rasterizer_light_submit_parameters *light = &rasterizer_lights.lights[lights[i]];
 		real extent = field_extent(lights[i]);
@@ -619,7 +633,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	trace_dz = light->position.z - field->trace_center[2];
 	vehicles = field_vehicles(field->identity);
 	retraced = field->traced_window == current_window;
-	resolution = light_trace_resolution(field->identity, rasterizer_index);
+	resolution = field_trace_resolution(field, rasterizer_index);
 	/* Cache collision depths briefly, but project and fade at every rendered pose.
 	   Exact stationary poses can retain depths while all collision inputs are
 	   unchanged. Geometry changes follow the existing 12 ms trace cadence;
@@ -638,7 +652,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 		{
 			scene_revision = plasma_collision_scene_revision(&field->scene, &light->position, extent, vehicles);
 			revision_known = TRUE;
-			retrace = field->scene_revision != scene_revision;
+			retrace = field->scene_revision != scene_revision || field->trace_resolution < resolution;
 		}
 	}
 	/* port: no rays left this view: the depths it has, offset, if it is near them.
@@ -703,7 +717,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	}
 	else
 	{
-		if (resolution != OCC_SIZE)
+		if (resolution == OCC_HELD_RESOLUTION)
 			stats.rebuild_held++;
 		else if (stationary)
 			stats.rebuild_stationary++;

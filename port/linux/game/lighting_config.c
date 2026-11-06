@@ -102,9 +102,21 @@ int lighting_config_boolean(const char *name)
 	return config_boolean(name);
 }
 
+/* the overlay's comparison of grids for a moving light: for this run, not saved */
+static int moving_lights_384;
+int lighting_moving_lights_384(void)
+{
+	return moving_lights_384;
+}
+
 int lighting_force_off(const char *name, int forced)
 {
 	unsigned int i;
+	if (!strcmp(name, "debug.moving_lights_384"))
+	{
+		moving_lights_384 = forced != 0;
+		return 1;
+	}
 	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
 		if (!strcmp(name, preferences[i].name))
 		{
@@ -117,6 +129,8 @@ int lighting_force_off(const char *name, int forced)
 int lighting_forced_off(const char *name)
 {
 	unsigned int i;
+	if (!strcmp(name, "debug.moving_lights_384"))
+		return moving_lights_384;
 	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
 		if (!strcmp(name, preferences[i].name)) return preferences[i].forced_off;
 	return 0;
