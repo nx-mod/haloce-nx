@@ -1,6 +1,7 @@
 """Lighting preference cache observes settings changes without caching policy."""
 import re
 import sys
+import pytest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 from harness import build,read,run
@@ -25,3 +26,14 @@ def test_forcing_a_setting_off_leaves_the_config_alone():
     assert 'config_write' not in code and 'config_set' not in code
     status,output=run(build('lighting_config',(('under_test.inc',code),)),'forced')
     assert status==0,output
+
+
+@pytest.mark.parametrize('flags,expected', [
+    (('-DHALO_ANDROID=1', '-DHALO_SWITCH'), 'BUDGET 3 1800 0'),
+    (('-DHALO_ANDROID=1', '-DHALO_PS5=1'), 'BUDGET 8 0 0'),
+    (('-DHALO_ANDROID=1',), 'BUDGET 8 0 4000'),
+])
+def test_each_platform_has_its_budget(flags, expected):
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'budget')
+    assert status==0 and expected in output,output

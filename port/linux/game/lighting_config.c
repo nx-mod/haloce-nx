@@ -3,6 +3,7 @@
    remain owned by port_config.c. No map, object or host-policy state is cached. */
 #include "lighting_config.h"
 #include <string.h>
+#include <xtl.h>
 
 int config_boolean(const char *name);
 unsigned long config_changes(void);
@@ -48,6 +49,38 @@ static int platform_allows(const char *name)
 	for (i = 0; platform_off[i]; i++)
 		if (!strcmp(name, platform_off[i])) return 0;
 	return 1;
+}
+
+/* port: the Switch is one known machine, so it counts rays. Phones differ too
+   much for one count, so Android counts time, which also follows a phone that
+   slows down as it heats up (docs/dynamic_lighting_performance_plan.md). */
+const struct lighting_budget *lighting_budget(void)
+{
+	static const struct lighting_budget budget =
+#if defined(HALO_SWITCH)
+		{3, 1800, 0};
+#elif defined(HALO_PS5)
+		{8, 0, 0};
+#elif defined(HALO_ANDROID)
+		{8, 0, 4000};
+#else
+		{8, 0, 0};
+#endif
+	return &budget;
+}
+
+unsigned long lighting_budget_clock_us(void)
+{
+	static LONGLONG frequency;
+	LARGE_INTEGER count;
+	if (!frequency)
+	{
+		LARGE_INTEGER rate;
+		QueryPerformanceFrequency(&rate);
+		frequency = rate.QuadPart;
+	}
+	QueryPerformanceCounter(&count);
+	return (unsigned long)(count.QuadPart * 1000000 / frequency);
 }
 
 int lighting_config_boolean(const char *name)

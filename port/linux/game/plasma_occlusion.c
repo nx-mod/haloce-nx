@@ -43,6 +43,8 @@ static struct occlusion_field
 	real targets[OCC_COUNT];
 	real depths[6][OCC_SIZE * OCC_SIZE], trace_center[3], trace_extent;
 	int trace_resolution; /* the ray grid its depths were traced with */
+	unsigned long traced_window; /* the view plan_traces traced it for */
+	int too_far; /* this view: it could not be traced, and has moved too far from its depths */
 	IDirect3DVolumeTexture8 *texture[3];
 	/* Exact last successful uploads, bounded to 384 KiB across all fields.
 	   Identical texels need no memory-watch fault, decoding or GPU upload. */
@@ -85,6 +87,13 @@ static void remember_overflow(long identity, unsigned long now)
 	overflow[oldest].seen = now;
 	overflow[oldest].valid = 1;
 }
+/* What this view has spent of lighting_budget, and what is held back for a light
+   a draw asked for and was refused (remember_overflow). */
+static struct
+{
+	long rays, us, reserved_rays, reserved_us;
+	int traces, planned;
+} view_budget;
 static int submitted_count;
 static int updates_this_window;
 static int fields_dirty;
@@ -434,10 +443,139 @@ static int light_trace_resolution(long identity, long rasterizer_index)
    path. Clang otherwise inlines this back into field_for, reserving/probing
    its large stack frame even on a cache hit. All ports build with Clang.
    This runs at most once per admitted field in a view. */
+static unsigned long budget_clock(void)
+{
+	return lighting_budget()->time_us ? lighting_budget_clock_us() : 0;
+}
+static void budget_charge(unsigned long started)
+{
+	if (lighting_budget()->time_us)
+		view_budget.us += (long)(lighting_budget_clock_us() - started);
+}
+/* A view with nothing held back always traces its first light. */
+static int budget_allows(long rays, long reserved_rays, long reserved_us)
+{
+	const struct lighting_budget *budget = lighting_budget();
+	if (!view_budget.traces && !reserved_rays && !reserved_us)
+		return TRUE;
+	if (budget->rays && view_budget.rays + rays + reserved_rays > budget->rays)
+		return FALSE;
+	if (budget->time_us && view_budget.us + reserved_us >= budget->time_us)
+		return FALSE;
+	return TRUE;
+}
+static real field_extent(long rasterizer_index)
+{
+	real specular = plasma_occlusion_specular_scale(rasterizer_index);
+	return rasterizer_lights.lights[rasterizer_index].radius * MAX(1.0f, specular);
+}
+static void trace_field(struct occlusion_field *field, struct rasterizer_light_submit_parameters *light, real extent,
+	int resolution, int vehicles, unsigned long scene_revision, unsigned long now)
+{
+	trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
+		vehicles, resolution, field->depths);
+	view_budget.rays += resolution * resolution * 6;
+	view_budget.traces++;
+	field->trace_resolution = resolution;
+	field->scene_revision = scene_revision;
+	field->traced = now;
+	field->trace_extent = extent;
+	field->trace_center[0] = light->position.x;
+	field->trace_center[1] = light->position.y;
+	field->trace_center[2] = light->position.z;
+}
+static int field_vehicles(long identity)
+{
+	return muzzle_lighting_vehicle_occlusion(identity) || plasma_lighting_vehicle_occlusion(identity) ||
+		covenant_emitter_lighting_vehicle_occlusion(identity);
+}
+/* With a limit, draws can't decide who gets the rays, or the first light drawn
+   would always win. Before the view's first field: the most out-of-date moved
+   light first, then the next that fits, and the rest offset the depths they
+   have. Only fields in recent use, as a light no draw reads needs no rays. */
+static __attribute__((noinline)) void plan_traces(unsigned long now)
+{
+	const struct lighting_budget *budget = lighting_budget();
+	struct occlusion_field *order[OCC_LIGHTS];
+	long lights[OCC_LIGHTS];
+	real scores[OCC_LIGHTS];
+	int count = 0, s, i, j;
+	for (s = 0; s < submitted_count; s++)
+	{
+		struct occlusion_field *field = NULL;
+		struct rasterizer_light_submit_parameters *light;
+		long rasterizer_index = submitted[s].rasterizer;
+		real extent, dx, dy, dz, distance, score;
+		if (rasterizer_index < 0 || rasterizer_index >= rasterizer_lights.light_count)
+			continue;
+		for (i = 0; i < OCC_LIGHTS; i++)
+			if (fields[i].valid && fields[i].identity == submitted[s].identity)
+				field = &fields[i];
+		if (!field)
+		{
+			/* a draw asked for this one lately and was refused: room for it,
+			   if it has a field to go to */
+			for (i = 0; i < OCC_SUBMITTED; i++)
+				if (overflow[i].valid && overflow[i].identity == submitted[s].identity && now - overflow[i].seen <= 50)
+				{
+					for (j = 0; j < budget->fields; j++)
+						if (!fields[j].valid || now - fields[j].used > 100)
+						{
+							int resolution = light_trace_resolution(submitted[s].identity, rasterizer_index);
+							view_budget.reserved_rays = MAX(view_budget.reserved_rays, (long)resolution * resolution * 6);
+							view_budget.reserved_us = budget->time_us / 2;
+							break;
+						}
+					break;
+				}
+			continue;
+		}
+		if (current_window - field->window > 4 || count == OCC_LIGHTS)
+			continue;
+		light = &rasterizer_lights.lights[rasterizer_index];
+		extent = field_extent(rasterizer_index);
+		if (!(extent > 0.001f && extent < 1000.0f))
+			continue;
+		dx = light->position.x - field->trace_center[0];
+		dy = light->position.y - field->trace_center[1];
+		dz = light->position.z - field->trace_center[2];
+		distance = dx * dx + dy * dy + dz * dz;
+		score = distance / (extent * extent);
+		if (score <= 0.015625f && (now - field->traced < 12 || (distance == 0 && field->trace_extent == extent)))
+			continue;
+		score += (real)(now - field->traced) * 0.001f;
+		for (i = count; i > 0 && scores[i - 1] < score; i--)
+		{
+			order[i] = order[i - 1];
+			lights[i] = lights[i - 1];
+			scores[i] = scores[i - 1];
+		}
+		order[i] = field;
+		lights[i] = rasterizer_index;
+		scores[i] = score;
+		count++;
+	}
+	for (i = 0; i < count; i++)
+	{
+		int resolution = light_trace_resolution(order[i]->identity, lights[i]);
+		int vehicles = field_vehicles(order[i]->identity);
+		struct rasterizer_light_submit_parameters *light = &rasterizer_lights.lights[lights[i]];
+		real extent = field_extent(lights[i]);
+		unsigned long started;
+		if (order[i]->traced_window == current_window ||
+			!budget_allows((long)resolution * resolution * 6, view_budget.reserved_rays, view_budget.reserved_us))
+			continue;
+		started = budget_clock();
+		trace_field(order[i], light, extent, resolution, vehicles,
+			plasma_collision_scene_revision(&order[i]->scene, &light->position, extent, vehicles), now);
+		order[i]->traced_window = current_window;
+		budget_charge(started);
+	}
+}
 static __attribute__((noinline)) struct occlusion_field *update_field(struct occlusion_field *field, long rasterizer_index, unsigned long now)
 {
 	struct rasterizer_light_submit_parameters *light;
-	int i, x, y, z, stationary, vehicles, resolution, retraced = FALSE, due, moved, revision_known = FALSE, retrace;
+	int i, x, y, z, stationary, vehicles, resolution, retraced, due, moved, revision_known = FALSE, retrace, refused = FALSE;
 	unsigned long scene_revision = 0;
 	real elapsed, extent, specular, clear_alpha, block_alpha, admission;
 	real previous[OCC_COUNT];
@@ -448,7 +586,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	field->used = now;
 	light = &rasterizer_lights.lights[rasterizer_index];
 	specular = plasma_occlusion_specular_scale(rasterizer_index);
-	extent = light->radius * MAX(1.0f, specular);
+	extent = field_extent(rasterizer_index);
 	if (!(extent > 0.001f && extent < 1000.0f))
 		return NULL;
 	updates_this_window++;
@@ -456,8 +594,8 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	trace_dx = light->position.x - field->trace_center[0];
 	trace_dy = light->position.y - field->trace_center[1];
 	trace_dz = light->position.z - field->trace_center[2];
-	vehicles = muzzle_lighting_vehicle_occlusion(field->identity) || plasma_lighting_vehicle_occlusion(field->identity) ||
-		covenant_emitter_lighting_vehicle_occlusion(field->identity);
+	vehicles = field_vehicles(field->identity);
+	retraced = field->traced_window == current_window;
 	resolution = light_trace_resolution(field->identity, rasterizer_index);
 	/* Cache collision depths briefly, but project and fade at every rendered pose.
 	   Exact stationary poses can retain depths while all collision inputs are
@@ -480,6 +618,21 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 			retrace = field->scene_revision != scene_revision;
 		}
 	}
+	/* port: no rays left this view: the depths it has, offset, if it is near them.
+	   A field never traced has no depths: field_for only lets one in with room. */
+	if (retrace && field->valid &&
+		!budget_allows((long)resolution * resolution * 6, view_budget.reserved_rays, view_budget.reserved_us))
+	{
+		retrace = FALSE;
+		refused = TRUE;
+	}
+	if (refused && trace_dx * trace_dx + trace_dy * trace_dy + trace_dz * trace_dz > extent * extent * 0.25f)
+	{
+		field->too_far = TRUE;
+		field->window = current_window;
+		return NULL;
+	}
+	field->too_far = FALSE;
 	if (retrace && !revision_known)
 		scene_revision = plasma_collision_scene_revision(&field->scene, &light->position, extent, vehicles);
 	if (!retrace && field->trace_extent != extent)
@@ -489,16 +642,8 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	}
 	if (retrace)
 	{
-		trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
-			vehicles, resolution, field->depths);
+		trace_field(field, light, extent, resolution, vehicles, scene_revision, now);
 		retraced = TRUE;
-		field->trace_resolution = resolution;
-		field->scene_revision = scene_revision;
-		field->traced = now;
-		field->trace_extent = extent;
-		field->trace_center[0] = light->position.x;
-		field->trace_center[1] = light->position.y;
-		field->trace_center[2] = light->position.z;
 		trace_dx = trace_dy = trace_dz = 0;
 	}
 	memcpy(previous, field->visibility, sizeof(previous));
@@ -575,8 +720,9 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 }
 static struct occlusion_field *field_for(long rasterizer_index)
 {
-	struct occlusion_field *field = NULL;
-	unsigned long now = GetTickCount();
+	struct occlusion_field *field = NULL, *updated;
+	const struct lighting_budget *budget = lighting_budget();
+	unsigned long now = GetTickCount(), started;
 	long identity = NONE;
 	int i;
 	if (!enabled() || rasterizer_index < 0 || rasterizer_index >= rasterizer_lights.light_count)
@@ -586,19 +732,44 @@ static struct occlusion_field *field_for(long rasterizer_index)
 			identity = submitted[i].identity;
 	if (identity == NONE)
 		return NULL;
+	if (!view_budget.planned)
+	{
+		view_budget.planned = TRUE;
+		if (budget->rays || budget->time_us)
+			plan_traces(now);
+	}
 	for (i = 0; i < OCC_LIGHTS; i++)
 		if (fields[i].valid && fields[i].identity == identity)
 			field = &fields[i];
 	if (field && field->window == current_window)
-		return field;
-	if (updates_this_window >= OCC_LIGHTS)
+		return field->too_far ? NULL : field;
+	/* port: out of time: last view's field, if the light is still near it. One
+	   plan_traces traced this view still gets the good of its rays. */
+	if (field && field->traced_window != current_window && budget->time_us && view_budget.us >= budget->time_us)
+	{
+		struct rasterizer_light_submit_parameters *light = &rasterizer_lights.lights[rasterizer_index];
+		real dx = light->position.x - field->center[0];
+		real dy = light->position.y - field->center[1];
+		real dz = light->position.z - field->center[2];
+		field->used = now;
+		field->window = current_window;
+		field->too_far = dx * dx + dy * dy + dz * dz > field->extent * field->extent * 0.0625f;
+		return field->too_far ? NULL : field;
+	}
+	if (updates_this_window >= budget->fields)
 	{
 		remember_overflow(identity, now);
 		return NULL;
 	}
 	if (!field)
 	{
-		for (i = 0; i < OCC_LIGHTS; i++)
+		int resolution = light_trace_resolution(identity, rasterizer_index);
+		if (!budget_allows((long)resolution * resolution * 6, 0, 0))
+		{
+			remember_overflow(identity, now);
+			return NULL;
+		}
+		for (i = 0; i < budget->fields; i++)
 			if (!fields[i].valid || now - fields[i].used > 100)
 			{
 				field = &fields[i];
@@ -610,6 +781,9 @@ static struct occlusion_field *field_for(long rasterizer_index)
 			return NULL; /* active lights are never evicted */
 		}
 		field->valid = 0;
+		field->traced_window = 0;
+		field->too_far = FALSE;
+		view_budget.reserved_rays = view_budget.reserved_us = 0;
 		field->identity = identity;
 		field->admitted = now;
 		field->fading = 0;
@@ -619,7 +793,10 @@ static struct occlusion_field *field_for(long rasterizer_index)
 		for (i = 0; i < OCC_COUNT; i++)
 			field->visibility[i] = 1;
 	}
-	return update_field(field, rasterizer_index, now);
+	started = budget_clock();
+	updated = update_field(field, rasterizer_index, now);
+	budget_charge(started);
+	return updated;
 }
 /* Build only a texture actually consumed by this view. CPU visibility history
    stays independent of pass order, and each pass uploads at most once. */
@@ -740,7 +917,12 @@ static void *field_texture(struct occlusion_field *field, int pass, long rasteri
 		return NULL;
 	if (field->texture_mask & (1 << pass))
 		return field->texture[pass];
-	return prepare_field_texture(field, pass, directional, axis);
+	{
+		unsigned long started = budget_clock();
+		void *texture = prepare_field_texture(field, pass, directional, axis);
+		budget_charge(started);
+		return texture;
+	}
 }
 void plasma_occlusion_reset(void)
 {
@@ -768,6 +950,7 @@ void plasma_occlusion_window(void)
 	current_window++;
 	submitted_count = 0;
 	updates_this_window = 0;
+	memset(&view_budget, 0, sizeof(view_budget));
 	model_slots[0] = model_slots[1] = NONE;
 }
 unsigned long plasma_occlusion_view_serial(void)

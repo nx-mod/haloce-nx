@@ -1,4 +1,10 @@
 #include "harness.h"
+typedef struct { long long QuadPart; } LARGE_INTEGER;
+typedef long long LONGLONG;
+static long long counter=2000000;
+static void QueryPerformanceFrequency(LARGE_INTEGER *v) { v->QuadPart=2000000; }
+static void QueryPerformanceCounter(LARGE_INTEGER *v) { v->QuadPart=counter; }
+struct lighting_budget { int fields; long rays, time_us; };
 static unsigned long generation;
 static int enabled, reads, change_at;
 unsigned long config_changes(void) { return generation; }
@@ -8,6 +14,12 @@ int config_boolean(const char *name)
 int main(int argc,char **argv)
 {
  unsigned int i;int before;
+ if(argc>1&&!strcmp(argv[1],"budget"))
+ {
+  printf("BUDGET %d %ld %ld\n",lighting_budget()->fields,lighting_budget()->rays,lighting_budget()->time_us);
+  CHECK(lighting_budget_clock_us()==1000000,"the clock is in microseconds, whatever the counter's rate");
+  return 0;
+ }
  if(argc>1&&!strcmp(argv[1],"limited"))
  {
   enabled=1;generation++;

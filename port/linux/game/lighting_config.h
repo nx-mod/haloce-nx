@@ -6,4 +6,13 @@ int lighting_config_boolean(const char *name);
    setting is not one of these */
 int lighting_force_off(const char *name, int forced);
 int lighting_forced_off(const char *name);
+/* What occlusion may spend each view: active fields, and rays or microseconds of
+   work (0: no limit on that) */
+struct lighting_budget
+{
+	int fields;
+	long rays, time_us;
+};
+const struct lighting_budget *lighting_budget(void);
+unsigned long lighting_budget_clock_us(void);
 #endif

@@ -240,3 +240,20 @@ def test_stale_depths_need_their_own_grid_negative_control():
     assert code.count(before) == 1
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, 'reconstruct_visibility(field->depths, extent, resolution, trace_dx')),)), 'visibility')
     assert status == CHECK_FAILED and 'read as what they were' in output, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    # draws decide who gets the rays again: whichever is drawn first wins
+    ('plan_traces(now);', '(void)now;', 'one a frame'),
+    # the least out-of-date first: the same light wins, and the others never have a turn
+    ('scores[i - 1] < score', 'scores[i - 1] > score', 'has its turn'),
+    # nothing held back: a refused light never gets in
+    ('view_budget.reserved_rays = MAX(view_budget.reserved_rays, (long)resolution * resolution * 6);', '(void)resolution;', 'one a frame'),
+    # a light too far from its depths draws from them anyway
+    ('* 0.0625f;', '* 1000.0f;', 'misplaced field'),
+])
+def test_budget_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1, before
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
+    assert status == CHECK_FAILED and expected in output, output

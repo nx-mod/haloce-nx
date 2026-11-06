@@ -42,6 +42,9 @@ static struct
 	long light_count;
 	struct rasterizer_light_submit_parameters lights[32];
 } rasterizer_lights;
+struct lighting_budget { int fields; long rays, time_us; };
+static struct lighting_budget budget_now = {8, 0, 0};
+const struct lighting_budget *lighting_budget(void) { return &budget_now; }
 static int on = 1, queries, allocations, blocked = 1, door, fail_upload;
 static unsigned long time_ms = 1000;
 static int uploads, fail_unlock;
@@ -120,6 +123,7 @@ static int collision_test_vector(unsigned long flags, const real_point3d *p, con
 	hit->t = t;
 	return 1;
 }
+unsigned long lighting_budget_clock_us(void) { return (unsigned long)queries; } /* (a microsecond a ray) */
 static void plasma_collision_begin(unsigned long flags, const real_point3d *p, long ignore) {}
 static void plasma_collision_end(void) {}
 static float plasma_collision_depth(unsigned long flags, const real_point3d *p, const real_vector3d *v, long ignore)
@@ -641,5 +645,110 @@ int main(int argc, char **argv)
 	queries=0;plasma_occlusion_window();plasma_occlusion_submit(963,0);f=field_for(0);
 	CHECK(f&&queries==1536,"any other light keeps the full grid");
 	plasma_occlusion_reset();
+	/* a limit in rays: three moving lights share it, in turn, and none is left out */
+	{
+		int traced[3],light,frame,seen[3]={0,0,0};
+		struct occlusion_field *held[3];
+		budget_now.fields=3;budget_now.rays=1800;budget_now.time_us=0;
+		rasterizer_lights.light_count=4;
+		for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.x=0;}
+		/* one a frame comes in: the rest are refused, and held room for next */
+		for(frame=0;frame<3;frame++)
+		{
+			time_ms+=16;queries=0;plasma_occlusion_window();
+			for(n=0;n<3;n++)
+			{
+				/* (those in already want rays too) */
+				rasterizer_lights.lights[n].position.y+=.002f;
+				plasma_occlusion_submit(970+n,n);
+			}
+			for(n=0;n<3;n++)
+			{
+				held[n]=field_for(n);
+				CHECK((held[n]!=NULL)==(n<=frame),"lights come in one a frame, in the order they were refused");
+			}
+			CHECK(queries==1536,"and each view stays within the limit");
+		}
+		/* moving now: the one that has waited longest goes first, one a view */
+		for(frame=0;frame<6;frame++)
+		{
+			time_ms+=16;queries=0;plasma_occlusion_window();
+			for(n=0;n<3;n++)
+			{
+				rasterizer_lights.lights[n].position.y+=.002f;
+				plasma_occlusion_submit(970+n,n);
+				traced[n]=(int)fields[n].traced;
+			}
+			for(n=0;n<3;n++)CHECK(field_for(n),"a light short of rays keeps its field");
+			CHECK(queries==1536,"one trace fits the limit each view");
+			for(light=0;light<3;light++)if((int)fields[light].traced!=traced[light])seen[light]++;
+		}
+		CHECK(seen[0]==2&&seen[1]==2&&seen[2]==2,"each light has its turn, whichever is drawn first");
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=0;
+		plasma_occlusion_reset();
+		/* held-weapon lights fit in beside a full one */
+		time_ms+=200;held_emitter=980;held_muzzle=981;
+		plasma_occlusion_window();plasma_occlusion_submit(980,0);plasma_occlusion_submit(981,1);plasma_occlusion_submit(982,2);
+		queries=0;
+		CHECK(field_for(0)&&field_for(1)&&field_for(2)&&queries==1728,"two small grids and a full one fit the limit");
+		held_emitter=held_muzzle=NONE;
+		plasma_occlusion_reset();
+		/* the worst off goes first, and one left too far from its depths falls back */
+		budget_now.rays=1;time_ms+=200;
+		plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(0);time_ms+=16;
+		plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(1);time_ms+=16;
+		rasterizer_lights.lights[0].position.y=.2f;rasterizer_lights.lights[1].position.y=.6f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		CHECK(field_for(1)&&queries==1536,"the light furthest from its depths is traced, drawn first or not");
+		CHECK(field_for(0)&&queries==1536,"one near its depths waits, and offsets them");
+		time_ms+=16;rasterizer_lights.lights[0].position.y=.7f;rasterizer_lights.lights[1].position.y=.61f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		CHECK(field_for(0)&&queries==1536,"now the other's turn");
+		time_ms+=1;rasterizer_lights.lights[0].position.y=.71f;rasterizer_lights.lights[1].position.y=1.4f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(0);
+		CHECK(queries==1536,"the worst off has the rays");
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=0;
+		plasma_occlusion_reset();
+		/* a limit in time: rays stop at it, a field stays if its light is near it */
+		budget_now.fields=8;budget_now.rays=0;budget_now.time_us=2000;time_ms+=200;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		queries=0;
+		CHECK(field_for(0)&&field_for(1),"two traces fit in the time");
+		CHECK(!field_for(2)&&queries==3072,"the third has none left");
+		time_ms+=16;queries=0;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		CHECK(field_for(0)&&field_for(1)&&field_for(2)&&queries<=3072,"it goes first next view");
+		time_ms+=16;
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=.01f;
+		rasterizer_lights.lights[2].position.y=.6f;
+		queries=0;plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		f=field_for(2);
+		CHECK(f&&f->traced_window==current_window&&queries==3072,"the worst off traces first, then the next that fits");
+		CHECK(f->center[1]==.6f,"and a field traced this view is rebuilt from its new depths");
+		{
+			struct occlusion_field *near_field=field_for(1);
+			CHECK(view_budget.us>=2000&&near_field&&near_field->center[1]==0,"out of time, a light near its field keeps it as it is");
+			CHECK(near_field->window==current_window&&queries==3072,"and asks nothing more this view");
+		}
+		time_ms+=16;
+		rasterizer_lights.lights[1].position.y=.1f;
+		rasterizer_lights.lights[2].position.y=.9f;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		view_budget.planned=TRUE;view_budget.traces=1;view_budget.us=2000;queries=0;
+		CHECK(field_for(1)&&!queries,"out of time, a near light still draws");
+		CHECK(!field_for(2),"out of time, a far light never draws from a misplaced field");
+		CHECK(!field_for(2)&&!queries,"and it asks only once a view");
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=0;
+		budget_now.fields=8;budget_now.rays=budget_now.time_us=0;
+		rasterizer_lights.light_count=1;
+		plasma_occlusion_reset();
+	}
 	return 0;
 }
