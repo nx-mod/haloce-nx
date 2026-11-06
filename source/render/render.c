@@ -353,10 +353,14 @@ static void render_window(
 	else if (!bink_playback_in_progress())
 	{
 		build_sprite_prepare_for_window();
+		first_person_weapon_render_update();
+		/* port: before the first draw, so that the dynamic lighting's fields are
+		sent with no rendering to interrupt (plasma_occlusion_prepare_view). It
+		draws nothing, and the sky's queued lens flares go in after it */
+		lights_preprocess_scene();
 		halo_render_marker("sky");
 		render_sky();
-		first_person_weapon_render_update();
-		lights_preprocess_scene();
+		lights_submit_queued_lens_flares();
 		halo_render_marker("objects");
 		render_objects();
 		structure_render_preprocess();

@@ -165,6 +165,7 @@ symbols in this file:
 #include "objects/object_lights_rendering.h"
 #include "objects/objects.h"
 #include "render/render.h"
+#include "render/render_cameras_internal.h" /* port: plasma_occlusion_light_visible */
 #include "render/render_debug.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_environment.h"
@@ -809,6 +810,14 @@ boolean light_port_glow_move(long light_index, real_point3d const *position)
 	return TRUE;
 }
 
+/* port: whether this view can see any of a submitted light's sphere. */
+int plasma_occlusion_light_visible(long rasterizer_index, float radius)
+{
+	if (rasterizer_index < 0 || rasterizer_index >= rasterizer_lights.light_count)
+		return FALSE;
+	return render_frustum_sphere_visible(&render.frustum, &rasterizer_lights.lights[rasterizer_index].position, radius);
+}
+
 /* port: the light definition layout is private to this implementation. */
 float plasma_occlusion_specular_scale(long rasterizer_index)
 {
@@ -1078,7 +1087,6 @@ void lights_preprocess_scene(
 	long light_index;
 	short rendered_cluster_index;
 	short scene_light_index;
-	short queued_lens_flare_index;
 
 	profile_enter(lights_section);
 	debug_rasterizer_light_count = 0;
@@ -1462,6 +1470,20 @@ void lights_preprocess_scene(
 		}
 	}
 
+	plasma_lighting_window_end(); /* port: this view's lights are known: their fields */
+	rasterizer_lights_end();
+	profile_exit(lights_section);
+
+	return;
+}
+
+/* port: apart from lights_preprocess_scene, as the sky that queues them now draws
+after it. Still after the scene's own flares, as they were. */
+void lights_submit_queued_lens_flares(
+	void)
+{
+	short queued_lens_flare_index;
+
 	for (queued_lens_flare_index = 0;
 		queued_lens_flare_index < lights_globals.queued_lens_flare_count;
 		queued_lens_flare_index++)
@@ -1470,8 +1492,6 @@ void lights_preprocess_scene(
 			&lights_globals.queued_lens_flares[queued_lens_flare_index]);
 	}
 	lights_globals.queued_lens_flare_count = 0;
-	rasterizer_lights_end();
-	profile_exit(lights_section);
 
 	return;
 }

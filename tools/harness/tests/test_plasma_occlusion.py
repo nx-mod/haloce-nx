@@ -257,3 +257,24 @@ def test_budget_negative_controls(before, after, expected):
     assert code.count(before) == 1, before
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
     assert status == CHECK_FAILED and expected in output, output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    ('!plasma_occlusion_light_visible(rasterizer_index, field_extent(rasterizer_index)))', '0)', 'out of view traces nothing'),
+    ('current_window - field->consumed > OCC_UNREAD_VIEWS)\n\t\t\t\tcontinue;', '0)\n\t\t\t\tcontinue;', 'stops being updated'),
+    ('(light_trace_resolution(identity, rasterizer_index) != OCC_SIZE) != !round ||', '', 'choose their fields first'),
+])
+def test_prepare_negative_controls(before, after, expected):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert code.count(before) == 1, before
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
+    assert status == CHECK_FAILED and expected in output, output
+
+
+def test_lights_come_before_the_first_draw():
+    source = read('source/render/render.c')
+    lights = source.index('lights_preprocess_scene();')
+    sky = source.index('render_sky();')
+    flares = source.index('lights_submit_queued_lens_flares();')
+    assert lights < sky < flares
+    assert 'queued_lens_flares[queued' not in __import__('harness').function(read('source/objects/object_lights.c'), 'lights_preprocess_scene')

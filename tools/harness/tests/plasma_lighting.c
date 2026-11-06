@@ -66,6 +66,7 @@ void rocket_lighting_window_begin(void) {}
 void rocket_lighting_submitted(long i,long r) {}
 int rocket_lighting_selected(long i) { return 0; }
 void plasma_occlusion_window(void) {}
+void plasma_occlusion_prepare_view(void) {}
 void plasma_occlusion_submit(long i,long r) {}
 void plasma_lighting_reset(void);
 int plasma_lighting_selected(long index);

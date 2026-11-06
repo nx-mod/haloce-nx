@@ -4,6 +4,9 @@
 void plasma_occlusion_reset(void);
 void plasma_occlusion_window(void);
 void plasma_occlusion_submit(long light, long rasterizer_index);
+/* this view's lights are known, and nothing has been drawn */
+void plasma_occlusion_prepare_view(void);
+int plasma_occlusion_light_visible(long rasterizer_index, float radius);
 void plasma_occlusion_model_slot(long rasterizer_index, short slot);
 void *plasma_occlusion_texture(long rasterizer_index, int specular);
 void *plasma_occlusion_model_texture(int slot, float transform[4]);

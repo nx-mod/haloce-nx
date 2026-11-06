@@ -102,6 +102,8 @@ static unsigned long GetTickCount(void)
 {
 	return time_ms;
 }
+static int lights_hidden;
+int plasma_occlusion_light_visible(long r, float radius) { return !lights_hidden; }
 float plasma_occlusion_specular_scale(long index)
 {
 	return specular_scale;
@@ -664,6 +666,64 @@ int main(int argc, char **argv)
 	queries=0;plasma_occlusion_window();plasma_occlusion_submit(963,0);f=field_for(0);
 	CHECK(f&&queries==1536,"any other light keeps the full grid");
 	plasma_occlusion_reset();
+	/* a view's fields are made before its first draw, and only what is read */
+	{
+		int before,views;
+		blocked=1;rasterizer_lights.lights[0].radius=1;
+		time_ms+=200;uploads=0;queries=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		CHECK(queries==1536&&uploads==2,"a new field is traced and uploaded with no draw yet, its likely passes");
+		before=uploads;
+		plasma_occlusion_model_slot(0,0);
+		CHECK(plasma_occlusion_texture(0,0)&&plasma_occlusion_model_texture(0,transform)&&uploads==before,"so the draws send nothing");
+		CHECK(plasma_occlusion_texture(0,1)&&uploads==before,"a specular pass with the same radius is the diffuse one");
+		/* it read the world's passes and a model's: those, when it changes */
+		specular_scale=2;
+		time_ms+=16;blocked=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		before=uploads;
+		plasma_occlusion_model_slot(0,0);
+		CHECK(plasma_occlusion_texture(0,0)&&plasma_occlusion_model_texture(0,transform)&&uploads==before,"a pass read last view is ready");
+		specular_scale=1;
+		/* only a model read it this view: the next builds that alone */
+		time_ms+=16;blocked=1;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		time_ms+=16;blocked=0;before=uploads;
+		plasma_occlusion_model_slot(0,0);plasma_occlusion_model_texture(0,transform);before=uploads;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		CHECK(uploads==before+1,"a pass no draw read is not built");
+		before=uploads;
+		CHECK(plasma_occlusion_texture(0,0)&&uploads==before+1,"and is built on demand if one asks after all");
+		plasma_occlusion_reset();
+		/* out of view: nothing, until a draw asks */
+		time_ms+=200;lights_hidden=1;queries=0;uploads=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1001,0);plasma_occlusion_prepare_view();
+		CHECK(!queries&&!uploads,"a light out of view traces nothing");
+		CHECK(plasma_occlusion_texture(0,0)&&queries==1536,"and a draw that asks gets its field regardless");
+		lights_hidden=0;
+		plasma_occlusion_reset();
+		/* in view, and nothing reads it: it stops */
+		time_ms+=200;queries=0;
+		for(views=0;views<8;views++)
+		{
+			time_ms+=16;rasterizer_lights.lights[0].position.y+=.01f;
+			plasma_occlusion_window();plasma_occlusion_submit(1002,0);plasma_occlusion_prepare_view();
+		}
+		before=queries;
+		time_ms+=16;rasterizer_lights.lights[0].position.y+=.01f;
+		plasma_occlusion_window();plasma_occlusion_submit(1002,0);plasma_occlusion_prepare_view();
+		CHECK(before<8*1536&&queries==before,"a field no draw reads stops being updated");
+		CHECK(plasma_occlusion_texture(0,0)&&queries>before,"and starts again when one does");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		/* a held weapon's light gets a field before a far one */
+		budget_now.fields=1;time_ms+=200;held_emitter=1004;
+		rasterizer_lights.light_count=2;rasterizer_lights.lights[1].radius=1;
+		plasma_occlusion_window();plasma_occlusion_submit(1003,0);plasma_occlusion_submit(1004,1);plasma_occlusion_prepare_view();
+		CHECK(field_for(1)&&!field_for(0),"short lights choose their fields first");
+		budget_now.fields=8;held_emitter=NONE;rasterizer_lights.light_count=1;
+		plasma_occlusion_reset();
+	}
 	/* a limit in rays: three moving lights share it, in turn, and none is left out */
 	{
 		int traced[3],light,frame,seen[3]={0,0,0};

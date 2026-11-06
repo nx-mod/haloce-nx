@@ -179,6 +179,11 @@ void plasma_lighting_window_begin(void)
 		plasma_lighting_attachments[index].rasterizer_index = NONE;
 }
 
+void plasma_lighting_window_end(void)
+{
+	plasma_occlusion_prepare_view();
+}
+
 void plasma_lighting_submitted(long light_index, long rasterizer_index)
 {
 	int index;

@@ -22,6 +22,7 @@ int plasma_lighting_vehicle_occlusion(long light) { return FALSE; }
 void plasma_lighting_frame_end(void) {}
 void plasma_lighting_reset(void) {}
 void plasma_lighting_window_begin(void) {}
+void plasma_lighting_window_end(void) {}
 void plasma_lighting_submitted(long light, long rasterizer) {}
 int plasma_lighting_selected(long rasterizer) { return FALSE; }
 int plasma_lighting_prong_cone(long rasterizer, float axis[3], float origin[3], float *radius) { return FALSE; }

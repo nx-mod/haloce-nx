@@ -27,7 +27,9 @@ enum
 	OCC_SIZE = 16,
 	OCC_COUNT = 4096,
 	OCC_LIGHTS = 8,
-	OCC_SUBMITTED = 128
+	OCC_SUBMITTED = 128,
+	/* (views: more than one frame's, with split screen) */
+	OCC_UNREAD_VIEWS = 4
 };
 static struct occlusion_field
 {
@@ -44,6 +46,9 @@ static struct occlusion_field
 	int trace_resolution; /* the ray grid its depths were traced with */
 	unsigned long traced_window; /* the view plan_traces traced it for */
 	int too_far; /* this view: it could not be traced, and has moved too far from its depths */
+	unsigned long consumed; /* the view a draw last asked for it */
+	int passes_used; /* which texture passes draws asked for since the last prepare */
+	int prepared; /* has been through plasma_occlusion_prepare_view */
 	IDirect3DVolumeTexture8 *texture[3];
 	/* Exact last successful uploads, bounded to 384 KiB across all fields.
 	   Identical texels need no memory-watch fault, decoding or GPU upload. */
@@ -525,7 +530,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 				}
 			continue;
 		}
-		if (current_window - field->window > 4 || count == OCC_LIGHTS)
+		if (current_window - field->consumed > OCC_UNREAD_VIEWS || count == OCC_LIGHTS)
 			continue;
 		light = &rasterizer_lights.lights[rasterizer_index];
 		extent = field_extent(rasterizer_index);
@@ -713,7 +718,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	field->valid = 1;
 	return field;
 }
-static struct occlusion_field *field_for(long rasterizer_index)
+static struct occlusion_field *field_update_for(long rasterizer_index)
 {
 	struct occlusion_field *field = NULL, *updated;
 	const struct lighting_budget *budget = lighting_budget();
@@ -778,6 +783,9 @@ static struct occlusion_field *field_for(long rasterizer_index)
 		field->valid = 0;
 		field->traced_window = 0;
 		field->too_far = FALSE;
+		field->consumed = current_window;
+		field->passes_used = 0;
+		field->prepared = FALSE;
 		view_budget.reserved_rays = view_budget.reserved_us = 0;
 		field->identity = identity;
 		field->admitted = now;
@@ -792,6 +800,14 @@ static struct occlusion_field *field_for(long rasterizer_index)
 	updated = update_field(field, rasterizer_index, now);
 	budget_charge(started);
 	return updated;
+}
+/* What a draw asks for: only that counts as a light being read. */
+static struct occlusion_field *field_for(long rasterizer_index)
+{
+	struct occlusion_field *field = field_update_for(rasterizer_index);
+	if (field)
+		field->consumed = current_window;
+	return field;
 }
 /* Build only a texture actually consumed by this view. CPU visibility history
    stays independent of pass order, and each pass uploads at most once. */
@@ -969,6 +985,44 @@ void plasma_occlusion_submit(long light, long rasterizer_index)
 		submitted[submitted_count++].rasterizer = rasterizer_index;
 	}
 }
+/* port: every field this view will read, at once, before its first draw: under
+   Vulkan an upload ends the rendering it interrupts, and under deko3d each one
+   between draws costs two full barriers. A draw asking for anything missed still
+   gets it, the old way. Short lights go first, as held weapons' should not lose a
+   field to something across the map. */
+void plasma_occlusion_prepare_view(void)
+{
+	int round, s, i, pass;
+	if (!enabled())
+		return;
+	for (round = 0; round < 2; round++)
+		for (s = 0; s < submitted_count; s++)
+		{
+			struct occlusion_field *field = NULL;
+			long rasterizer_index = submitted[s].rasterizer, identity = submitted[s].identity;
+			int mask;
+			if (rasterizer_index < 0 || rasterizer_index >= rasterizer_lights.light_count ||
+				(light_trace_resolution(identity, rasterizer_index) != OCC_SIZE) != !round ||
+				!plasma_occlusion_light_visible(rasterizer_index, field_extent(rasterizer_index)))
+				continue;
+			for (i = 0; i < OCC_LIGHTS; i++)
+				if (fields[i].valid && fields[i].identity == identity)
+					field = &fields[i];
+			/* in view, and no draw has read it lately: no receiver near it */
+			if (field && current_window - field->consumed > OCC_UNREAD_VIEWS)
+				continue;
+			field = field_update_for(rasterizer_index);
+			if (!field)
+				continue;
+			/* a new field's are a guess: the world's diffuse pass and models */
+			mask = field->prepared ? field->passes_used : 1 << 0 | 1 << 1;
+			field->prepared = TRUE;
+			field->passes_used = 0;
+			for (pass = 0; pass < 3; pass++)
+				if (mask & 1 << pass)
+					field_texture(field, pass, rasterizer_index);
+		}
+}
 void plasma_occlusion_model_slot(long rasterizer_index, short slot)
 {
 	if (slot >= 0 && slot < 2)
@@ -977,7 +1031,10 @@ void plasma_occlusion_model_slot(long rasterizer_index, short slot)
 void *plasma_occlusion_texture(long rasterizer_index, int specular)
 {
 	struct occlusion_field *field = field_for(rasterizer_index);
-	void *texture = field_texture(field, specular ? 2 : 1, rasterizer_index);
+	void *texture;
+	if (field)
+		field->passes_used |= 1 << (specular ? 2 : 1);
+	texture = field_texture(field, specular ? 2 : 1, rasterizer_index);
 	return texture ? texture : ammo_counter_falloff_texture(rasterizer_index, specular ? 2 : 1, NULL);
 }
 void *plasma_occlusion_model_texture(int slot, float transform[4])
@@ -988,6 +1045,7 @@ void *plasma_occlusion_model_texture(int slot, float transform[4])
 	field = field_for(model_slots[slot]);
 	if (!field)
 		return ammo_counter_falloff_texture(model_slots[slot], 0, transform);
+	field->passes_used |= 1 << 0;
 	transform[0] = field->center[0];
 	transform[1] = field->center[1];
 	transform[2] = field->center[2];

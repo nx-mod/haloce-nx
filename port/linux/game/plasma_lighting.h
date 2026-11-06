@@ -8,6 +8,7 @@ int plasma_lighting_vehicle_occlusion(long light_index);
 void plasma_lighting_frame_end(void);
 void plasma_lighting_reset(void);
 void plasma_lighting_window_begin(void);
+void plasma_lighting_window_end(void);
 void plasma_lighting_submitted(long light_index, long rasterizer_index);
 int plasma_lighting_selected(long rasterizer_index);
 int plasma_lighting_prong_cone(long rasterizer, float axis[3], float origin[3], float *radius);
