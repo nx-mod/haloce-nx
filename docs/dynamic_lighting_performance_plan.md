@@ -1,6 +1,6 @@
 # Dynamic Lighting Performance: Plan
 
-Written 2026-11-06, after a code audit of the `dynamic-lighting` branch. No fix here has been started.
+Written 2026-11-06, after a code audit of the `dynamic-lighting` branch. **Phase 1's code is done, and hasn't run on a device.** The later phases haven't been started.
 
 **Target devices:** the Switch Lite and the Nokia 8 (Snapdragon 835, Vulkan), the slowest phone at hand.
 
@@ -33,7 +33,15 @@ The Android GL image links the lighting stub, so a phone that fell back to `disp
    | Android | 8 | 4 ms of occlusion work (fixed for now: Phase 5 makes it adapt) |
    | PS5 | 8 | None yet (Phase 3 profiles it) |
 
-4. **A batch overflow stops costing double.** Past 512 objects (`plasma_collision.c:163,364`), keep the BSP results and skip the objects, without rerunning every ray through the stock query.
+4. **A batch overflow stops costing double.** Past 512 objects (`plasma_collision.c`), the objects it has still block and the BSP still counts for every ray, with no rerun through the stock query. Only malformed geometry falls back to that now.
+
+**How the budget behaves:**
+
+- A limit only changes who traces. With no limit (PS5), the planning step doesn't run.
+- Draws can't pick the order, or the first light drawn would always win, so the rays are given out before a view's first field.
+- A light that a draw asked for and was refused gets room held for it on the next view. Off-screen lights never reach that list, so they can't take the room. It fades in as overflow lights already did.
+- A light short of rays offsets the depths it has. Past half its extent from them, it draws with no occlusion that view.
+- On Android, once the time is spent, a light with no new depths reuses last view's field if it is within a quarter of its extent, and otherwise draws with no occlusion. That also bounds the rebuild's cost, not only the rays'.
 
 **Done when:** ray counts stay within budget, and walls still block light on the Switch and on Android.
 
