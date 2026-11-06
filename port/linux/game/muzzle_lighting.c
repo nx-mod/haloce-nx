@@ -284,6 +284,18 @@ float muzzle_lighting_radius(long light_index, float radius)
 	return radius;
 }
 
+int muzzle_lighting_held_weapon(long light)
+{
+	int i;
+	if (light == NONE || !lighting_config_boolean("display.muzzle_lighting"))
+		return FALSE;
+	for (i = 0; i < MUZZLE_LIGHTS; i++)
+		if (pulses[i].active && pulses[i].light == light &&
+			!muzzle_profiles[pulses[i].profile].vehicle_occlusion)
+			return TRUE;
+	return FALSE;
+}
+
 int muzzle_lighting_vehicle_occlusion(long light)
 {
 	int i;

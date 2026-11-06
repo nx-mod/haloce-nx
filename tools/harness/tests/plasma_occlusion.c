@@ -65,6 +65,9 @@ unsigned long plasma_collision_scene_revision(struct plasma_collision_scene *sce
 }
 static float directional_axis[3]={-.8f,0,.6f}, directional_origin, directional_radius=1;
 int muzzle_lighting_vehicle_occlusion(long light) { return muzzle_on && light==500; }
+static long held_muzzle=NONE, held_emitter=NONE;
+int muzzle_lighting_held_weapon(long light) { return light!=NONE&&light==held_muzzle; }
+int covenant_emitter_lighting_held_weapon(long light) { return light!=NONE&&light==held_emitter; }
 int covenant_emitter_lighting_cone(long r,float axis[3],float origin[3],float *radius)
 {
  int i;if(!directional_on||r<0||r>=8)return 0;
@@ -611,6 +614,32 @@ int main(int argc, char **argv)
 		plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
 		CHECK(queries>n&&f->trace_extent==3,"an extent change at the cadence traces");
 	}
+	plasma_occlusion_reset();
+	/* lights on a weapon in a hand: the small grid, and still occluded; a light
+	   whose status changes between traces reads its depths at the grid they had */
+	blocked=1;door=0;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+	for(n=0;n<2;n++)
+	{
+		held_emitter=n?NONE:960;held_muzzle=n?961:NONE;
+		queries=0;time_ms+=200;plasma_occlusion_window();plasma_occlusion_submit(960+n,0);f=field_for(0);
+		CHECK(f&&queries==96,"a held weapon's light traces the small grid");
+		CHECK(f->visibility[4095]<.3f,"and a wall still blocks it");
+		plasma_occlusion_reset();
+	}
+	held_emitter=962;held_muzzle=NONE;queries=0;
+	plasma_occlusion_window();plasma_occlusion_submit(962,0);f=field_for(0);
+	previous=f->targets[(8*16+8)*16]; /* (clear, away from the wall) */
+	CHECK(previous>.9f,"the side away from the wall is lit");
+	held_emitter=NONE;n=queries;time_ms+=1;
+	plasma_occlusion_window();plasma_occlusion_submit(962,0);rasterizer_lights.lights[0].position.x=.001f;f=field_for(0);
+	CHECK(queries==n&&f->trace_resolution==4,"dropped between traces, it keeps the depths' grid");
+	CHECK(fabsf(f->targets[(8*16+8)*16]-previous)<.1f,"and they read as what they were");
+	time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(962,0);f=field_for(0);
+	CHECK(queries==n+1536&&f->trace_resolution==16,"its next trace has the full grid");
+	rasterizer_lights.lights[0].position.x=0;
+	plasma_occlusion_reset();
+	queries=0;plasma_occlusion_window();plasma_occlusion_submit(963,0);f=field_for(0);
+	CHECK(f&&queries==1536,"any other light keeps the full grid");
 	plasma_occlusion_reset();
 	return 0;
 }

@@ -42,6 +42,7 @@ static struct occlusion_field
 	real visibility[OCC_COUNT];
 	real targets[OCC_COUNT];
 	real depths[6][OCC_SIZE * OCC_SIZE], trace_center[3], trace_extent;
+	int trace_resolution; /* the ray grid its depths were traced with */
 	IDirect3DVolumeTexture8 *texture[3];
 	/* Exact last successful uploads, bounded to 384 KiB across all fields.
 	   Identical texels need no memory-watch fault, decoding or GPU upload. */
@@ -420,6 +421,15 @@ static int upload(IDirect3DVolumeTexture8 **texture, unsigned long const *pixels
 	rasterizer_xbox_bitmap_swizzle3d_long(box.pBits, (void *)pixels, OCC_SIZE, OCC_SIZE, OCC_SIZE);
 	return IDirect3DVolumeTexture8_UnlockBox(*texture, 0) >= 0;
 }
+/* The ray grid per cube face. Prong glows, and lights on a weapon in a hand, are
+   short, and move with the weapon on every frame: 96 rays, not 1536. They keep
+   their occlusion. Every other light keeps the full grid. */
+static int light_trace_resolution(long identity, long rasterizer_index)
+{
+	real axis[3], origin[3], radius;
+	return plasma_lighting_prong_cone(rasterizer_index, axis, origin, &radius) ||
+		covenant_emitter_lighting_held_weapon(identity) || muzzle_lighting_held_weapon(identity) ? 4 : OCC_SIZE;
+}
 /* Keep the large reconstruction scratch off the repeated per-draw lookup
    path. Clang otherwise inlines this back into field_for, reserving/probing
    its large stack frame even on a cache hit. All ports build with Clang.
@@ -434,7 +444,6 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	real projected[OCC_COUNT];
 	struct sample_axis history_axes[3][OCC_SIZE];
 	real trace_dx, trace_dy, trace_dz;
-	real axis[3], origin[3], radius;
 	fields_dirty = 1;
 	field->used = now;
 	light = &rasterizer_lights.lights[rasterizer_index];
@@ -449,10 +458,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	trace_dz = light->position.z - field->trace_center[2];
 	vehicles = muzzle_lighting_vehicle_occlusion(field->identity) || plasma_lighting_vehicle_occlusion(field->identity) ||
 		covenant_emitter_lighting_vehicle_occlusion(field->identity);
-	/* Only the deliberately short, soft prong glow uses a smaller ray grid.
-	   Keep the established shield/projectile/vehicle grids and 16^3 filtered
-	   output unchanged. A prong's 0.6-unit extent needs 96 rays, not 1536. */
-	resolution = plasma_lighting_prong_cone(rasterizer_index, axis, origin, &radius) ? 4 : OCC_SIZE;
+	resolution = light_trace_resolution(field->identity, rasterizer_index);
 	/* Cache collision depths briefly, but project and fade at every rendered pose.
 	   Exact stationary poses can retain depths while all collision inputs are
 	   unchanged. Geometry changes follow the existing 12 ms trace cadence;
@@ -486,6 +492,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 		trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
 			vehicles, resolution, field->depths);
 		retraced = TRUE;
+		field->trace_resolution = resolution;
 		field->scene_revision = scene_revision;
 		field->traced = now;
 		field->trace_extent = extent;
@@ -525,7 +532,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	}
 	else
 	{
-		reconstruct_visibility(field->depths, extent, resolution, trace_dx, trace_dy, trace_dz, field->targets);
+		reconstruct_visibility(field->depths, extent, field->trace_resolution, trace_dx, trace_dy, trace_dz, field->targets);
 		for (z = 0; z < OCC_SIZE; z++)
 			for (y = 0; y < OCC_SIZE; y++)
 				for (x = 0; x < OCC_SIZE; x++)

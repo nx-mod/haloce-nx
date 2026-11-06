@@ -11,5 +11,7 @@ int muzzle_lighting_selected(long rasterizer_index);
 float muzzle_lighting_radius(long light_index, float radius);
 
 int muzzle_lighting_vehicle_occlusion(long light);
+/* a flash from a weapon in a hand: a vehicle's gun has the wide radius and its hull */
+int muzzle_lighting_held_weapon(long light);
 
 #endif

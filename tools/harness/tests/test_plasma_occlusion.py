@@ -232,3 +232,11 @@ def test_light_occlusion_off_negative_control():
     assert code.count(gate) == 2
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(gate, '1 &&\n')),)), 'visibility')
     assert status == CHECK_FAILED and 'traces no rays' in output, output
+
+
+def test_stale_depths_need_their_own_grid_negative_control():
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    before = 'reconstruct_visibility(field->depths, extent, field->trace_resolution, trace_dx'
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, 'reconstruct_visibility(field->depths, extent, resolution, trace_dx')),)), 'visibility')
+    assert status == CHECK_FAILED and 'read as what they were' in output, output

@@ -420,6 +420,24 @@ int covenant_emitter_lighting_cone(long rasterizer, float axis[3], float origin[
 	return FALSE;
 }
 
+int covenant_emitter_lighting_held_weapon(long light)
+{
+	int i;
+	if (light == NONE)
+		return FALSE;
+	for (i = 0; i < EMITTER_LIGHTS; i++)
+		if (emitters[i].active && emitters[i].light == light)
+		{
+			struct object_datum *object;
+			if (emitters[i].kind == 3 || emitters[i].kind == 4)
+				return TRUE;
+			/* (a Hunter's rods are its own, and a dropped rod lies still) */
+			object = emitters[i].kind == 1 ? object_try_and_get(emitters[i].object) : NULL;
+			return object && object->object.type == _object_type_weapon && object->object.parent_object_index != NONE;
+		}
+	return FALSE;
+}
+
 int covenant_emitter_lighting_vehicle_occlusion(long light)
 {
 	int i;
