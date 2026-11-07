@@ -33,7 +33,10 @@ SECTIONS
 	that are not in the game state, together, so that a replay's keyframes
 	copy them whole with it (port/linux/game/network_replay_playback.c): the
 	simulation's folders, the netcode's client, and the port's modules of
-	either. Listed twice, the same: here for their data, below for their
+	either (network_coop.o's too: a co-op client's last event applied, put
+	back with the rest, or a rewind's events were taken for ones already
+	played and dropped, the intro's custom animations left running on the
+	players). Listed twice, the same: here for their data, below for their
 	zeroed variables. Ahead of .data and .bss, which take the rest */
 	.replay_data : {
 		__replay_data_start = .;
@@ -51,6 +54,7 @@ SECTIONS
 		*/port/linux/game/network_distributed.o(.data .data.*)
 		*/port/linux/game/network_objects.o(.data .data.*)
 		*/port/linux/game/network_actors.o(.data .data.*)
+		*/port/linux/game/network_coop.o(.data .data.*)
 		*/port/linux/game/network_damage.o(.data .data.*)
 		*/port/linux/game/network_shield_effects.o(.data .data.*)
 		*/port/linux/game/network_aim_assist.o(.data .data.*)
@@ -83,6 +87,7 @@ SECTIONS
 		*/port/linux/game/network_distributed.o(.bss .bss.* COMMON)
 		*/port/linux/game/network_objects.o(.bss .bss.* COMMON)
 		*/port/linux/game/network_actors.o(.bss .bss.* COMMON)
+		*/port/linux/game/network_coop.o(.bss .bss.* COMMON)
 		*/port/linux/game/network_damage.o(.bss .bss.* COMMON)
 		*/port/linux/game/network_shield_effects.o(.bss .bss.* COMMON)
 		*/port/linux/game/network_aim_assist.o(.bss .bss.* COMMON)
