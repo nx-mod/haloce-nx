@@ -5,6 +5,8 @@
 #include "plasma_occlusion.h"
 #if defined(__SSE2__)
 #include <emmintrin.h>
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
 #endif
 #include "plasma_collision.h"
 #include "ammo_counter_falloff.h"
@@ -319,82 +321,122 @@ static real depth_visibility(real depths[6][OCC_SIZE * OCC_SIZE], real_vector3d 
 }
 /* Four receiver cells share face selection and visibility arithmetic. Keep
    exact divides, square roots and weight order: no approximate reciprocals or
-   reduced grids. Other CPU targets retain the scalar implementation. */
+   reduced grids. One row of logic for both instruction sets; a comparison gives
+   all-ones lanes, min and max choose as SSE's do (a second operand on a tie or a
+   NaN), and the harness checks they give the scalar path's every bit on both.
+   Other CPU targets retain the scalar implementation. */
 #if defined(__SSE2__)
-static __m128 visibility_choose(__m128 mask, __m128 a, __m128 b)
-{
-	return _mm_or_ps(_mm_and_ps(mask, a), _mm_andnot_ps(mask, b));
-}
+#define VISIBILITY_VECTOR
+typedef __m128 vis_real;
+static vis_real vis_set(real value) { return _mm_set1_ps(value); }
+static vis_real vis_load(const real *from) { return _mm_loadu_ps(from); }
+static void vis_store(real *to, vis_real value) { _mm_storeu_ps(to, value); }
+static vis_real vis_add(vis_real a, vis_real b) { return _mm_add_ps(a, b); }
+static vis_real vis_sub(vis_real a, vis_real b) { return _mm_sub_ps(a, b); }
+static vis_real vis_mul(vis_real a, vis_real b) { return _mm_mul_ps(a, b); }
+static vis_real vis_div(vis_real a, vis_real b) { return _mm_div_ps(a, b); }
+static vis_real vis_sqrt(vis_real a) { return _mm_sqrt_ps(a); }
+static vis_real vis_abs(vis_real a) { return _mm_and_ps(a, _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff))); }
+static vis_real vis_min(vis_real a, vis_real b) { return _mm_min_ps(a, b); }
+static vis_real vis_max(vis_real a, vis_real b) { return _mm_max_ps(a, b); }
+static vis_real vis_greater(vis_real a, vis_real b) { return _mm_cmpgt_ps(a, b); }
+static vis_real vis_less(vis_real a, vis_real b) { return _mm_cmplt_ps(a, b); }
+static vis_real vis_at_least(vis_real a, vis_real b) { return _mm_cmpge_ps(a, b); }
+static vis_real vis_and(vis_real a, vis_real b) { return _mm_and_ps(a, b); }
+static vis_real vis_choose(vis_real mask, vis_real a, vis_real b) { return _mm_or_ps(_mm_and_ps(mask, a), _mm_andnot_ps(mask, b)); }
+static vis_real vis_all_set(void) { return _mm_castsi128_ps(_mm_set1_epi32(-1)); }
+static int vis_all(vis_real mask) { return _mm_movemask_ps(mask) == 15; }
+static void vis_store_int(int *to, vis_real value) { _mm_storeu_si128((__m128i *)to, _mm_cvttps_epi32(value)); }
+static vis_real vis_truncate(vis_real value) { return _mm_cvtepi32_ps(_mm_cvttps_epi32(value)); }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+#define VISIBILITY_VECTOR
+typedef float32x4_t vis_real;
+static vis_real vis_set(real value) { return vdupq_n_f32(value); }
+static vis_real vis_load(const real *from) { return vld1q_f32(from); }
+static void vis_store(real *to, vis_real value) { vst1q_f32(to, value); }
+static vis_real vis_add(vis_real a, vis_real b) { return vaddq_f32(a, b); }
+static vis_real vis_sub(vis_real a, vis_real b) { return vsubq_f32(a, b); }
+static vis_real vis_mul(vis_real a, vis_real b) { return vmulq_f32(a, b); }
+static vis_real vis_div(vis_real a, vis_real b) { return vdivq_f32(a, b); }
+static vis_real vis_sqrt(vis_real a) { return vsqrtq_f32(a); }
+static vis_real vis_abs(vis_real a) { return vabsq_f32(a); }
+static vis_real vis_greater(vis_real a, vis_real b) { return vreinterpretq_f32_u32(vcgtq_f32(a, b)); }
+static vis_real vis_less(vis_real a, vis_real b) { return vreinterpretq_f32_u32(vcltq_f32(a, b)); }
+static vis_real vis_at_least(vis_real a, vis_real b) { return vreinterpretq_f32_u32(vcgeq_f32(a, b)); }
+static vis_real vis_and(vis_real a, vis_real b) { return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b))); }
+static vis_real vis_choose(vis_real mask, vis_real a, vis_real b) { return vbslq_f32(vreinterpretq_u32_f32(mask), a, b); }
+static vis_real vis_min(vis_real a, vis_real b) { return vis_choose(vis_less(a, b), a, b); }
+static vis_real vis_max(vis_real a, vis_real b) { return vis_choose(vis_greater(a, b), a, b); }
+static vis_real vis_all_set(void) { return vreinterpretq_f32_u32(vdupq_n_u32(0xffffffffu)); }
+static int vis_all(vis_real mask) { return vminvq_u32(vreinterpretq_u32_f32(mask)) == 0xffffffffu; }
+static void vis_store_int(int *to, vis_real value) { vst1q_s32(to, vcvtq_s32_f32(value)); }
+static vis_real vis_truncate(vis_real value) { return vcvtq_f32_s32(vcvtq_s32_f32(value)); }
+#endif
+#ifdef VISIBILITY_VECTOR
 static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real xs[OCC_SIZE], real y, real z,
 								 real extent, int resolution, real *output)
 {
-	__m128 zero = _mm_setzero_ps(), one = _mm_set1_ps(1), half = _mm_set1_ps(.5f);
-	__m128 py = _mm_set1_ps(y), pz = _mm_set1_ps(z), ey = _mm_set1_ps(fabsf(y)), ez = _mm_set1_ps(fabsf(z));
-	__m128 ex = _mm_set1_ps(extent), size = _mm_set1_ps((real)resolution), limit = _mm_set1_ps((real)(resolution - 1));
-	__m128 facey = _mm_set1_ps((real)(2 + (y > 0))), facez = _mm_set1_ps((real)(4 + (z > 0)));
-	__m128 abs_mask = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
+	vis_real zero = vis_set(0), one = vis_set(1), half = vis_set(.5f);
+	vis_real py = vis_set(y), pz = vis_set(z), ey = vis_set(fabsf(y)), ez = vis_set(fabsf(z));
+	vis_real ex = vis_set(extent), size = vis_set((real)resolution), limit = vis_set((real)(resolution - 1));
+	vis_real facey = vis_set((real)(2 + (y > 0))), facez = vis_set((real)(4 + (z > 0)));
 	int x, i, j, lane;
 	for (x = 0; x < OCC_SIZE; x += 4)
 	{
-		__m128 px = _mm_loadu_ps(xs + x), magnitude = _mm_and_ps(px, abs_mask);
-		__m128 mask = _mm_cmpgt_ps(ey, magnitude), u = visibility_choose(mask, pz, py),
-			   v = visibility_choose(mask, px, pz);
-		__m128 face = visibility_choose(mask, facey, _mm_and_ps(_mm_cmpgt_ps(px, zero), one));
-		__m128 near_origin, tx, ty, fraction, hits[4], length;
-		__m128 clear = _mm_castsi128_ps(_mm_set1_epi32(-1)), result = zero;
+		vis_real px = vis_load(xs + x), magnitude = vis_abs(px);
+		vis_real mask = vis_greater(ey, magnitude), u = vis_choose(mask, pz, py),
+			   v = vis_choose(mask, px, pz);
+		vis_real face = vis_choose(mask, facey, vis_and(vis_greater(px, zero), one));
+		vis_real near_origin, tx, ty, fraction, hits[4], length;
+		vis_real clear = vis_all_set(), result = zero;
 		int faces[4], columns[4], rows[4];
 		real gather[4];
-		magnitude = visibility_choose(mask, ey, magnitude);
-		mask = _mm_cmpgt_ps(ez, magnitude);
-		magnitude = visibility_choose(mask, ez, magnitude);
-		face = visibility_choose(mask, facez, face);
-		u = visibility_choose(mask, px, u);
-		v = visibility_choose(mask, py, v);
-		near_origin = _mm_cmplt_ps(magnitude, _mm_set1_ps(.0001f));
-		magnitude = visibility_choose(near_origin, one, magnitude);
-		u = _mm_sub_ps(_mm_mul_ps(_mm_mul_ps(_mm_add_ps(_mm_div_ps(u, magnitude), one), half), size), half);
-		v = _mm_sub_ps(_mm_mul_ps(_mm_mul_ps(_mm_add_ps(_mm_div_ps(v, magnitude), one), half), size), half);
-		u = _mm_max_ps(zero, _mm_min_ps(limit, u));
-		v = _mm_max_ps(zero, _mm_min_ps(limit, v));
-		_mm_storeu_si128((__m128i *)faces, _mm_cvttps_epi32(face));
-		_mm_storeu_si128((__m128i *)columns, _mm_cvttps_epi32(u));
-		_mm_storeu_si128((__m128i *)rows, _mm_cvttps_epi32(v));
-		tx = _mm_sub_ps(u, _mm_cvtepi32_ps(_mm_cvttps_epi32(u)));
-		ty = _mm_sub_ps(v, _mm_cvtepi32_ps(_mm_cvttps_epi32(v)));
-		fraction = _mm_div_ps(magnitude, ex);
+		magnitude = vis_choose(mask, ey, magnitude);
+		mask = vis_greater(ez, magnitude);
+		magnitude = vis_choose(mask, ez, magnitude);
+		face = vis_choose(mask, facez, face);
+		u = vis_choose(mask, px, u);
+		v = vis_choose(mask, py, v);
+		near_origin = vis_less(magnitude, vis_set(.0001f));
+		magnitude = vis_choose(near_origin, one, magnitude);
+		u = vis_sub(vis_mul(vis_mul(vis_add(vis_div(u, magnitude), one), half), size), half);
+		v = vis_sub(vis_mul(vis_mul(vis_add(vis_div(v, magnitude), one), half), size), half);
+		u = vis_max(zero, vis_min(limit, u));
+		v = vis_max(zero, vis_min(limit, v));
+		vis_store_int(faces, face);
+		vis_store_int(columns, u);
+		vis_store_int(rows, v);
+		tx = vis_sub(u, vis_truncate(u));
+		ty = vis_sub(v, vis_truncate(v));
+		fraction = vis_div(magnitude, ex);
 		for (j = 0; j < 2; j++)
 			for (i = 0; i < 2; i++)
 			{
 				for (lane = 0; lane < 4; lane++)
 					gather[lane] = depths[faces[lane]][MIN(rows[lane] + j, resolution - 1) * OCC_SIZE +
 													   MIN(columns[lane] + i, resolution - 1)];
-				hits[j * 2 + i] = _mm_loadu_ps(gather);
-				clear = _mm_and_ps(clear, _mm_cmpge_ps(hits[j * 2 + i], fraction));
+				hits[j * 2 + i] = vis_load(gather);
+				clear = vis_and(clear, vis_at_least(hits[j * 2 + i], fraction));
 			}
-		if (_mm_movemask_ps(clear) == 15)
+		if (vis_all(clear))
 		{
-			result =
-				_mm_add_ps(_mm_mul_ps(_mm_sub_ps(one, tx), _mm_sub_ps(one, ty)), _mm_mul_ps(tx, _mm_sub_ps(one, ty)));
-			result = _mm_add_ps(result, _mm_mul_ps(_mm_sub_ps(one, tx), ty));
-			result = _mm_add_ps(result, _mm_mul_ps(tx, ty));
+			result = vis_add(vis_mul(vis_sub(one, tx), vis_sub(one, ty)), vis_mul(tx, vis_sub(one, ty)));
+			result = vis_add(result, vis_mul(vis_sub(one, tx), ty));
+			result = vis_add(result, vis_mul(tx, ty));
 		}
 		else
 		{
-			length = _mm_div_ps(_mm_mul_ps(_mm_sqrt_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(px, px), _mm_mul_ps(py, py)),
-																  _mm_mul_ps(pz, pz))),
-										   ex),
-								magnitude);
+			length = vis_div(vis_mul(vis_sqrt(vis_add(vis_add(vis_mul(px, px), vis_mul(py, py)), vis_mul(pz, pz))), ex),
+							 magnitude);
 			for (j = 0; j < 2; j++)
 				for (i = 0; i < 2; i++)
 				{
-					__m128 visible = _mm_sub_ps(
-						one, _mm_div_ps(_mm_mul_ps(_mm_sub_ps(fraction, hits[j * 2 + i]), length), _mm_set1_ps(.025f)));
-					visible = _mm_max_ps(zero, _mm_min_ps(one, visible));
-					result = _mm_add_ps(result, _mm_mul_ps(_mm_mul_ps(visible, i ? tx : _mm_sub_ps(one, tx)),
-														   j ? ty : _mm_sub_ps(one, ty)));
+					vis_real visible = vis_sub(one, vis_div(vis_mul(vis_sub(fraction, hits[j * 2 + i]), length), vis_set(.025f)));
+					visible = vis_max(zero, vis_min(one, visible));
+					result = vis_add(result, vis_mul(vis_mul(visible, i ? tx : vis_sub(one, tx)), j ? ty : vis_sub(one, ty)));
 				}
 		}
-		_mm_storeu_ps(output + x, visibility_choose(near_origin, one, result));
+		vis_store(output + x, vis_choose(near_origin, one, result));
 	}
 }
 #else
@@ -968,6 +1010,7 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 	unsigned long pixels[OCC_COUNT];
 	real rows[OCC_COUNT];
 	struct sample_axis half_axes[3][OCC_SIZE];
+	real prong_mask[OCC_COUNT];
 	int x, y, z, i;
 	real scale;
 	stats.textures++;
@@ -1013,6 +1056,8 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 	}
 	else
 	{
+		if (directional == 3)
+			plasma_prong_falloff_mask(axis, prong_mask);
 		for (z = 0; z < OCC_SIZE; z++)
 			for (y = 0; y < OCC_SIZE; y++)
 				for (x = 0; x < OCC_SIZE; x++)
@@ -1032,7 +1077,7 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 								0.5f + dy * scale * 0.5f, 0.5f + dz * scale * 0.5f);
 					value = 1 - field->admission + field->admission * value;
 					if (directional)
-						value *= directional == 3 ? plasma_prong_falloff_factor(axis, dx, dy, dz) : directional == 2 ? needler_falloff_factor(dz *
+						value *= directional == 3 ? prong_mask[i] : directional == 2 ? needler_falloff_factor(dz *
 							(pass == 0 ? field->extent / field->radius : pass == 2 ? field->specular : 1.0f)) :
 							ammo_counter_falloff_factor(axis, dx, dy, dz);
 					if (pass)

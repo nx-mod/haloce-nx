@@ -1,5 +1,7 @@
 """Exercise the actual visibility field with synthetic collision geometry."""
 import re
+import shutil
+import subprocess
 import sys
 import pytest
 from pathlib import Path
@@ -190,6 +192,79 @@ def test_packed_visibility_matches_scalar_fields():
     assert samples[0] == samples[1]
 
 
+def full_code():
+    return re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+
+
+FIELD_CELLS = '\tfield->valid = 1;'
+
+
+def cells(code):
+    """every cell of every field a run of the visibility case builds"""
+    assert code.count(FIELD_CELLS) == 1
+    return code.replace(FIELD_CELLS, FIELD_CELLS + '\n\tfor (i = 0; i < OCC_COUNT; i++) printf("CELL %.9g\\n", field->visibility[i]);')
+
+
+def run_on_arm(code, tmp_path):
+    """the code built for 64-bit ARM, as the Switch and Android run it, under qemu"""
+    compiler, qemu = shutil.which('aarch64-linux-gnu-gcc'), shutil.which('qemu-aarch64-static')
+    if not compiler or not qemu:
+        pytest.skip('needs aarch64-linux-gnu-gcc and qemu-aarch64-static')
+    work = tmp_path / str(abs(hash(code)))
+    work.mkdir()
+    (work / 'under_test.inc').write_text(code)
+    harness = Path(__file__).resolve().parents[1]
+    # (no contraction: fused multiplies would differ from SSE's rounding, and from the guest's intrinsics)
+    result = subprocess.run([compiler, '-static', '-std=gnu99', '-O2', '-ffp-contract=off', '-w', '-include', 'arm_neon.h',
+                             '-I', str(harness / 'include'), '-I', str(work), str(harness / 'tests' / 'plasma_occlusion.c'),
+                             '-o', str(work / 'test'), '-lm'], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-3000:]
+    result = subprocess.run([qemu, str(work / 'test'), 'visibility'], capture_output=True, text=True, errors='replace', timeout=240)
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_neon_matches_scalar_and_sse(tmp_path):
+    code = cells(full_code())
+    status, neon = run_on_arm(code + '\n#ifndef VISIBILITY_VECTOR\n#error no NEON path\n#endif\n', tmp_path)
+    assert status == 0, neon[-2000:]
+    status, scalar = run_on_arm(code.replace('#define VISIBILITY_VECTOR\ntypedef float32x4_t', '#undef VISIBILITY_VECTOR\ntypedef float32x4_t'), tmp_path)
+    assert status == 0, scalar[-2000:]
+    status, sse = run(build('plasma_occlusion', (('under_test.inc', code),), SSE_MATH + ('-ffp-contract=off',)), 'visibility')
+    assert status == 0, sse[-2000:]
+    neon, scalar, sse = (re.findall(r'CELL (\S+)', output) for output in (neon, scalar, sse))
+    assert len(neon) > 4096
+    assert neon == scalar
+    assert neon == sse
+
+
+@pytest.mark.parametrize('before,after', [
+    # (not vis_all_set: the path it chooses is an exact shortcut, so breaking it changes no cell)
+    ('return vcvtq_f32_s32(vcvtq_s32_f32(value));', 'return value;'),
+    ('return vis_choose(vis_greater(a, b), a, b);', 'return vis_choose(vis_less(a, b), a, b);'),
+    ('return vbslq_f32(vreinterpretq_u32_f32(mask), a, b);', 'return vbslq_f32(vreinterpretq_u32_f32(mask), b, a);'),
+])
+def test_neon_comparison_finds_a_wrong_helper(before, after, tmp_path):
+    code = cells(full_code())
+    assert code.count(before) == 1
+    status, good = run_on_arm(code, tmp_path)
+    assert status == 0, good[-2000:]
+    status, bad = run_on_arm(code.replace(before, after), tmp_path)
+    assert status != 0 or re.findall(r'CELL (\S+)', bad) != re.findall(r'CELL (\S+)', good)
+
+
+def test_prong_mask_is_the_factor():
+    status, output = run(build('plasma_occlusion', (('under_test.inc', full_code()),), SSE_MATH), 'prong')
+    assert status == 0, output
+
+
+def test_prong_mask_negative_control():
+    code = full_code()
+    before = 'lengths[i] + 0.2f) / 0.7f, 0.0f, 1.0f);'
+    assert code.count(before) == 1
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, 'lengths[i] + 0.2f) / 0.75f, 0.0f, 1.0f);')),), SSE_MATH), 'prong')
+    assert status == CHECK_FAILED and 'a prong mask' in output, output
+
+
 def test_runtime_visibility_comparison_preserves_fields(tmp_path, monkeypatch):
     from lighting_visibility_check import instrument
     code = read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c')
@@ -209,7 +284,6 @@ static void QueryPerformanceFrequency(LARGE_INTEGER *v) { v->QuadPart=1000000; }
 def test_scalar_path():
     """The ARM images have no SSE2 path: the whole case over the scalar reconstruction."""
     code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
-    assert code.count('#if defined(__SSE2__)') == 1 or '#if defined(__SSE2__)' in code
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace('#if defined(__SSE2__)', '#if 0')),)), 'visibility')
     assert status == 0, output
 

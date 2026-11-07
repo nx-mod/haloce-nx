@@ -52,6 +52,37 @@ float plasma_prong_falloff_factor(const float axis[3], float x, float y, float z
 	return t*t*(3.0f - 2.0f*t);
 }
 
+/* plasma_prong_falloff_factor for every cell of a field, in its texels' order. A
+   weapon's mask is made again each time its field changes, and a cell's distance
+   never does, so those are kept: what's left is a flat loop with no call and no
+   square root. (No cell centre is near enough to the middle for the factor's zero.) */
+void plasma_prong_falloff_mask(const float axis[3], float *mask)
+{
+	enum { CELLS = 16 * 16 * 16 };
+	static float xs[CELLS], ys[CELLS], zs[CELLS], lengths[CELLS];
+	static int ready;
+	int i;
+	if (!ready)
+	{
+		int x, y, z;
+		for (z = 0, i = 0; z < 16; z++)
+			for (y = 0; y < 16; y++)
+				for (x = 0; x < 16; x++, i++)
+				{
+					xs[i] = 2.0f * (x + 0.5f) / 16 - 1;
+					ys[i] = 2.0f * (y + 0.5f) / 16 - 1;
+					zs[i] = 2.0f * (z + 0.5f) / 16 - 1;
+					lengths[i] = sqrtf(xs[i]*xs[i] + ys[i]*ys[i] + zs[i]*zs[i]);
+				}
+		ready = 1;
+	}
+	for (i = 0; i < CELLS; i++)
+	{
+		float t = PIN(((axis[0]*xs[i] + axis[1]*ys[i] + axis[2]*zs[i]) / lengths[i] + 0.2f) / 0.7f, 0.0f, 1.0f);
+		mask[i] = t*t*(3.0f - 2.0f*t);
+	}
+}
+
 /* These masks are soft and broad, and rebuilding one costs all 4,096 texels and an
    upload. A weapon sways on every frame, so one follows it in 5 degree steps. */
 int plasma_direction_moved(const float from[3], const float to[3])

@@ -192,6 +192,25 @@ int main(int argc, char **argv)
 	float transform[4];
 	rasterizer_lights.light_count = 1;
 	rasterizer_lights.lights[0].radius = 1;
+	if (argc > 1 && !strcmp(argv[1], "prong"))
+	{
+		static const float axes[][3] = {{1,0,0},{0,1,0},{0,0,1},{-.8f,0,.6f},{.577f,.577f,.577f},{-.267f,.802f,-.535f},{0,0,-1}};
+		static float mask[4096];
+		unsigned int a;
+		int x, y, z, i;
+		for (a = 0; a < sizeof(axes) / sizeof(axes[0]); a++)
+		{
+			plasma_prong_falloff_mask(axes[a], mask);
+			for (z = 0, i = 0; z < 16; z++)
+				for (y = 0; y < 16; y++)
+					for (x = 0; x < 16; x++, i++)
+					{
+						float dx = 2.0f * (x + 0.5f) / OCC_SIZE - 1, dy = 2.0f * (y + 0.5f) / OCC_SIZE - 1, dz = 2.0f * (z + 0.5f) / OCC_SIZE - 1;
+						CHECK(mask[i] == plasma_prong_falloff_factor(axes[a], dx, dy, dz), "a prong mask's cell is the factor's, exactly");
+					}
+		}
+		return 0;
+	}
 	if (argc > 1 && !strcmp(argv[1], "stats"))
 	/* debug.gpu_stats: each thing a field does is counted as what it was */
 	{

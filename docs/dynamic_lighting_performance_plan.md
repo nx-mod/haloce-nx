@@ -55,7 +55,7 @@ All on the Switch Lite at 720p with the profiler on. Each comparison is two pass
 1. **Check the Nokia 8.** It is a target, and nothing has run on it. Its 4 ms budget is a guess, and a result there could change the rest of this list. Android's other phones and the PS5 get checked for the picture at the same time, once their images are built.
 2. **Fewer light reconnects** (Phase 5, item 2). The per-tick path is done, not yet measured. See that item for what's left.
 3. **Fewer promoted lights** (Phase 5, item 3). At 48 players, 97 lights a view were promoted and 17 drawn, and the list stops at 128, so a light near the player could miss it. A light is now only promoted if its largest reach can touch the view. That changes nothing drawn. Not measured yet. A limit on how many keep their full reach is built too, off by default, with overlay rows to compare.
-4. **NEON** (Phase 4). Estimated at 0.5 to 1 ms a frame on both targets, as `update_field` is about 1.6 ms in a firefight. Most useful in campaign firefights.
+4. **NEON** (Phase 4). Rebuilding visibility is done, and prong masks no longer take a call and a square root a cell. Not measured yet. Estimated at 0.5 to 1 ms a frame on both targets. The fades, history reprojection and other pixel conversions are still as the compiler leaves them.
 5. **Android's limits adapt** (Phase 5, items 4 and 5), after the Nokia 8 shows what they need to do.
 6. **The rest of Phase 3, by what a profile still shows.** Tag names are now a small part of what's left. PS5's profile (item 8) stays on the list.
 7. **Phase 6, only if that isn't enough.** Moving field jobs off the game thread could save the most, but it is the riskiest work here, and the Switch's other two cores are shared.
@@ -139,7 +139,7 @@ Item 1 is done, and item 5 is mostly done: a settled light skips its fade and co
 
 ## Phase 4: NEON
 
-Port the SSE field rebuild (`plasma_occlusion.c:295`) to NEON, and vectorize the fade and pixel conversion. A harness compares the output with the scalar path. Both targets are ARM, and both run the scalar path today.
+`depth_visibility_row` has one body over small helper functions for SSE and NEON. A harness builds it for 64-bit ARM and runs it under qemu: NEON, the scalar path and x86's SSE give the same bits in every field of the visibility case. The ARM guests can now see the compiler's own headers, after the C library's, for `arm_neon.h`. Still to do, if a profile asks: the fade, history reprojection and pixel conversion.
 
 ## Phase 5: Limit firefight lights
 
