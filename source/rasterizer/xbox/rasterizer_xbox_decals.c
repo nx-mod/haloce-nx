@@ -948,34 +948,58 @@ static void rasterizer_decals_draw_gathered(
 	return;
 }
 
-/* port: draws the decals batched (decal_batch) */
+/* port: draws the decals batched (decal_batch): their vertices packed as
+registers 0 (the position), 4 (the texture coordinates) and 9 (the decal's
+color), in one call (D3DDevice_DrawVerticesImmediate) rather than three calls a
+vertex. A batch longer than the buffer goes in more than one, at a quad's end
+(the buffer holds a whole number of quads, and a decal's are whole quads). */
+#define DECAL_IMMEDIATE_VERTICES 4096
+#define DECAL_IMMEDIATE_MASK ((1UL << 0) | (1UL << 4) | (1UL << 9))
+static float decal_immediate_vertices[DECAL_IMMEDIATE_VERTICES][12];
+
 static void rasterizer_decals_draw_batch(
 	void)
 {
 	short batch_index;
+	long count = 0;
 
 	if (!decal_batch_count)
 		return;
 	decal_statistics.batches++;
-	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_QUADLIST);
 	for (batch_index = 0; batch_index < decal_batch_count; batch_index++)
 	{
 		byte const *color = decal_batch[batch_index].color;
+		real red = color[0] / 255.0f, green = color[1] / 255.0f, blue = color[2] / 255.0f, alpha = color[3] / 255.0f;
 		short vertex_index;
 
 		decal_statistics.vertices += decal_batch[batch_index].vertex_count;
 		for (vertex_index = 0; vertex_index < decal_batch[batch_index].vertex_count; vertex_index++)
 		{
 			struct decal_vertex const *vertex = &decal_batch[batch_index].vertices[vertex_index];
+			float *out;
 
-			IDirect3DDevice8_SetVertexData4ub(global_d3d_device, 9, color[0], color[1], color[2], color[3]);
-			IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4,
-				(real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f, (real)(short)(vertex->texcoord >> 16) / 32767.0f);
-			IDirect3DDevice8_SetVertexData4f(global_d3d_device, 0,
-				vertex->position.x, vertex->position.y, vertex->position.z, 1.0f);
+			if (count == DECAL_IMMEDIATE_VERTICES)
+			{
+				D3DDevice_DrawVerticesImmediate(D3DPT_QUADLIST, DECAL_IMMEDIATE_MASK, decal_immediate_vertices[0], count);
+				count = 0;
+			}
+			out = decal_immediate_vertices[count++];
+			out[0] = vertex->position.x;
+			out[1] = vertex->position.y;
+			out[2] = vertex->position.z;
+			out[3] = 1.0f;
+			out[4] = (real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f;
+			out[5] = (real)(short)(vertex->texcoord >> 16) / 32767.0f;
+			out[6] = 0.0f;
+			out[7] = 1.0f;
+			out[8] = red;
+			out[9] = green;
+			out[10] = blue;
+			out[11] = alpha;
 		}
 	}
-	IDirect3DDevice8_End(global_d3d_device);
+	if (count)
+		D3DDevice_DrawVerticesImmediate(D3DPT_QUADLIST, DECAL_IMMEDIATE_MASK, decal_immediate_vertices[0], count);
 	decal_batch_count = 0;
 
 	return;

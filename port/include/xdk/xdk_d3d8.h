@@ -821,6 +821,13 @@ D3DINLINE HRESULT __stdcall IDirect3DDevice8_End(D3DDevice *device)
 	return S_OK;
 }
 
+/* port: one call for Begin, a run of vertices and End, as SetVertexData4f would
+give them: each vertex is the registers of mask in ascending order, four floats
+each (register 0 among them: it completes a vertex), and the registers keep the
+last vertex's values after. The game's immediate draws of many vertices (the
+decals) spend more on three calls a vertex than on drawing them. */
+void __stdcall D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count);
+
 D3DINLINE HRESULT __stdcall IDirect3DDevice8_SetVertexData2f(D3DDevice *device, INT reg, float a, float b)
 {
 	(void)device;

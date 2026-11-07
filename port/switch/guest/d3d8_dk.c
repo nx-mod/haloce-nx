@@ -3522,6 +3522,89 @@ void WINAPI D3DDevice_End(void)
 	draw_resources_used(FALSE, FALSE);
 }
 
+static void set_attribute(INT reg, float a, float b, float c, float d);
+
+void WINAPI D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count)
+{
+	unsigned long registers = (unsigned long)__builtin_popcountl(mask), stride = registers * 4 * sizeof(float);
+	unsigned long index, fed = 0, reg;
+	struct dk_vertex_format format;
+	struct dk_command_draw *command;
+	const float *last;
+
+	if (!count || !(mask & 1) || (mask >> XGPU_VERTEX_ATTRIBUTE_COUNT))
+		return;
+	/* (as the vertices would leave them, one at a time) */
+	last = data + (count - 1) * registers * 4;
+	for (reg = 0, index = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+	{
+		if (mask & (1UL << reg))
+			memcpy(device.attributes[reg], last + index++ * 4, 4 * sizeof(float));
+	}
+	/* (the fixed-function pipeline's positions are transformed: End does) */
+	if (device.fixed_function)
+	{
+		UINT vertex;
+
+		D3DDevice_Begin(type);
+		for (vertex = 0; vertex < count; vertex++)
+		{
+			const float *in = data + vertex * registers * 4;
+
+			for (reg = XGPU_VERTEX_ATTRIBUTE_COUNT, index = registers; reg-- > 0;)
+			{
+				if (mask & (1UL << reg))
+				{
+					index--;
+					set_attribute((INT)reg, in[index * 4], in[index * 4 + 1], in[index * 4 + 2], in[index * 4 + 3]);
+				}
+			}
+		}
+		D3DDevice_End();
+		return;
+	}
+	if (type == D3DPT_QUADLIST)
+		count &= ~3U;
+	if (!count)
+		return;
+	if (count * stride + 4096 > STREAM_SIZE)
+	{
+		stats.skipped_size++;
+		return;
+	}
+	if (!draw_prepare(TRUE))
+		return;
+	memset(&format, 0, sizeof(format));
+	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+	{
+		if (mask & (1UL << index))
+		{
+			format.attributes[index].format = DK_ATTRIBUTE_FLOAT4;
+			format.attributes[index].stream = 0;
+			format.attributes[index].offset = (uint32_t)(fed++ * 4 * sizeof(float));
+		}
+		else
+		{
+			format.attributes[index].format = DK_ATTRIBUTE_UNFED;
+			memcpy(format.constants[index], device.attributes[index], sizeof(format.constants[index]));
+		}
+	}
+	format.strides[0] = (uint32_t)stride;
+	format.stream_mask = 1;
+	draw_format_send(&format);
+	command = stream_command(DK_COMMAND_DRAW, sizeof(*command) + 2 * sizeof(uint32_t) + count * stride);
+	command->primitive = primitive_of(type);
+	command->count = (uint32_t)count;
+	command->index_address = 0;
+	command->vertex_offset = 0;
+	command->inline_bytes = (uint32_t)(count * stride);
+	command->stream_count = 1;
+	command->streams[0][0] = 0;
+	command->streams[0][1] = (uint32_t)(count * stride);
+	memcpy(&command->streams[1], data, count * stride);
+	draw_resources_used(FALSE, FALSE);
+}
+
 static void set_attribute(INT reg, float a, float b, float c, float d)
 {
 	BOOL emit = FALSE;

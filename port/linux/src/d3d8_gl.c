@@ -7071,6 +7071,32 @@ void WINAPI D3DDevice_SetVertexData4f(INT reg, FLOAT a, FLOAT b, FLOAT c, FLOAT 
 	set_attribute(reg, a, b, c, d);
 }
 
+void WINAPI D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count)
+{
+	unsigned long registers = (unsigned long)__builtin_popcountl(mask);
+	UINT vertex;
+	int reg, index;
+
+	if (!count || !(mask & 1))
+		return;
+	D3DDevice_Begin(type);
+	for (vertex = 0; vertex < count; vertex++)
+	{
+		const float *in = data + vertex * registers * 4;
+
+		/* (register 0, which completes the vertex, last) */
+		for (reg = 31, index = (int)registers; reg >= 0; reg--)
+		{
+			if (mask & (1UL << reg))
+			{
+				index--;
+				D3DDevice_SetVertexData4f(reg, in[index * 4], in[index * 4 + 1], in[index * 4 + 2], in[index * 4 + 3]);
+			}
+		}
+	}
+	D3DDevice_End();
+}
+
 void WINAPI D3DDevice_SetVertexData2s(INT reg, SHORT a, SHORT b)
 {
 	set_attribute(reg, (float)a, (float)b, 0.0f, 1.0f);

@@ -4297,6 +4297,39 @@ void WINAPI D3DDevice_End(void)
 	device.immediate_count = 0;
 }
 
+void WINAPI D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count)
+{
+	unsigned long registers = (unsigned long)__builtin_popcountl(mask), reg, index;
+	const float *last;
+
+	if (!count || !(mask & 1) || (mask >> XGPU_VERTEX_ATTRIBUTE_COUNT))
+		return;
+	/* (End's draw from the vertices as they would be, a column a register) */
+	D3DDevice_Begin(type);
+	if (!immediate_room(count * registers * 4))
+	{
+		device.immediate_active = FALSE;
+		return;
+	}
+	for (reg = 0, index = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+	{
+		if (mask & (1UL << reg))
+			device.immediate_registers[index++] = (unsigned char)reg;
+	}
+	device.immediate_columns = (unsigned)registers;
+	device.immediate_mask = mask;
+	memcpy(device.immediate_vertices, data, count * registers * 4 * sizeof(float));
+	device.immediate_count = count;
+	/* (as the vertices would leave them, one at a time) */
+	last = data + (count - 1) * registers * 4;
+	for (reg = 0, index = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+	{
+		if (mask & (1UL << reg))
+			memcpy(device.attributes[reg], last + index++ * 4, 4 * sizeof(float));
+	}
+	D3DDevice_End();
+}
+
 static void set_attribute(INT reg, float a, float b, float c, float d)
 {
 	BOOL emit = FALSE;
