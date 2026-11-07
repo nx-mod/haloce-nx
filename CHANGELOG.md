@@ -1,5 +1,74 @@
 # Changelog
 
+## Build 139: Dynamic lighting, and better Custom Edition maps!
+
+### Dynamic lighting
+
+- New: dynamic lighting, ported from GulchCE, on Vulkan (Android) and the Switch. Plasma bolts, rockets, muzzle flashes, held energy weapons, the Assault Rifle's ammo counter, Needlers, fuel rods, Jackal and Covenant shields, vehicles, powerups and teleporters can light what's around them, and energy shields glow onto their surroundings as they flare. Turn each one on in Video Setup > Dynamic Lighting; they're all off by default. (ported by thelinkin3000, thanks a lot Chester!)
+- Light Occlusion: dynamic lights stop at walls and vehicles instead of shining through them. On Android, Occluded Lights sets how many lights a frame get it (8, 6 or 4, 6 by default); fewer is faster on a slower phone. (thelinkin3000)
+- Dynamic lighting is tuned to keep big fights smooth: held weapons and moving lights trace far fewer rays, weapon lights always leave room for other lights, lights that can't reach your view or are far away stay as the game draws them, and a light on a moving object no longer rebuilds its place in the level every tick. (thelinkin3000)
+
+### Custom Edition maps
+
+- HUDs on Custom Edition maps now draw on Vulkan (Android) and the Switch as they do on OpenGL: ammo counters and health and shield meters drawn from sheets the map shares with other HUD art show correctly, and segmented high-res meters keep their steps sharp. With High-Res HUD on, the original HUD sheets that have no high-res redraw are drawn four times larger and smoother. (thelinkin3000, from chestahh's fix for OpenGL)
+- Android: DELETE on New Game's and the Map screen's map lists deletes the custom map or folder of maps chosen, after a second press to confirm. Only custom maps can be deleted. (thelinkin3000)
+- Android: on phones whose GPU can't use the game's compressed (DXT) textures, like the Nokia 8's Adreno 540 and Mali GPUs, most textures now take a quarter of the memory they did. Big Custom Edition maps such as the_Cage no longer run the phone out of memory while they load. To go back, set `display.dxt1_astc` to `false` in `config.toml`. (thelinkin3000)
+- Switch: very large textures (over 8 MB once unpacked) are drawn again. On the_Cage the pistol's zoom showed garbage instead of its scope, and the large 3D texture the game's own dynamic lights fade with was never drawn. (thelinkin3000)
+
+### Theater and replays
+
+- Theater: once the player keeps moving, the cinematic camera now follows them at the left stick's distance, instead of chasing them in surges. It still stays put like a tripod while they stand or make short moves. (thelinkin3000)
+- Theater: the cinematic and free cameras no longer pass through trees, rocks, crashed ships and other scenery and machines, or see the player through them. (thelinkin3000)
+- Replays: rewinding a co-op replay no longer leaves players sliding along in a cutscene's pose, or misses doors, sounds and scenery animations. (thelinkin3000)
+- Replays: the watched player's weapon lights are lit as their own first-person weapon's, and lights in a replay measure their distance from the replay's camera. (thelinkin3000)
+
+### Controls and menus
+
+- Touch controls: a new "Show during cutscenes" switch in Options > General keeps the controls on screen while a cutscene plays. Press A to skip it then. (thelinkin3000)
+- Gamepads: a profile's Gamepads has VERTICAL SENSITIVITY, which sets how fast the right stick turns the view up and down on its own. SAME keeps the game's, half of Look Sensitivity. (thelinkin3000)
+- Server browser: the PING column sorts, lowest first, then highest. (thelinkin3000)
+- Menus: the PC menus are always in English. They showed in Spanish when the `loc.map` in custom_maps came from a Spanish Custom Edition. (thelinkin3000)
+- Android: the first time this build starts, it makes the files in the game's folder readable and writable by everyone, on Android versions that allow it. (thelinkin3000)
+
+### Graphics and performance
+
+- Vulkan and Switch: decals on surfaces seen at an angle, like the Pelican's red side lights, no longer sink into the surface in slivers at higher resolutions. (thelinkin3000, from Erik's fix for OpenGL)
+- Switch: a lens flare no longer reads another test's visibility, which could show or hide it wrongly. (thelinkin3000)
+- Decals are drawn in fewer, larger batches, and a network client stops asking for the host's address every frame. Big matches run lighter, especially on the Switch. (thelinkin3000)
+
+### From OpenCE
+
+#### Graphics
+
+- Lens flares are each tested for visibility on their own, so one no longer takes another's. (Erik)
+- Decals keep the Xbox's depth bias at any depth and screen size. (Erik)
+- A scope's zoom blur reaches the left and top edges of the screen. (Erik)
+- The Xbox scope's 2x and 10x labels are sized to match the stock glyphs. (Erik)
+- Chapter titles stay on the side they're aligned to on a widescreen. (Erik)
+- Between game ticks, shadows stay under their objects, camera shake shows on every frame, flags' cloth moves with its pole, lightning bolts keep their shape, and contrails age at the game's own pace. (Erik)
+- An empty-handed player's flashlight shines from where their body is drawn. (Erik)
+- The first-person weapon's quick animations, like melee, are smoothed between ticks. (Guven)
+
+#### Sound
+
+- Sounds have the Doppler effect: their pitch shifts as they move toward or away from you. (trevorm7)
+- A voice the game cuts off fades out instead of stopping dead, without a click. (trevorm7)
+
+#### Controls
+
+- Each controller stick's dead zone can be set, in percent. (Guven)
+- Remapped controls navigate the main menu correctly, and custom layouts have a Cycle Camera action. (chestahh)
+
+#### Multiplayer
+
+- Server browser: hosts are timed in the order shown, a row shows moving dots while its host is timed, and REFRESH shows the timing again. Probes wait at most a second for the listings. (medic-code, MrBruh)
+- Discord Account's LINK opens the master server's page when a server asked for one. (MrBruh)
+- Dedicated servers: custom maps whose file names have capitals can be played, and the web page's PLAY NOW starts rotation entries with many rules. (Guven)
+
+#### Fixes
+
+- A script that refers to an object that no longer exists gets none instead of crashing the game. (Guven)
+
 ## Build 138: Hotfix for input lag
 
 - Switch: much less input lag. In our tests, the time from the stick moving to the view turning went from about 102 ms to about 67 ms. In first person on foot, the view now follows your stick on the frame you move it, and the game reads your input later, just before it's needed. To go back, set `display.direct_camera` to `false` or `debug.frame_pace_ahead` to `true` in `config.toml`. (thelinkin3000)
