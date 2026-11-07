@@ -3430,6 +3430,11 @@ static void raster_state_make(struct vk_command_draw *draw, BOOL has_color, BOOL
 	{
 		state->depth_bias = 1;
 		draw->depth_bias_slope = dword_to_float(rs[D3DRS_POLYGONOFFSETZSLOPESCALE]);
+		/* The slope is the depth's change across a pixel, and a target drawn at several pixels to the game's one has that many
+		times less depth across each: the Xbox's slope term, taken across its own pixels, is that many times the scale. On a
+		surface seen at an angle it is most of the bias (the Pelican's lights on its curved hull sank in as slivers at 1080
+		lines, as d3d8_gl.c's did). The units are the Xbox's already: the depth here is the Xbox's (xgpu_reversed_depth). */
+		draw->depth_bias_slope *= target_scale[0] > target_scale[1] ? target_scale[0] : target_scale[1];
 		draw->depth_bias_constant = dword_to_float(rs[D3DRS_POLYGONOFFSETZOFFSET]);
 	}
 }
