@@ -672,8 +672,12 @@ static void custom_edition_maps_scan_files(
 		}
 		custom_edition_map_add(root, directory, category, file->name, file->extension, file->size, file->time, found);
 	}
-	free(descriptions);
-	free(files);
+	/* (none for a folder with no files, as custom_maps with only sets of
+	maps in folders: free is debug_free, which halts on NULL) */
+	if (descriptions)
+		free(descriptions);
+	if (files)
+		free(files);
 
 	return;
 }
