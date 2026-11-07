@@ -670,6 +670,14 @@ static const struct config_setting config_settings[] =
 		"traced on the CPU. Projectile, muzzle, Covenant, vehicle and Shield Glow\n"
 		"lights all follow it; off, no rays are traced. At most eight occluded\n"
 		"lights. Vulkan and deko3d only." },
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	/* (the phone's: lighting_config.c's lighting_budget. The Switch traces a
+	fixed count of rays, the PS5 eight lights) */
+	{ "display.occlusion_lights", _config_integer, "6", "HALO_OCCLUSION_LIGHTS", _environment_value, _platform_android,
+		"How many lights Light Occlusion traces rays for in a frame: 8, 6 or 4.\n"
+		"Fewer are faster on a slower phone; a light past them keeps its last\n"
+		"occlusion, or has none, until its turn. Changes at once." },
+#endif
 	{ "display.plasma_lighting", _config_boolean, "false", "HALO_PLASMA_LIGHTING", _environment_value, _platform_all,
 		"Supported plasma, Covenant and rocket flight lights follow rendered poses\n"
 		"with soft world and model falloff and omni highlights. Off keeps stock\n"

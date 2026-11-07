@@ -551,7 +551,12 @@ SCREENS["video_settings/dynamic_lighting"] = {
          "Visible powerups and teleporters cast soft light.\nStock effects and gameplay remain unchanged.", None),
         ("LIGHT OCCLUSION:", "display.plasma_occlusion", ON_OFF,
          "Block added light behind walls and vehicles.\nOff traces no rays, so light can pass through them.", None),
-    ] + _shield_rows,
+    ] + _shield_rows + [
+        # (the phone's: lighting_config.c's lighting_budget. Last, so that
+        # the other platforms' rows are where they were)
+        ("OCCLUDED LIGHTS:", "display.occlusion_lights", [("8", "8"), ("6", "6"), ("4", "4")],
+         "How many lights trace occlusion a frame. Fewer\nare faster on a slower phone.", "android"),
+    ],
 }
 # the Switch's clocks (port/switch/host/host_sdl2.c)
 SCREENS["video_settings/performance"] = {

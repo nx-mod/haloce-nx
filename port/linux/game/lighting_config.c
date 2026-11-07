@@ -54,20 +54,37 @@ static int platform_allows(const char *name)
 
 /* port: the Switch is one known machine, so it counts rays. Phones differ too
    much for one count, so Android counts time, which also follows a phone that
-   slows down as it heats up (docs/dynamic_lighting_performance_plan.md). */
+   slows down as it heats up (docs/dynamic_lighting_performance_plan.md); and
+   how many lights a frame is the player's (display.occlusion_lights: 8, 6 or 4,
+   Video Setup's Dynamic Lighting). On a Nokia 8 at 720p, eight came to 37 frames
+   a second in a 48-player plasma fight, 52 with no dynamic lighting. */
 const struct lighting_budget *lighting_budget(void)
 {
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH) && !defined(HALO_PS5)
+	extern long config_integer(const char *name);
+	static struct lighting_budget budget = {6, 0, 4000};
+	static unsigned long changes;
+	static int ready;
+
+	if (!ready || changes != config_changes())
+	{
+		long lights;
+
+		changes = config_changes();
+		lights = config_integer("display.occlusion_lights");
+		budget.fields = lights == 8 || lights == 4 ? (int)lights : 6;
+		ready = 1;
+	}
+	return &budget;
+#else
 	static const struct lighting_budget budget =
 #if defined(HALO_SWITCH)
 		{3, 1800, 0};
-#elif defined(HALO_PS5)
-		{8, 0, 0};
-#elif defined(HALO_ANDROID)
-		{8, 0, 4000};
 #else
 		{8, 0, 0};
 #endif
 	return &budget;
+#endif
 }
 
 unsigned long lighting_budget_clock_us(void)

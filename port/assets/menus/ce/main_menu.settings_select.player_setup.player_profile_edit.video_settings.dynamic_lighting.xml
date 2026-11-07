@@ -23,6 +23,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/op_plasma_occlusion" x="54" y="255"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/op_shield_glow" x="54" y="281"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/op_shield_glow_intensity" x="54" y="307"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/op_occlusion_lights" x="54" y="333" platform="android"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
@@ -120,6 +121,15 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/shield_glow_intensity_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="DEFAULT|LIGHT SHOW" setting="display.shield_glow_intensity" values="default|light_show" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
 		<on event="created" run="port setting load"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/op_occlusion_lights" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF" platform="android">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/occlusion_lights_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/occlusion_lights_spinner" x="320" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/occlusion_lights_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/labels" string_index="10" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/occlusion_lights_spinner" type="spinner" left="3" top="2" width="147" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="8|6|4" setting="display.occlusion_lights" values="8|6|4" font="ui\large_ui" color="#FF2896FF" align="center" text_y="1" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" footer_bounds="7 150 19 156">
+		<on event="created" run="port setting load"/>
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/button_defaults" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port settings defaults"/>
 		<on event="start" run="port settings defaults"/>
@@ -141,6 +151,7 @@
 		<string text="LIGHT OCCLUSION:"/>
 		<string text="SHIELD GLOW:"/>
 		<string text="GLOW INTENSITY:"/>
+		<string text="OCCLUDED LIGHTS:"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/dynamic_lighting/help_strings">
 		<string text=""/>
@@ -154,5 +165,6 @@
 		<string text="Block added light behind walls and vehicles.\nOff traces no rays, so light can pass through them."/>
 		<string text="Shields light their surroundings as they flare.\nOnline: the host's choice."/>
 		<string text="Light Show: three times as far, at full from a\nthird of the flare. Online: the host's choice."/>
+		<string text="How many lights trace occlusion a frame. Fewer\nare faster on a slower phone."/>
 	</strings>
 </menus>

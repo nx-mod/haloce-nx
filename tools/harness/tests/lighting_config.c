@@ -9,6 +9,10 @@ struct lighting_budget { int fields; long rays, time_us; };
 static unsigned long generation;
 static int enabled, reads, change_at;
 unsigned long config_changes(void) { return generation; }
+/* display.occlusion_lights, and how often it is read */
+static long occlusion_lights=6;
+static int integer_reads;
+long config_integer(const char *name) { integer_reads++;return occlusion_lights; }
 int config_boolean(const char *name)
 { reads++;if(reads==change_at){enabled=1;generation++;}return enabled; }
 static int string_compares;
@@ -22,6 +26,22 @@ int main(int argc,char **argv)
  {
   printf("BUDGET %d %ld %ld\n",lighting_budget()->fields,lighting_budget()->rays,lighting_budget()->time_us);
   CHECK(lighting_budget_clock_us()==1000000,"the clock is in microseconds, whatever the counter's rate");
+  return 0;
+ }
+ if(argc>1&&!strcmp(argv[1],"lights"))
+ {
+  int before_reads;
+  CHECK(lighting_budget()->fields==6,"six lights by default");
+  occlusion_lights=8;generation++;
+  CHECK(lighting_budget()->fields==8,"eight when the setting says so");
+  occlusion_lights=4;generation++;
+  CHECK(lighting_budget()->fields==4,"and four");
+  occlusion_lights=5;generation++;
+  CHECK(lighting_budget()->fields==6,"anything else is six");
+  CHECK(lighting_budget()->time_us==4000&&!lighting_budget()->rays,"the time budget stays");
+  before_reads=integer_reads;
+  for(i=0;i<1000;i++) CHECK(lighting_budget()->fields==6,"read again");
+  CHECK(integer_reads==before_reads,"the setting is read only when the settings change");
   return 0;
  }
  if(argc>1&&!strcmp(argv[1],"moving"))

@@ -31,12 +31,35 @@ def test_forcing_a_setting_off_leaves_the_config_alone():
 @pytest.mark.parametrize('flags,expected', [
     (('-DHALO_ANDROID=1', '-DHALO_SWITCH'), 'BUDGET 3 1800 0'),
     (('-DHALO_ANDROID=1', '-DHALO_PS5=1'), 'BUDGET 8 0 0'),
-    (('-DHALO_ANDROID=1',), 'BUDGET 8 0 4000'),
+    (('-DHALO_ANDROID=1',), 'BUDGET 6 0 4000'),
 ])
 def test_each_platform_has_its_budget(flags, expected):
     code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
     status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'budget')
     assert status==0 and expected in output,output
+
+
+def test_a_phone_chooses_how_many_lights():
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    status,output=run(build('lighting_config',(('under_test.inc',code),),('-DHALO_ANDROID=1',)),'lights')
+    assert status==0,output
+
+
+@pytest.mark.parametrize('before,after,expected', [
+    # never read again: the setting changes nothing once read
+    ('if (!ready || changes != config_changes())\n\t{\n\t\tlong lights;', 'if (!ready + 0 * changes)\n\t{\n\t\tlong lights;',
+     'eight when the setting says so'),
+    # read every time
+    ('if (!ready || changes != config_changes())\n\t{\n\t\tlong lights;', 'if (1 + 0 * (ready + changes))\n\t{\n\t\tlong lights;',
+     'the setting is read only when the settings change'),
+    # any number taken as it is
+    ('budget.fields = lights == 8 || lights == 4 ? (int)lights : 6;', 'budget.fields = (int)lights;', 'anything else is six'),
+])
+def test_a_phone_chooses_how_many_lights_negative_controls(before,after,expected):
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    assert code.count(before)==1
+    status,output=run(build('lighting_config',(('under_test.inc',code.replace(before,after)),),('-DHALO_ANDROID=1',)),'lights')
+    assert status==CHECK_FAILED and expected in output,output
 
 
 def test_lookups_compare_no_strings():
