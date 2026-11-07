@@ -761,26 +761,23 @@ boolean first_person_weapon_adjust_light(
 	real_vector3d *up)
 {
 	struct weapon_datum *weapon= weapon_get(weapon_index);
-	struct unit_datum *unit= unit_get(weapon->object.parent_object_index);
-	long player_index= unit->unit.player_index;
+	/* port: the view that shows the holder's arms, as the flashlight's: in a
+	replay's playback, which has no local player, the watched player's eyes
+	(first_person_weapon_player_index), so that their weapon's lights are the
+	first-person weapon's there too */
+	short local_player_index= first_person_weapon_index_from_unit_index(weapon->object.parent_object_index);
+	struct object_marker marker;
 	boolean adjusted= FALSE;
 
-	if (player_index!=NONE)
+	if (local_player_index!=NONE &&
+		local_player_index==render.local_player_index &&
+		first_person_weapon_get(local_player_index)->visible &&
+		first_person_weapon_get_marker_by_name(weapon_index, marker_name, &marker, 1)>0)
 	{
-		struct player_datum *player= player_get(player_index);
-		short local_player_index= player->local_player_index;
-		struct object_marker marker;
-
-		if (local_player_index!=NONE &&
-			local_player_index==render.local_player_index &&
-			first_person_weapon_get(local_player_index)->visible &&
-			first_person_weapon_get_marker_by_name(weapon_index, marker_name, &marker, 1)>0)
-		{
-			*position= marker.matrix.position;
-			*forward= marker.matrix.forward;
-			*up= marker.matrix.up;
-			adjusted= TRUE;
-		}
+		*position= marker.matrix.position;
+		*forward= marker.matrix.forward;
+		*up= marker.matrix.up;
+		adjusted= TRUE;
 	}
 
 	return adjusted;

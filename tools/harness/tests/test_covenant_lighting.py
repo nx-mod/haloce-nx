@@ -33,3 +33,14 @@ def test_particle_only_rejection_is_detected():
     code = code.replace(guard, '')
     status, output = run(build('covenant_lighting', (('under_test.inc', code),)), 'ownership')
     assert status == CHECK_FAILED, output
+
+
+def test_replay_playback_uses_its_camera():
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/covenant_lighting.c'), flags=re.M)
+    status, output = run(build('covenant_lighting', (('under_test.inc', code),)), 'replay')
+    assert status == 0, output
+    # without the playback's camera, the local player's (which playback lacks) is used
+    guard = 'if (network_replay_playing())'
+    assert code.count(guard) == 1
+    status, output = run(build('covenant_lighting', (('under_test.inc', code.replace(guard, 'if (0)')),)), 'replay')
+    assert status == CHECK_FAILED, output

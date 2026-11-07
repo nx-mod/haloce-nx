@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "lighting_config.h"
+#include "network_replay.h"
 real render_interpolation_game_time_sec(long ticks);
 long light_port_glow_definition_get(void);
 boolean light_port_glow_set(long light, long owner, real_rgb_color const *color, real radius);
@@ -158,6 +159,12 @@ static int muzzle_position(struct muzzle_pulse *pulse, real_point3d *position)
 		position->x += forward.i * profile->forward_offset;
 		position->y += forward.j * profile->forward_offset;
 		position->z += forward.k * profile->forward_offset;
+	}
+	/* a replay's playback has no local player: its view is the replay's camera */
+	if (network_replay_playing())
+	{
+		const struct observer_result *camera = network_replay_camera();
+		return camera && distance3d(position, &camera->position) <= 25.0f ? TRUE : FALSE;
 	}
 	for (player = local_player_get_next(NONE); player != NONE; player = local_player_get_next(player))
 	{

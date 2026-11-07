@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "lighting_config.h"
+#include "network_replay.h"
 long light_port_glow_definition_get(void);
 boolean light_port_glow_set(long light_index, long object_index, real_rgb_color const *color, real radius);
 
@@ -109,6 +110,12 @@ static int covenant_visible_profile(long object_index)
 			TAG_BLOCK_GET_ELEMENT(&definition->object.attachments, i, struct object_attachment_definition);
 		if (attachment->type.group_tag == 'ligh' && attachment->type.index != NONE)
 			return NONE;
+	}
+	/* a replay's playback has no local player: its view is the replay's camera */
+	if (network_replay_playing())
+	{
+		const struct observer_result *camera = network_replay_camera();
+		return camera && distance3d(&object->object.bounding_sphere_center, &camera->position) <= 25.0f ? profile : NONE;
 	}
 	for (player = local_player_get_next(NONE); player != NONE; player = local_player_get_next(player))
 	{

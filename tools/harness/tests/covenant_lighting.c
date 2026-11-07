@@ -36,6 +36,11 @@ static long tag_loaded(long group,const char *tag)
 static struct object_definition *object_definition_get(long i) { return &definition; }
 static short local_player_get_next(short i) { return i == NONE ? 0 : NONE; }
 static const struct observer_result *observer_get_camera(short i) { return &camera; }
+/* a replay's playback: no local player, and the replay's own camera */
+static int replaying;
+static struct observer_result replay_camera;
+static int network_replay_playing(void) { return replaying; }
+static const struct observer_result *network_replay_camera(void) { return &replay_camera; }
 static real distance3d(const real_point3d *a, const real_point3d *b) { return a->x - b->x; }
 int lighting_config_boolean(const char *n) { return enabled; }
 long light_port_glow_definition_get(void) { return missing ? NONE : 99; }
@@ -91,6 +96,14 @@ int main(int argc,char **argv)
  long held;
  for(i=0;i<10;i++) { objects[i].object.node_matrices.size=sizeof(real_matrix4x3); objects[i].object.type=5; objects[i].object.bounding_sphere_center.x=1; }
  if(argc>1&&!strcmp(argv[1],"color")) { color_checks();return 0; }
+ if(argc>1&&!strcmp(argv[1],"replay"))
+ {
+  replaying=1; count=1; replay_camera.position.x=-30;
+  covenant_lighting_update(); CHECK(allocs==0,"playback measures from the replay's camera, not a local player's");
+  replay_camera.position.x=0;
+  covenant_lighting_update(); CHECK(allocs==1,"near the replay's camera, a covenant is lit");
+  return 0;
+ }
  CHECK(covenant_lighting_scale(NULL)==0 && covenant_lighting_scale("unknown")==0,"exact profile admission");
  for(i=0;i<NUMBEROF(covenant_profiles);i++) CHECK(covenant_lighting_scale(covenant_profiles[i].tag)==covenant_profiles[i].scale,"all authored profiles");
  covenant_lighting_update(); CHECK(allocs==8,"bounded eight owned lights");

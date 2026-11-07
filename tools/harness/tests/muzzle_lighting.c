@@ -34,6 +34,11 @@ static int first_person_weapon_adjust_light(long w,const char *n,real_point3d *p
 static int object_get_marker_by_name(long w,const char *n,struct object_marker *m,short c) { m->matrix.forward=forward;m->matrix.position.x=!strcmp(n,"cannon flash")?4:marker_x;m->matrix.position.y=m->matrix.position.z=0;return world_marker; }
 static short local_player_get_next(short p) { return p==NONE?0:NONE; }
 static const struct observer_result *observer_get_camera(short p) { return &camera; }
+/* a replay's playback: no local player, and the replay's own camera */
+static int replaying;
+static struct observer_result replay_camera;
+static int network_replay_playing(void) { return replaying; }
+static const struct observer_result *network_replay_camera(void) { return &replay_camera; }
 static real distance3d(const real_point3d *a,const real_point3d *b) { return a->x-b->x; }
 long light_port_glow_definition_get(void) { return missing?NONE:99; }
 static struct light_datum *datum_try_and_get(void *a,long i) { return i>=0 && i<allocs && lights[i].active?&lights[i]:NULL; }
@@ -58,7 +63,14 @@ int main(int argc,char **argv)
 {
  int i; real old; long light; const char *name=argv[1];
  for(i=0;i<12;i++) { weapons[i].object.parent_object_index=20;weapons[i].object.node_matrices.size=sizeof(real_matrix4x3); }
- if(!strcmp(name,"pulse"))
+ if(!strcmp(name,"replay"))
+ {
+  replaying=1;replay_camera.position.x=-30;
+  muzzle_lighting_shot(1,0);muzzle_lighting_update();CHECK(!allocs,"playback measures from the replay's camera, not a local player's");
+  replay_camera.position.x=0;tick++;
+  muzzle_lighting_shot(1,0);muzzle_lighting_update();CHECK(allocs==1,"near the replay's camera, a shot flashes");
+ }
+ else if(!strcmp(name,"pulse"))
  {
   muzzle_lighting_shot(1,0);CHECK(!allocs,"shot is cosmetic bookkeeping only");muzzle_lighting_update();
   CHECK(allocs==1 && lights[0].color.red==1,"initial full pulse");
