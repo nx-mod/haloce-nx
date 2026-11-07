@@ -56,6 +56,8 @@ static void light_reconnect_to_map(long index)
 /* (at a view and at a frame's end: what its clusters do is tools/harness/tests/light_move.c's) */
 void light_move_with_object(long index) { light_disconnect_from_map(index); light_reconnect_to_map(index); }
 static float view_distances[8];
+static int views_reached = 1;
+int light_port_can_reach_view(long index) { return views_reached; }
 static int promoted_cap, noted_promoted, noted_shrunk;
 int lighting_promoted_cap(void) { return promoted_cap; }
 float light_port_view_distance(long index) { return view_distances[index]; }
@@ -243,6 +245,20 @@ int main(int argc, char **argv)
 		projectile.object.type = 0;
 		plasma_lighting_prepare(1, 1, NONE);
 		CHECK(!refreshes, "other projectile tags and object types stay stock");
+	}
+	else if (!strcmp(test, "view"))
+	{
+		int flags = datum_try_and_get(light_data, 1)->flags;
+		tag_name = "weapons\\plasma rifle\\bolt";
+		views_reached = 0;
+		plasma_lighting_prepare(1, 1, NONE);
+		CHECK(!plasma_lighting_count && !refreshes, "a light that can't reach the view isn't promoted, or moved");
+		CHECK(datum_try_and_get(light_data, 1)->flags == flags, "and stays as it was");
+		CHECK(plasma_lighting_radius(1, 1, 1) == 1.0f, "with its stock radius");
+		views_reached = 1;
+		plasma_lighting_prepare(1, 1, NONE);
+		CHECK(plasma_lighting_count == 1 && refreshes == 1, "one that can is");
+		CHECK(plasma_lighting_radius(1, 1, 1) == 1.75f, "with its full reach");
 	}
 	else if (!strcmp(test, "cap"))
 	{

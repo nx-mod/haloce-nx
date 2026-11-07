@@ -24,7 +24,7 @@ def generated(fault=None):
     return (('under_test.inc', code),)
 
 
-@pytest.mark.parametrize('case', ['cap', 'shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
+@pytest.mark.parametrize('case', ['view', 'cap', 'shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
 def test_case(case):
     status, output = run(build('plasma_lighting', generated()), case)
     assert status == 0, output
@@ -34,6 +34,8 @@ def test_case(case):
     ('strcmp(name, "weapons\\\\rocket launcher\\\\rocket")', '1', 'rocket'),
     ('strcmp(name, "weapons\\\\plasma pistol\\\\bolt") &&', '1 &&', 'pistol'),
     ('return radius * plasma_lighting_attachments[index].radius_scale;', 'return radius;', 'radius'),
+    # every light is promoted, in view or not
+    ('if (!light_port_can_reach_view(light_index))', 'if (FALSE)', 'view'),
     # the cap does nothing
     ('if (!cap || plasma_lighting_count <= cap)', 'if (TRUE)', 'cap'),
     # the farthest kept, not the nearest
@@ -58,3 +60,21 @@ def test_disabled_projectile_policy_is_required():
     code = code.replace('lighting_config_boolean("display.plasma_lighting")', 'TRUE')
     status, output = run(build('plasma_lighting', ((name, code),)), 'off')
     assert status == CHECK_FAILED, output
+
+
+def test_no_scale_passes_what_the_view_test_assumes():
+    limit = float(re.search(r'PLASMA_LIGHTING_MAXIMUM_SCALE ([\d.]+)f', read('port/linux/game/plasma_lighting.h')).group(1))
+    authored = read('port/linux/game/authored_emitter_lighting.c')
+    authored = authored[authored.index('profiles[] = {'):authored.index('};', authored.index('profiles[] = {'))]
+    covenant = read('port/linux/game/covenant_lighting.c')
+    covenant = covenant[covenant.index('static const struct covenant_profile'):covenant.index('};', covenant.index('static const struct covenant_profile'))]
+    prepare = function(read('port/linux/game/plasma_lighting.c'), 'plasma_lighting_prepare')
+    scales = re.findall(r'", ([\d.]+)f, \d\}', authored) + re.findall(r'", ([\d.]+)f, [\d.]+f, \{', covenant) + re.findall(r'\? ([\d.]+)f', prepare) + re.findall(r': ([\d.]+)f;', prepare)
+    assert len(scales) > 20, scales
+    assert max(map(float, scales)) <= limit
+
+
+def test_the_view_test_uses_the_limit():
+    body = function(read('source/objects/object_lights.c'), 'light_port_can_reach_view')
+    assert 'PLASMA_LIGHTING_MAXIMUM_SCALE' in body and 'render_frustum_sphere_visible' in body
+

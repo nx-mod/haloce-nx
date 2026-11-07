@@ -1,6 +1,10 @@
 #ifndef PLASMA_LIGHTING_H
 #define PLASMA_LIGHTING_H
 
+/* the most any promoted light's radius is scaled: authored_emitter_lighting.c's
+   profiles, covenant_lighting.c's and plasma_lighting_prepare's */
+#define PLASMA_LIGHTING_MAXIMUM_SCALE 3.0f
+
 void plasma_lighting_prepare(long light_index, long object_index, long definition_index);
 void plasma_lighting_rank(void);
 float plasma_lighting_radius(long light_index, long object_index, float radius);
@@ -24,5 +28,6 @@ void plasma_falloff_dispose(void);
 int light_port_refresh_attachment(long light_index, long object_index);
 int light_port_dynamic_set(long light_index, long object_index, int enabled);
 float light_port_view_distance(long light_index);
+int light_port_can_reach_view(long light_index);
 
 #endif

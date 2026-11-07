@@ -74,6 +74,11 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 	category = authored_emitter_lighting_profile(object_index, definition_index, &authored_scale);
 	if (!category && (!lighting_config_boolean("display.plasma_lighting") || object->object.type != _object_type_projectile))
 		return;
+	/* A light no part of whose reach is in view changes nothing that is drawn:
+	   at 48 players, 97 lights a view were promoted and 17 drawn, each one updated
+	   and looked through by every other. It stays stock until it can reach the view. */
+	if (!light_port_can_reach_view(light_index))
+		return;
 	name = tag_get_name(object->definition_index);
 	covenant_scale = covenant_lighting_scale(name);
 	/* Exact tag policies keep unrelated custom projectiles stock. */

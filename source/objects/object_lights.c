@@ -860,6 +860,23 @@ int light_port_refresh_attachment(long light_index, long object_index)
 	return TRUE;
 }
 
+/* port: whether a light could reach this view at all, at the largest reach
+promotion gives (PLASMA_LIGHTING_MAXIMUM_SCALE). Its position is the last tick's,
+hence the margin for how far it has gone since. */
+int light_port_can_reach_view(long light_index)
+{
+	struct light_datum *light = datum_try_and_get(light_data, light_index);
+	struct point_light_definition *definition;
+	real reach;
+	if (!light)
+		return FALSE;
+	definition = light_definition_get(light->definition_index);
+	reach = definition->radius_modifier_upper_bound * definition->radius;
+	if (!TEST_FLAG(definition->flags, _light_definition_no_specular_bit))
+		reach *= definition->specular_radius_multiplier;
+	return render_frustum_sphere_visible(&render.frustum, &light->position, reach * PLASMA_LIGHTING_MAXIMUM_SCALE + 2.0f);
+}
+
 /* port: how far a promoted light is from this view, for plasma_lighting_rank:
 one no part of which is in view counts as past any that is. */
 float light_port_view_distance(long light_index)

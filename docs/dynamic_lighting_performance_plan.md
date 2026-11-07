@@ -54,7 +54,7 @@ All on the Switch Lite at 720p with the profiler on. Each comparison is two pass
 
 1. **Check the Nokia 8.** It is a target, and nothing has run on it. Its 4 ms budget is a guess, and a result there could change the rest of this list. Android's other phones and the PS5 get checked for the picture at the same time, once their images are built.
 2. **Fewer light reconnects** (Phase 5, item 2). The per-tick path is done, not yet measured. See that item for what's left.
-3. **A limit on promoted lights' reach** (Phase 5, item 3). Built, off by default, with overlay rows to compare. Not measured: `debug.gpu_stats` now counts submitted, promoted and shrunk lights, which says how much it can do.
+3. **Fewer promoted lights** (Phase 5, item 3). At 48 players, 97 lights a view were promoted and 17 drawn, and the list stops at 128, so a light near the player could miss it. A light is now only promoted if its largest reach can touch the view. That changes nothing drawn. Not measured yet. A limit on how many keep their full reach is built too, off by default, with overlay rows to compare.
 4. **NEON** (Phase 4). Estimated at 0.5 to 1 ms a frame on both targets, as `update_field` is about 1.6 ms in a firefight. Most useful in campaign firefights.
 5. **Android's limits adapt** (Phase 5, items 4 and 5), after the Nokia 8 shows what they need to do.
 6. **The rest of Phase 3, by what a profile still shows.** Tag names are now a small part of what's left. PS5's profile (item 8) stays on the list.
