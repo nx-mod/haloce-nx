@@ -61,6 +61,8 @@ int light_port_can_reach_view(long index) { return views_reached; }
 static int promoted_cap, noted_promoted, noted_shrunk;
 int lighting_promoted_cap(void) { return promoted_cap; }
 float light_port_view_distance(long index) { return view_distances[index]; }
+static float camera_distances[8];
+float light_port_camera_distance(long index) { return camera_distances[index]; }
 void plasma_occlusion_note_kinds(int bolts_seen, int bolts, int glows) { }
 void plasma_occlusion_note_promoted(int promoted, int shrunk) { noted_promoted = promoted; noted_shrunk = shrunk; }
 void plasma_occlusion_model_slot(long i, short s) {}
@@ -101,7 +103,8 @@ void shield_glow_window_begin(void) {}
 void shield_glow_submitted(long l,long r) {}
 float shield_glow_radius(long l,float r) { return r; }
 int authored_emitter_lighting_enabled(void) { return 0; }
-int authored_emitter_lighting_profile(long o,long d,float *s) { return 0; }
+static int emitter_category;
+int authored_emitter_lighting_profile(long o,long d,float *s) { *s = 1.5f; return emitter_category; }
 int authored_emitter_lighting_category_enabled(int c) { return enabled; }
 #include "under_test.inc"
 
@@ -260,6 +263,24 @@ int main(int argc, char **argv)
 		plasma_lighting_prepare(1, 1, NONE);
 		CHECK(plasma_lighting_count == 1 && refreshes == 1, "one that can is");
 		CHECK(plasma_lighting_radius(1, 1, 1) == 1.75f, "with its full reach");
+	}
+	else if (!strcmp(test, "glow"))
+	{
+		/* a weapon's glow (category 1, the pistol's authored 1.5) */
+		static const float distances[4] = {0, 10, 22.5f, 30};
+		memcpy(camera_distances, distances, sizeof(distances));
+		emitter_category = 1;
+		for (i = 1; i < 4; i++)
+			plasma_lighting_prepare(i, i, NONE);
+		CHECK(plasma_lighting_count == 2, "a glow past the far distance isn't promoted");
+		CHECK(plasma_lighting_radius(3, 3, 1) == 1.0f, "and keeps its stock radius");
+		CHECK(plasma_lighting_radius(1, 1, 1) == 1.5f, "a near one has its full reach");
+		CHECK(plasma_lighting_radius(2, 2, 1) == 1.25f, "between, its added reach fades with distance");
+		emitter_category = 0;
+		tag_name = "weapons\\plasma rifle\\bolt";
+		camera_distances[0] = 1000;
+		plasma_lighting_prepare(0, 0, NONE);
+		CHECK(plasma_lighting_count == 3, "a far bolt is still promoted: only glows are");
 	}
 	else if (!strcmp(test, "cap"))
 	{

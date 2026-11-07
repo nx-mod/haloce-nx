@@ -28,6 +28,7 @@ void plasma_falloff_dispose(void);
 int light_port_refresh_attachment(long light_index, long object_index);
 int light_port_dynamic_set(long light_index, long object_index, int enabled);
 float light_port_view_distance(long light_index);
+float light_port_camera_distance(long light_index);
 int light_port_can_reach_view(long light_index);
 
 #endif

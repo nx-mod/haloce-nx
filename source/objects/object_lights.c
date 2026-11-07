@@ -889,6 +889,13 @@ float light_port_view_distance(long light_index)
 	return render_frustum_sphere_visible(&render.frustum, &light->position, light->radius) ? distance : distance + 10000.0f;
 }
 
+/* port: how far a light is from this view's camera, in view or not */
+float light_port_camera_distance(long light_index)
+{
+	struct light_datum *light = datum_try_and_get(light_data, light_index);
+	return light ? distance3d(&render.camera.position, &light->position) : 100000.0f;
+}
+
 /* port: save/restore a render-owned radius without exposing light datums. */
 int light_port_attachment_radius(long light_index, long object_index, float *radius, int restore)
 {

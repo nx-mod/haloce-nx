@@ -57,6 +57,9 @@ unsigned int plasma_model_lighting_mask(void)
 		covenant_emitter_lighting_enabled() || authored_emitter_lighting_enabled() || shield_glow_enabled()) ? plasma_model_mask : 0;
 }
 
+/* the distances over which a weapon's glow keeps its added reach (world units) */
+#define PLASMA_LIGHTING_GLOW_NEAR 20.0f
+#define PLASMA_LIGHTING_GLOW_FAR 25.0f
 static int plasma_lighting_bolts_seen;
 void plasma_lighting_prepare(long light_index, long object_index, long definition_index)
 {
@@ -82,6 +85,19 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 	   and looked through by every other. It stays stock until it can reach the view. */
 	if (!light_port_can_reach_view(light_index))
 		return;
+	/* A glow in another player's hands far off: at 48 players, 49 of the 77 lights
+	   promoted a view were weapons' glows. Past PLASMA_LIGHTING_GLOW_FAR it stays stock
+	   (its authored glow, as with display.weapon_glow off); nearer, its added reach
+	   fades in from there to PLASMA_LIGHTING_GLOW_NEAR, so that none pops. */
+	if (category == 1)
+	{
+		float distance = light_port_camera_distance(light_index);
+		if (distance > PLASMA_LIGHTING_GLOW_FAR)
+			return;
+		if (distance > PLASMA_LIGHTING_GLOW_NEAR)
+			authored_scale = 1.0f + (authored_scale - 1.0f) *
+				(PLASMA_LIGHTING_GLOW_FAR - distance) / (PLASMA_LIGHTING_GLOW_FAR - PLASMA_LIGHTING_GLOW_NEAR);
+	}
 	name = tag_get_name(object->definition_index);
 	covenant_scale = covenant_lighting_scale(name);
 	/* Exact tag policies keep unrelated custom projectiles stock. */

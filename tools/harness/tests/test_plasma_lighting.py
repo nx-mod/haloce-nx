@@ -24,7 +24,7 @@ def generated(fault=None):
     return (('under_test.inc', code),)
 
 
-@pytest.mark.parametrize('case', ['view', 'cap', 'shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
+@pytest.mark.parametrize('case', ['view', 'glow', 'cap', 'shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
 def test_case(case):
     status, output = run(build('plasma_lighting', generated()), case)
     assert status == 0, output
@@ -36,6 +36,10 @@ def test_case(case):
     ('return radius * plasma_lighting_attachments[index].radius_scale;', 'return radius;', 'radius'),
     # every light is promoted, in view or not
     ('if (!light_port_can_reach_view(light_index))', 'if (FALSE)', 'view'),
+    # a far glow is promoted
+    ('if (distance > PLASMA_LIGHTING_GLOW_FAR)\n\t\t\treturn;', 'if (FALSE)\n\t\t\treturn;', 'glow'),
+    # a glow at the edge pops: no fade
+    ('if (distance > PLASMA_LIGHTING_GLOW_NEAR)', 'if (FALSE)', 'glow'),
     # the cap does nothing
     ('if (!cap || plasma_lighting_count <= cap)', 'if (TRUE)', 'cap'),
     # the farthest kept, not the nearest
