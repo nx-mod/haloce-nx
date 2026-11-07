@@ -132,7 +132,7 @@
 		<string text="RECORD: OFF"/>
 		<string text="RECORD: ON"/>
 	</strings>
-	<widget name="main_menu/theater/button_delete" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="%x-button DELETE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/theater/button_delete" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="DELETE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port theater delete"/>
 		<on event="start" run="port theater delete"/>
 		<on event="left_mouse" run="mouse emit accept event"/>

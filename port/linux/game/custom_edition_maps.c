@@ -1108,6 +1108,97 @@ boolean custom_edition_maps_stock(
 	return map && stock_map_index(map->name) != NONE;
 }
 
+/* a folder (its game path, ending in \) and all in it, as deep as it goes */
+static void custom_edition_maps_delete_tree(
+	char const *folder)
+{
+	char pattern[MAXIMUM_FILENAME_LENGTH + 4];
+	WIN32_FIND_DATAA data;
+	HANDLE find;
+
+	if (csstrlen(folder) + 1 >= (long)sizeof(pattern))
+	{
+		return;
+	}
+	csprintf(pattern, "%s*", folder);
+	find = FindFirstFileA(pattern, &data);
+	if (find != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			char child[MAXIMUM_FILENAME_LENGTH * 2];
+			boolean directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+			/* (a path that does not fit is left) */
+			if (!strcmp(data.cFileName, ".") || !strcmp(data.cFileName, "..") ||
+				snprintf(child, sizeof(child), "%s%s%s", folder, data.cFileName, directory ? "\\" : "") >=
+				(int)sizeof(child))
+			{
+				continue;
+			}
+			if (directory)
+			{
+				custom_edition_maps_delete_tree(child);
+			}
+			else
+			{
+				DeleteFileA(child);
+			}
+		} while (FindNextFileA(find, &data));
+		CloseHandle(find);
+	}
+	RemoveDirectoryA(folder);
+
+	return;
+}
+
+boolean custom_edition_maps_delete(
+	short display_index,
+	boolean whole_folder)
+{
+	static char const *const beside[] = { ".map", DESCRIPTION_EXTENSION, PICTURE_EXTENSION };
+	struct custom_edition_map *map = custom_edition_map_get(display_index);
+	char path[MAXIMUM_FILENAME_LENGTH + 1];
+	short index;
+
+	if (!map)
+	{
+		return FALSE;
+	}
+	if (whole_folder)
+	{
+		/* (only a set's own folder: never the maps folder itself) */
+		if (!map->category[0] || csstrlen(map->folder) + csstrlen(map->category) + 1 >= (long)sizeof(path))
+		{
+			return FALSE;
+		}
+		csprintf(path, "%s%s\\", map->folder, map->category);
+		custom_edition_maps_delete_tree(path);
+		return GetFileAttributesA(path) == (DWORD)-1;
+	}
+	for (index = NUMBEROF(beside) - 1; index >= 0; index--)
+	{
+		if (custom_edition_map_beside(map, beside[index], path, sizeof(path)))
+		{
+			DeleteFileA(path);
+		}
+	}
+	if (!custom_edition_map_beside(map, ".map", path, sizeof(path)) ||
+		GetFileAttributesA(path) != (DWORD)-1)
+	{
+		return FALSE;
+	}
+	/* (a set's folder left with nothing in it goes too: RemoveDirectoryA
+	takes only an empty one) */
+	if (map->category[0] && csstrlen(map->folder) + csstrlen(map->category) < (long)sizeof(path))
+	{
+		csprintf(path, "%s%s", map->folder, map->category);
+		RemoveDirectoryA(path);
+	}
+
+	return TRUE;
+}
+
 wchar_t *custom_edition_maps_name(
 	short display_index)
 {

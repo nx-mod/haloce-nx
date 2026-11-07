@@ -1468,6 +1468,13 @@ MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
 # maps in .zip files, into custom_maps (menu_functions.c's map_import_start,
 # HaloActivity.importMaps)
 MAP_IMPORT = "main_menu/new_select/button_map_import"
+# the map lists' DELETE (Android's, left of IMPORT; the west face button on the
+# list too, which the other platforms pass over): the custom map or the folder
+# of maps chosen, at a second press (menu_functions.c's map_delete_press),
+# which MAP_DELETE_STATUS asks for in the place of the map's words, and says
+# what was deleted
+MAP_DELETE = "main_menu/new_select/button_map_delete"
+MAP_DELETE_STATUS = "main_menu/new_select/map_delete_status"
 
 # the main menu's news: the latest release's notes (tools/embed_assets.py's
 # news_text) in a window the main menu's X opens (WIDGET_PATCHES), its lines
@@ -1626,13 +1633,24 @@ WIDGET_PATCHES = {
         f'<on event="custom_activation" run="mp level select" open="{MT}/connected/gametype_select_screen_wrapper"/>',
         '<on event="b" run="port map list back"/>',
         '<on event="back" run="port map list back"/>',
+        # (the west face button: DELETE's, MAP_DELETE)
+        '<on event="x" run="port map delete"/>',
     ]},
-    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER}},
-    # (their IMPORT, Android's: MAP_IMPORT)
+    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER},
+                                                           "handlers": [
+        '<on event="created" run="initialize sp level list solo"/>',
+        '<on event="deleted" run="dispose sp level list"/>',
+        '<on event="custom_activation" run="solo level set map" open="main_menu/difficulty_select/difficulty_select_list_screen"/>',
+        '<on event="x" run="port map delete"/>',
+    ]},
+    # (their DELETE and IMPORT, Android's: MAP_DELETE, MAP_IMPORT)
     f"{MT}/mp_map_select/mp_map_select_button_bar": {"insert_before": {
-        f"{MT}/mp_map_select/mp_map_select_button_ok": [f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
+        f"{MT}/mp_map_select/mp_map_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
+            f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     "main_menu/solo_level_select/solo_level_select_button_bar": {"insert_before": {
         "main_menu/solo_level_select/solo_level_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
             f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     # (each description shows the other kind's maps too: a campaign level's
     # picture, name and words on the Map screen, a multiplayer map's on New
@@ -1641,11 +1659,14 @@ WIDGET_PATCHES = {
         '<child widget="main_menu/solo_level_select/replay_level_right_name"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_pic"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_data"/>',
+        # (DELETE's question and what it did, in the words' place: MAP_DELETE_STATUS)
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     "main_menu/solo_level_select/replay_level_right_item": {"children": [
         f'<child widget="{MT}/mp_map_select/mp_map_right_name"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_pic"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_data"/>',
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     f"{MT}/join_game/header_join_game": {"children": [
         f'<child widget="{MT}/join_game/header_server_browser"/>',
@@ -2790,6 +2811,16 @@ def _map_kind() -> list:
     lines += _strings("main_menu/new_select/var_map_kinds",
                       ["SINGLEPLAYER", "MULTIPLAYER", "CUSTOM SINGLEPLAYER", "CUSTOM MULTIPLAYER"])
     lines += _text_button(MAP_IMPORT, "IMPORT", ['<on event="a" run="port map import"/>'])
+    # (DELETE alone: the west button's picture beside it does not fit the
+    # button; the button is the list's X anyway)
+    lines += _text_button(MAP_DELETE, "DELETE", ['<on event="a" run="port map delete"/>',
+                                               '<on event="start" run="port map delete"/>'])
+    # (where the map's words are, mp_map_right_data's place and font: hidden
+    # but while DELETE asks or has just deleted)
+    lines += _widget(MAP_DELETE_STATUS,
+                     [("type", "text"), ("controller", 1), ("left", 417), ("top", 258), ("width", 146),
+                      ("height", 136), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                      ("text_flags", "no_focus_test")], [])
     return lines
 
 
@@ -3255,8 +3286,10 @@ def _theater() -> list:
                      ['<on event="a" run="port theater record"/>', '<on event="start" run="port theater record"/>',
                       '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _strings(f"{base}/record_strings", ["RECORD: OFF", "RECORD: ON"])
-    lines += _text_button(f"{base}/button_delete", "%x-button DELETE", ['<on event="a" run="port theater delete"/>',
-                                                                      '<on event="start" run="port theater delete"/>'])
+    # (DELETE alone, as the map lists': the west button's picture beside it
+    # does not fit the button; theater_delete_hint, the consoles', has room)
+    lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port theater delete"/>',
+                                                             '<on event="start" run="port theater delete"/>'])
     # (its words a string list's, as button_record's: "port theater update"
     # chooses OFF or ON)
     lines += _widget(f"{base}/theater_record_hint", [("type", "text"), ("controller", 1), ("width", 150),

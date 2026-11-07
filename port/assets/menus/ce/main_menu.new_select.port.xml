@@ -17,4 +17,11 @@
 		<on event="a" run="port map import"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
+	<widget name="main_menu/new_select/button_map_delete" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="DELETE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+		<on event="a" run="port map delete"/>
+		<on event="start" run="port map delete"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/new_select/map_delete_status" type="text" controller="1" left="417" top="258" width="146" height="136" font="ui\small_ui" color="#FF2896FF" text_flags="no_focus_test">
+	</widget>
 </menus>

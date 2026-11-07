@@ -99,6 +99,15 @@ Fields, Death Island and so on), which are listed as VANILLA */
 boolean custom_edition_maps_stock(
 	short display_index);
 
+/* deletes the CE map with this display index: its .map, and the description
+(.txt) and picture (.bmp) beside it, then its set's folder if that is left
+empty; or with whole_folder, the set's folder the map is in, with all in it
+(FALSE for a map at the maps folder's top). Whether it is gone. The maps are
+the menus' to find again (custom_edition_maps_look_again). */
+boolean custom_edition_maps_delete(
+	short display_index,
+	boolean whole_folder);
+
 /* name and description for a display index, or NULL (text_group.c) */
 wchar_t *custom_edition_maps_name(
 	short display_index);
