@@ -306,22 +306,81 @@ static int directory_has_maps(const char *root)
 
 /* Directories the app creates in its external storage are private to it
 (mode 0770 under the app's own group), so the shell user (adb) cannot list
-them. Open the save tree for reading, with set-group-ID directories as
-posix_make_directory creates them (port/linux/src/posix_files.c). */
+them. Open the save tree to everyone, with set-group-ID directories as
+posix_make_directory creates them (port/linux/src/posix_files.c): as
+open_data_tree leaves the whole folder, which this, at every start, would
+otherwise narrow again for the saves. */
 static int share_entry(const char *path, const struct stat *information, int type, struct FTW *walk)
 {
 	(void)information;
 	(void)walk;
 	if (type == FTW_D || type == FTW_DP)
-		chmod(path, 02775);
+		chmod(path, 02777);
 	else if (type == FTW_F)
-		chmod(path, 0664);
+		chmod(path, 0666);
 	return 0;
 }
 
 static void share_save_tree(const char *root)
 {
 	nftw(root, share_entry, 16, FTW_PHYS);
+}
+
+/* Once, the first start of a build that has this: every file under the app's
+folder (data_root: config.toml, the logs, the maps, the custom maps, mods,
+replays, saves) made readable and writable by everyone (0666, folders 0777),
+where the app had left them its own (0640 and 0770: adb's shell user could
+not read them, nor a file manager change them). The marker file says it has
+run; deleting it runs it again at the next start. */
+#define OPEN_DATA_MARKER ".permissions_opened"
+
+static unsigned long open_data_changed, open_data_failed;
+
+static int open_data_entry(const char *path, const struct stat *information, int type, struct FTW *walk)
+{
+	mode_t wanted;
+
+	(void)walk;
+	if (type == FTW_D || type == FTW_DP)
+		wanted = 0777;
+	else if (type == FTW_F)
+		wanted = 0666;
+	else
+		return 0;
+	/* (a set-group-ID folder keeps the bit: posix_make_directory's) */
+	if (type != FTW_F)
+		wanted |= information->st_mode & S_ISGID;
+	if ((information->st_mode & 07777) == wanted)
+		return 0;
+	if (chmod(path, wanted) == 0)
+		open_data_changed++;
+	else
+		open_data_failed++;
+	return 0;
+}
+
+static void open_data_tree(const char *root)
+{
+	char marker[600];
+	FILE *file;
+
+	snprintf(marker, sizeof(marker), "%s/%s", root, OPEN_DATA_MARKER);
+	if (access(marker, F_OK) == 0)
+		return;
+	nftw(root, open_data_entry, 16, FTW_PHYS | FTW_DEPTH);
+	host_logf(HOST_LOG_INFO, "files: %s and everything in it opened to everyone (0666, folders 0777): %lu changed, "
+		"%lu could not be", root, open_data_changed, open_data_failed);
+	file = fopen(marker, "w");
+	if (file)
+	{
+		fputs("The files here were made readable and writable by everyone once (0666, folders 0777).\n"
+			"Delete this file to have the game do it again at its next start.\n", file);
+		fclose(file);
+		chmod(marker, 0666);
+	}
+	else
+		host_logf(HOST_LOG_ERROR, "files: cannot write %s (%s): this runs again at the next start", marker,
+			strerror(errno));
 }
 
 /* ---------- the system's gesture edges */
@@ -622,6 +681,8 @@ static void *game_main(void *unused)
 	config_read(path, &settings);
 	if (settings.halo_log)
 		data_log_begin(data_root);
+	/* (after the log begins, so that halo.log says what it did; once) */
+	open_data_tree(data_root);
 	if (settings.profile_run)
 		profile_run_begin(data_root, &settings.profile_hz);
 	host_vk_profile_split = settings.profile_run && settings.gpu_split_parts;
