@@ -177,6 +177,31 @@ int main(int argc, char **argv)
 		CHECK(!strcmp(games[shown - 1].name, "Golf newer"), "last the other way too");
 		CHECK(!strcmp(games[0].name, "Charlie empty") || !strcmp(games[0].name, "Echo dedicated empty"),
 			"the fewest first");
+	} else CASE("ping_order") {
+		static const char *const lowest[] = { "delta full", "Bravo dedicated", "alpha player", "Charlie empty",
+			"Echo dedicated empty" };
+		/* (reversed, those with none too: Z to A, as every order's ties) */
+		static const char *const highest[] = { "alpha player", "Bravo dedicated", "delta full", "Echo dedicated empty",
+			"Charlie empty" };
+		int reverse;
+		char text[32];
+
+		/* (Charlie's has a password and Echo's is not timed yet: neither has a ping) */
+		games[0].ping = 40;
+		games[1].ping = 120;
+		games[3].ping = 15;
+		add("Golf newer", "bloodgulch", 1, 15, 16, 1, 0);
+		games[count - 1].network_version = HALO_PORT_NETWORK_VERSION + 1;
+		games[count - 1].ping = 5;
+		p2p_lobby_sort(games, count - 1, P2P_LOBBY_SORT_PING, 0);
+		CHECK(order_is(lowest, count - 1), "the lowest ping first, those with none last (by name)");
+		p2p_lobby_sort(games, count - 1, P2P_LOBBY_SORT_PING, 1);
+		CHECK(order_is(highest, count - 1), "the highest first, those with none still last");
+		p2p_lobby_sort(games, count, P2P_LOBBY_SORT_PING, 0);
+		CHECK(!strcmp(games[count - 1].name, "Golf newer"), "another network version last, below those with none");
+		CHECK(p2p_lobby_sort_parse("-ping", &reverse) == P2P_LOBBY_SORT_PING && reverse, "-ping: reversed");
+		p2p_lobby_sort_text(P2P_LOBBY_SORT_PING, 0, text, sizeof(text));
+		CHECK(!strcmp(text, "ping"), "written back");
 	} else CASE("sort_text") {
 		int reverse;
 		char text[32];

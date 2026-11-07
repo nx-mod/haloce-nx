@@ -6048,12 +6048,21 @@ static struct
 	{ "op_sort_header_locked", P2P_LOBBY_SORT_LOCKED },
 	{ "op_sort_header_dedicated", P2P_LOBBY_SORT_SERVERS },
 	{ "op_sort_header_classic", NONE },
-	{ "op_sort_header_ping", NONE },
+	{ "op_sort_header_ping", P2P_LOBBY_SORT_PING },
 };
 
 /* the columns the d-pad's left and right go through, as they are on the
 screen, left to right (sort_headers' indices: those that sort) */
-static short const sort_columns[] = { 4, 5, 0, 1, 2, 3 };
+static short const sort_columns[] = { 4, 5, 0, 1, 2, 3, 7 };
+
+/* whether an order goes up first: A to Z (names, maps, types) and the lowest
+ping; the others the most first (players, the dedicated servers, a
+password's) */
+static boolean lobby_browser_order_up(short order)
+{
+	return order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE ||
+		order == P2P_LOBBY_SORT_PING;
+}
 
 static struct
 {
@@ -6414,7 +6423,7 @@ static void lobby_browser_focus_row(struct widget_instance *list, short row)
 }
 
 /* the column titles' arrows: the one the list is sorted by shows the way
-(up: A to Z, or the fewest first), in white (its bitmaps' second frame: the
+(up: A to Z, or the fewest or lowest first), in white (its bitmaps' second frame: the
 first, blue, is lost on the title's blue) */
 /* the column highlighted: the d-pad's, else the order's */
 static short lobby_browser_column(void)
@@ -6442,10 +6451,7 @@ static void lobby_browser_sort_arrows(struct widget_instance *list)
 		struct widget_instance *arrows = named(header, "header_sort_arrows", 0);
 		short order = sort_headers[index].order;
 		boolean sorted = order != NONE && order == lobby_browser.order;
-		/* (names, maps and types first go A to Z; players and the others
-		the most first) */
-		boolean up = (order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE) !=
-			lobby_browser.reverse;
+		boolean up = lobby_browser_order_up(order) != lobby_browser.reverse;
 		struct widget_instance *up_arrow = named(arrows, "header_sort_up_arrow", 0);
 		struct widget_instance *down_arrow = named(arrows, "header_sort_down_arrow", 0);
 
@@ -6622,9 +6628,8 @@ static boolean browser_shortcut(struct widget_instance *widget, char const *name
 	if (!strcmp(name, "port browser sort decreasing") || !strcmp(name, "port browser sort increasing"))
 	{
 		short order = sort_headers[sort_columns[lobby_browser_column()]].order;
-		/* (names, maps and types first go A to Z, increasing; players and
-		the others the most first, decreasing: lobby_browser_sort_arrows) */
-		boolean text = order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE;
+		/* (an order that goes up first is increasing first: lobby_browser_order_up) */
+		boolean text = lobby_browser_order_up(order);
 		boolean decreasing = !strcmp(name, "port browser sort decreasing");
 		char text_order[32];
 

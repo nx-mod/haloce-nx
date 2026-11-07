@@ -1,6 +1,6 @@
 """The server browser's choice and order of the games found: its source (ALL GAMES, DEDICATED, P2P GAMES), its
 Filters (empty, full, game type, missing maps) and its column titles' orders, both ways; a game of another network
-version kept, last (port/linux/src/p2p_lobby.c's p2p_lobby_filter and p2p_lobby_sort)."""
+version kept, last; by ping, those not timed yet last either way (port/linux/src/p2p_lobby.c's p2p_lobby_filter and p2p_lobby_sort)."""
 import re
 import sys
 from pathlib import Path
@@ -26,7 +26,8 @@ def generated(fault=None):
     names = re.search(r'static const char \*const sort_names\[NUMBER_OF_P2P_LOBBY_SORTS\] =.*?\};', source,
                       re.S).group(0)
     code = '\n'.join([names, function(source, 'p2p_lobby_filter'), function(source, 'text_order'),
-                      function(source, 'sort_order'), function(source, 'p2p_lobby_sort'),
+                      function(source, 'sort_order'), function(source, 'sort_group'),
+                      function(source, 'p2p_lobby_sort'),
                       function(source, 'p2p_lobby_sort_parse'), function(source, 'p2p_lobby_sort_text')])
     if fault:
         code = mutated(code, *fault)
@@ -34,7 +35,7 @@ def generated(fault=None):
 
 
 CASES = ['source', 'empty_full', 'game_type', 'maps', 'servers_order', 'sort_each_way', 'other_version',
-         'sort_text']
+         'sort_text', 'ping_order']
 
 
 @pytest.mark.parametrize('case', CASES)
@@ -51,8 +52,10 @@ def test_case(case):
     (('state == P2P_LOBBY_MAP_MISSING))', 'state != P2P_LOBBY_MAP_INSTALLED))'), 'maps'),
     (('difference = second->dedicated - first->dedicated;', 'difference = 0;'), 'servers_order'),
     (('(reverse ? -difference : difference) <= 0', 'difference <= 0'), 'sort_each_way'),
-    (('before_other != other_version ? !before_other :', 'before_other != other_version ? before_other :'),
+    (('before_group != group ? before_group < group :', 'before_group != group ? before_group > group :'),
      'other_version'),
+    (('return order == P2P_LOBBY_SORT_PING && game->ping < 0;', 'return 0;'), 'ping_order'),
+    (('difference = first->ping - second->ping;', 'difference = second->ping - first->ping;'), 'ping_order'),
     (('*reverse = text && *text == \'-\';', '*reverse = 0;'), 'sort_text'),
 ])
 def test_negative_control(fault, case):

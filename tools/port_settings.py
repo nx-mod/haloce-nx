@@ -713,7 +713,7 @@ SCREENS["network_setup/server_browser"] = {
         # menu_functions.c's setting_value_index, and writes it again only if another is chosen)
         ("SORT BY:", "network.browser_sort",
          [("DEDICATED FIRST", "servers"), ("PLAYERS", "players"), ("NAME", "name"), ("MAP", "map"),
-          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked")],
+          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked"), ("PING", "ping")],
          "The list's order. Its column titles sort it too;\nchoosing one again reverses it.", None),
         ("MASTER SERVERS:", "network.masters_file", None,
          "The master servers (masters.txt) that answered\nwhen the Server Browser last asked.", None,
