@@ -2736,6 +2736,93 @@ static void texture_verify(struct texture *texture, const struct dk_command_text
 	}
 }
 
+/* texture_write's for a texture whose texels are more than a staging slice
+holds, which staging_copy refuses whole: a decoded 2048x1024 one with its
+levels (11 MB: the_Cage's zoom drew whatever the image had held before), the
+dynamic lights' 256x256x32 3D one (9 MB). Each level is staged on its own, as
+many of its 3D slices at a time as fit, and a slice larger than the slice of
+staging memory a run of its rows (of blocks, compressed) at a time.
+staging_copy waits for the copies recorded before it when the slice fills. */
+static void texture_write_pieces(struct texture *texture, const struct dk_command_texture *command,
+	const unsigned char *texels)
+{
+	uint32_t faces = command->kind == DK_TEXTURE_CUBE ? 6 : 1;
+	uint32_t block = command->format == DK_TEXTURE_BGRA ? 1 : 4;
+	uint32_t face, level;
+
+	textures_fence(1);
+	for (face = 0; face < faces; face++)
+	{
+		uint32_t offset = face * command->face_bytes;
+
+		for (level = 0; level < command->levels; level++)
+		{
+			uint32_t width = level_size(command->width, level), height = level_size(command->height, level);
+			uint32_t depth = command->kind == DK_TEXTURE_3D ? level_size(command->depth, level) : 1;
+			uint32_t units = (height + block - 1) / block;
+			uint32_t row_bytes = command->format == DK_TEXTURE_BGRA ? width * 4 :
+				((width + 3) / 4) * (command->format == DK_TEXTURE_BC1 ? 8 : 16);
+			uint32_t plane_bytes = row_bytes * units;
+			uint32_t z = 0;
+
+			while (z < depth)
+			{
+				/* (whole slices if one fits, else rows of one) */
+				uint32_t planes = plane_bytes <= STAGING_SLICE_SIZE ? STAGING_SLICE_SIZE / plane_bytes : 1;
+				uint32_t unit = 0;
+
+				if (planes > depth - z)
+					planes = depth - z;
+				while (unit < units)
+				{
+					uint32_t count = planes > 1 || plane_bytes <= STAGING_SLICE_SIZE ? units :
+						STAGING_SLICE_SIZE / row_bytes;
+					DkImageView view;
+					DkImageRect rectangle;
+					DkCopyBuf copy;
+					DkGpuAddr source;
+
+					if (count > units - unit)
+						count = units - unit;
+					source = staging_copy(texels + offset + z * plane_bytes + unit * row_bytes,
+						planes > 1 ? planes * plane_bytes : count * row_bytes);
+					if (!source)
+					{
+						texture_problem("texture %u: level %u (%ux%ux%u) could not be staged", (unsigned)command->id,
+							(unsigned)level, (unsigned)width, (unsigned)height, (unsigned)depth);
+						return;
+					}
+					dkImageViewDefaults(&view, &texture->image);
+					view.mipLevelOffset = (uint8_t)level;
+					view.mipLevelCount = 1;
+					if (command->kind == DK_TEXTURE_CUBE)
+					{
+						view.layerOffset = (uint16_t)face;
+						view.layerCount = 1;
+					}
+					rectangle.x = 0;
+					rectangle.y = unit * block;
+					rectangle.z = z;
+					rectangle.width = width;
+					rectangle.height = (unit + count) * block < height ? count * block : height - unit * block;
+					rectangle.depth = planes;
+					copy.addr = source;
+					copy.rowLength = 0;
+					copy.imageHeight = 0;
+					dkCmdBufCopyBufferToImage(dk.commands, &copy, &view, &rectangle, 0);
+					tex.written_unfenced = 1;
+					dk.recorded = 1;
+					unit += count;
+				}
+				z += planes;
+			}
+			offset += level_bytes(command, level);
+		}
+	}
+	profile.frame.texture_writes++;
+	profile.frame.texture_bytes += command->source_bytes;
+}
+
 /* copies the command's texels into the image: every face, every level */
 /* host_texels: the texels in the host's own memory (the dummy's), or NULL
 for the command's source, which is a guest address. They must not cross in
@@ -2765,6 +2852,12 @@ static void texture_write(struct texture *texture, const struct dk_command_textu
 		source = window_read(command->source, command->source_bytes);
 		if (!source)
 			source = staging_copy((const void *)(uintptr_t)command->source, command->source_bytes);
+	}
+	if (!source && command->source_bytes > STAGING_SLICE_SIZE)
+	{
+		texture_write_pieces(texture, command, host_texels ? (const unsigned char *)host_texels :
+			(const unsigned char *)(uintptr_t)command->source);
+		return;
 	}
 	if (!source)
 	{
