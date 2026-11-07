@@ -289,10 +289,12 @@ slow as it is pulled) */
 #define FREE_CAMERA_RISE_TIME 0.25f
 /* what the free camera does not fly through: the level, its scenery and its
 machines (doors, lifts), invisible walls too (the map's edges); how far off
-them it keeps; and how many walls a frame's move slides along */
+them it keeps; and how many walls a frame's move slides along (the objects
+bit as well as their types': collision_test_vector tests no object without it,
+so trees, rocks and a crashed ship, all scenery, were flown through) */
 #define FREE_CAMERA_COLLISION_FLAGS (FLAG(_collision_test_front_facing_surfaces_bit) | \
-	FLAG(_collision_test_structure_bit) | FLAG(_collision_test_objects_scenery_bit) | \
-	FLAG(_collision_test_objects_machines_bit))
+	FLAG(_collision_test_structure_bit) | FLAG(_collision_test_objects_bit) | \
+	FLAG(_collision_test_objects_scenery_bit) | FLAG(_collision_test_objects_machines_bit))
 #define FREE_CAMERA_WALL_MARGIN 0.15f
 #define FREE_CAMERA_SLIDES 3
 /* the free camera tracking the player, as on a tripod: how long its aim
