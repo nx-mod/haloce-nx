@@ -41,17 +41,17 @@ Three goals:
 ## Decisions
 
 **The tripod is the default; moving is the exception (the user's decisions).**
-The cinematic camera is a tripod whenever the player is within its maximum
-distance: it turns, frames and zooms, and does not move, whatever they do. Past
-that distance it moves in to a third of it, then is a tripod again. The free
+The cinematic camera is a tripod while the player is still, slow or making short
+moves: it turns, frames and zooms, and does not move. Once they keep going, or go
+past its maximum distance, it follows them, and stands still again once they stop
+(step 8; until then it came in to a third of the distance and stopped). The free
 camera does not get any of this, as the addendum tags the tether and the arc for
 Cinematic only.
 
-**A steady run gives repeated chases.** With the tripod the default, a player who
-keeps running gets a chase, a stop, and another chase, rather than a camera that
-keeps following. Reaching a third of the distance takes the spring being led by
-their speed, as a plain spring would lag behind and never arrive. This is what was
-asked for, and how it looks is the first thing to check in the game.
+**A steady run gave repeated chases** (steps 6 and 7). With the tripod the
+default, a player who kept running got a chase, a stop, and another chase. Seen in
+the game, that surged and lagged, and step 8 replaced it with following while they
+keep going.
 
 **It moves round the player, not across the ground.** Its position is taken
 as an angle and a length about the player each frame, and the arc and the tether
@@ -69,7 +69,7 @@ time. If the camera's own moving did too it would drift round a paused player, a
 at 4x it would fall four times as far behind.
 
 **The arm's fast-in, hold and slow-out were removed.** The addendum's timing is for
-an arm kept at a length. This camera only ever comes in, and once it is in range it
+an arm kept at a length. This camera only came in (until step 8), and once it is in range it
 is a tripod, which by the decision above does not move out again, so there is
 nothing to recover. They were written for the earlier version and took the camera
 out of its tripod state against a wall. What is left: where the place it is going
@@ -246,6 +246,62 @@ Tested in the same harness:
 - By a wall, it stays off it and is a tripod once it is in range (2.2 seconds there).
 - It does not swing at all during a threat, or while the replay is paused.
 
+### Step 8: following (proposal v2.4)
+
+*Camera Tracking Systems Proposal (v2.4)*, also kept in the user's Downloads,
+came from watching step 6 in the game: on a steady run or drive the repeated
+chases surge and lag. It asked for three things. What was done:
+
+- **Following, not chasing (Part I).** The user's decisions: keep
+  `playback_spring`, smooth the player's speed, and keep the tripod while the
+  player is still, slow or making very short moves. So the tripod stays the
+  default, and following starts once the smoothed speed is at least
+  `CINEMATIC_FOLLOW_SPEED` and the player is `CINEMATIC_FOLLOW_LEAST` from where
+  it last stood (strafing in place never gets there), or past the tether as
+  before. While following it goes with the player at the speed they go away from
+  it (the proposal's velocity feed-forward), eased in over `CINEMATIC_FOLLOW_EASE`,
+  and the spring makes up only the difference from the distance. The proposal's
+  one-frame lead (`velocity * deltaTime`) would not have kept up, and its
+  dead zone would have brought back a small surge-and-lag at its edge, so neither
+  was used.
+- **The speed is the focus's, not the object's velocity.** The lead from the
+  object's velocity of step 6 left the camera on top of the player in the harness
+  whenever that velocity and the focus's real going disagreed, and on a stop
+  carried a Warthog's camera from 8.2 units to 1.7. The focus's own going,
+  smoothed, is what the camera has to keep up with, and counts a client's
+  corrections at their real size.
+- **The spring now goes out as well as in**, to the follow distance where the
+  reach rays find room, so that a stop's dip is recovered once and the stick's
+  further distance is reached. What blocks the camera cuts its spring to what it
+  managed, so that it comes to rest against a wall. It still does not back away
+  as fast as a player who runs at it; the spring eases it out.
+- **Controls (Part II).** Left stick up and down scale the follow distance,
+  up nearer, at behind's zoom rate, from 50% to 100% of a maximum, starting at 75%
+  (today's 4.08 units on foot, 8.17 in a vehicle). L3 or D-pad Down places the
+  camera again, as for the free camera. It now has a camera bar.
+- **Scenery (Part III) was not changed.** The rays already count scenery and
+  doors (`FREE_CAMERA_COLLISION_FLAGS`). The footage (a Warthog along a canyon
+  wall: a boulder passed close at 0:43-0:45, a rock spire coming over the player
+  at 0:47-0:48 when the clip ends, a tree between the tripod and the player at
+  0:26) does not show what the camera then did, so the cause is not known.
+
+Tested in a new harness, the real functions with the collision stubbed as a
+flat wall (`playback_free_camera_move`, `_clear`, `_sees`, `_reach`,
+`playback_spring`, `playback_cinematic_orbit`, `playback_cinematic_move`):
+
+- Still, strafing ±2.5 units a second every 0.4 s (with and without
+  corrections), and walking at 0.4: no movement, no rays, for 10 seconds.
+- Running away at 2.5 for 15 s: follows from 0.7 s, and from then on keeps
+  4.04 units with no change at all, at 20, 30, 60 and 144 fps (3.96 to 4.07).
+  With corrections every 6 frames of 0.12 units, it moves by about their size.
+- A Warthog at 10 and 20: 8.00 and 7.83 units, steady.
+- A Warthog braking to a stop over a second: in to 5.6, out again to 8.1, and
+  a tripod 3 seconds after it stopped. On foot: 3.35, back to
+  4.04, a tripod 2.6 s after.
+- The stick, held 2 seconds with the player still: in to 2.76 or out to 5.41, then
+  a tripod; out against a wall it stops 0.22 off it and is a tripod.
+- About 8 rays a frame while following on foot in the open.
+
 ## The numbers
 
 World units and seconds unless marked.
@@ -274,9 +330,18 @@ World units and seconds unless marked.
 | `CINEMATIC_THREAT_WIDEST` | 90 degrees | Widest view for a threat |
 | `CINEMATIC_THREAT_FACED` | 30 degrees | Aim this near the attacker ends it |
 | `CINEMATIC_TETHER_ARMS` | 3.5 | The maximum distance, in placed arms |
-| `CINEMATIC_TETHER_SETTLE` | 1/3 | How much of that a chase comes in to |
-| `CINEMATIC_TETHER_ARRIVED` | 0.1 | How near that is a tripod again |
-| `CINEMATIC_TETHER_TIME` | 1.0 | The chase's spring, in the game's time |
+| `CINEMATIC_FOLLOW_ARMS` | 3.5/3 | The distance it follows at, in arms, at the stick's 75% |
+| `CINEMATIC_FOLLOW_NEAREST` | 0.5/0.75 | The stick's nearest, of that (50%) |
+| `CINEMATIC_FOLLOW_FARTHEST` | 1.0/0.75 | The stick's farthest, of that (100%) |
+| `CINEMATIC_FOLLOW_CLOSEST` | 0.5 | Never nearer than this of it as it goes |
+| `CINEMATIC_TETHER_TIME` | 1.0 | The spring on the distance, in the game's time |
+| `CINEMATIC_VELOCITY_TIME` | 0.4 | Smoothing of the player's speed |
+| `CINEMATIC_FOLLOW_SPEED` | 1.0 | This fast starts following, units a second |
+| `CINEMATIC_FOLLOW_LEAST` | 0.5 | Once this far from where it stood, in arms |
+| `CINEMATIC_STILL_SPEED` | 0.5 | Slower than this ... |
+| `CINEMATIC_STILL_TIME` | 0.75 | ... this long stops it ... |
+| `CINEMATIC_RESTING` | 0.1 | ... once its spring is slower than this |
+| `CINEMATIC_FOLLOW_EASE` | 0.5 | Time to go as fast as the player, as it starts |
 | `CINEMATIC_TETHER_MOST_PULL` | 16.0 | Most it is pulled at once |
 | `CINEMATIC_JUMP_LEAST` | 1.0 | Least distance that can be a jump |
 | `CINEMATIC_JUMP_SPEED` | 60 | Speed that is a jump, units a second |
@@ -307,6 +372,6 @@ World units and seconds unless marked.
 3. Measure the rays on the Switch: a placement, and now the frames it moves in.
 4. Merge to `main`.
 
-The camera does not back away from a player who runs at it. Goal 1 of the addendum
-would like that, but no item asks for it, so it has not been added. It can walk
-through the camera, as they could the tripod.
+The camera does not back away as fast as a player who runs at it: since step 8
+its spring eases it back out to its distance while it follows, but a tripod does
+not move. A player can still walk through a tripod.

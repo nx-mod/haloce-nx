@@ -312,8 +312,10 @@ DELETE (pressed twice), IMPORT and EXPORT (Android) and BACK. A recording shorte
   units, so they stay the size they were (down to 8 degrees of view);
   once moved it eases back to the usual view, and does not zoom again until
   it is chosen again (`playback_free_camera_zoom`). And a cinematic camera:
-  the free camera with no controls (its sticks, R3, L3 and swipes not
-  heard, and no camera bar above the buttons'), placed and tracking and
+  the free camera with only two controls (the left stick's up and down set
+  the distance it follows at, up nearer, at behind's zoom's rate, from 50% to
+  100% of a maximum, starting at 75%; L3 or D-pad Down places it again; its
+  other sticks, R3 and swipes not heard), placed and tracking and
   zooming as it is when chosen; whenever the level, its scenery or its
   doors hide the player from it (their middle and 0.2 units either side, so
   a post does not) for 0.2 seconds, once the shot has lasted a second, it
@@ -327,14 +329,21 @@ DELETE (pressed twice), IMPORT and EXPORT (Android) and BACK. A recording shorte
   (`playback_cinematic_threat`); for 1.25 seconds of the game after the
   last hit, or until they are on the screen as it would be without this, the
   player aims within 30 degrees of them, or is out of their sight. It
-  is a tripod, turning, framing and zooming and not moving, until the player
-  goes further than 3.5 of the distance it was placed at (`playback_cinematic_move`,
-  in the game's time, so not while paused); then it comes in to a third of that
-  on a spring, led by their speed so that it gets there as they run, and is a
-  tripod again. As it comes, one moving across its view or turning for 0.75
+  is a tripod, turning, framing and zooming and not moving, while the player
+  is still, slow, or has not gone half the distance it was placed at from where
+  it last stood (`playback_cinematic_move`, in the game's time, so not while
+  paused). Once they go on at a unit a second, their speed smoothed over 0.4
+  seconds from how their focus moves (so a client's corrections do not shake
+  it), or go further than 3.5 of that distance, or the left stick is pushed, it
+  follows them: it goes with them as fast as they go from it, eased up to that
+  over half a second, and a spring makes up the difference from the distance it
+  follows at (4.08 units on foot, 8.17 in a vehicle, at 75%), out as well as in
+  where there is room. When they have been under half a unit a second for 0.75
+  seconds and it has come to rest, it is a tripod again. As it follows, one
+  moving across its view or turning for 0.75
   seconds swings it round them on an arc, to 45 degrees either side of behind where
   they aim on the side it is on (`playback_cinematic_orbit`, not during a threat).
-  Where it would lose sight of them there it comes only as far as it can see them
+  Where it would lose sight of them coming in it comes only as far as it can see them
   from, or if that is under half of the way the arc stops. A
   player moved further and faster than a vehicle goes (a teleporter, a spawn, a
   jump in the replay) has it placed anew. The top
