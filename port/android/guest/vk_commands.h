@@ -425,6 +425,9 @@ enum
 	VK_IMAGE_FORMAT_BC1, /* BC1 to BC3 as the Xbox keeps them */
 	VK_IMAGE_FORMAT_BC2,
 	VK_IMAGE_FORMAT_BC3,
+	/* ASTC 4x4 (16 bytes a block of 4x4 texels): DXT1 with its bits moved, where the device samples ASTC and not BC
+	(host_vk_astc_supported; dxt1_astc.h) */
+	VK_IMAGE_FORMAT_ASTC_4X4,
 };
 
 /* makes image id (the same description again keeps the image it has; another replaces it), its texels undefined until the

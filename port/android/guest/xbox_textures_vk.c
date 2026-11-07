@@ -7,8 +7,8 @@ the other builds keep unchanged (this one replaces it in the Vulkan image's obje
 decoding (formats, geometry, swizzling, palettes) is the same text; what differs is where a decoded texture goes. Here the cache
 keeps a number for each texture, which names an image the host makes (vk_commands.h), and a texture's texels go to the host a
 level of a face at a time, put with vk_data_put when the cache uploads them, so they are the game's as they were then: BC1 to
-BC3 as they are where the device samples them (host_vk_bc_supported), decoded to BGRA where not, every other format decoded to
-32-bit BGRA.
+BC3 as they are where the device samples them (host_vk_bc_supported), decoded to BGRA where not (BC1 as ASTC 4x4 instead where
+the device samples that: astc_native), every other format decoded to 32-bit BGRA.
 
 A cached texture stays valid until a page it was read from is written (memory_watch.c's generations: the page protection, and
 the writes the game announces).
@@ -23,6 +23,7 @@ VK_HIRES says whether they are on).
 #include "vk_commands.h"
 #include "vk_device.h"
 #include "hud_hires.h"
+#include "dxt1_astc.h"
 #include "menu_files.h"
 #include "text_hires.h"
 #include "../../linux/game/cache_file_formats.h"
@@ -545,6 +546,25 @@ static uint32_t compressed_format(unsigned char kind)
 }
 
 uint32_t host_vk_bc_supported(void);
+uint32_t host_vk_astc_supported(void);
+static BOOL bc_native(void);
+
+/* whether DXT1 goes to the device as ASTC 4x4 where BC does not (dxt1_astc.h): a quarter of the memory of the BGRA it is
+otherwise decoded to (the_Cage's textures, 549 MB decoded, ran a 4 GB phone's Adreno 540 out of memory); unless
+display.dxt1_astc says to decode it */
+static BOOL astc_native(void)
+{
+	static int known = -1;
+
+	if (known < 0)
+	{
+		known = host_vk_astc_supported() != 0 && config_boolean("display.dxt1_astc");
+		if (!bc_native())
+			platform_log("vk: DXT1 textures %s", known ? "are sampled as ASTC 4x4, their bits moved" :
+				"are decoded to BGRA too");
+	}
+	return known;
+}
 
 /* whether BC1 to BC3 go to the device as they are */
 static BOOL bc_native(void)
@@ -586,19 +606,31 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 	unsigned long face_size = xgpu_texture_face_size(description);
 	/* (a 3D image of a BC format is optional in Vulkan, where 2D and cube ones are not: a 3D one is decoded) */
 	BOOL native = description->compressed && description->depth <= 1 && bc_native();
+	/* (DXT1 as ASTC 4x4 where BC is not, 2D and cube images: an ASTC 3D image is not Vulkan's) */
+	BOOL astc = !native && description->compressed && information.kind == _texel_dxt1 && description->depth <= 1 &&
+		astc_native();
 	struct vk_command_texture *command = vk_stream_command(VK_COMMAND_TEXTURE, sizeof(*command));
 	unsigned long face, level;
 	unsigned long *converted = NULL;
+	unsigned char *blocks = NULL;
 
 	command->id = id;
 	command->kind = kind;
-	command->format = native ? compressed_format(information.kind) : VK_IMAGE_FORMAT_BGRA;
+	command->format = native ? compressed_format(information.kind) : astc ? VK_IMAGE_FORMAT_ASTC_4X4 :
+		VK_IMAGE_FORMAT_BGRA;
 	command->width = (uint32_t)description->width;
 	command->height = (uint32_t)description->height;
 	command->depth = (uint32_t)description->depth;
 	command->levels = (uint32_t)description->levels;
 	command->swizzle = swizzle;
-	if (!native)
+	if (astc)
+	{
+		/* (16 bytes for each 4x4 block of level 0, the largest) */
+		blocks = malloc(((description->width + 3) / 4) * ((description->height + 3) / 4) * 16);
+		if (!blocks)
+			return;
+	}
+	else if (!native)
 	{
 		converted = malloc(decoded_bytes(description, 0));
 		if (!converted)
@@ -615,6 +647,15 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 				data_send(id, level, face, source, level_bytes(description, level), 0, 0);
 				continue;
 			}
+			if (astc)
+			{
+				unsigned long width = level_dimension(description->width, level);
+				unsigned long height = level_dimension(description->height, level);
+
+				dxt1_astc_level(source, width, height, blocks);
+				data_send(id, level, face, blocks, ((width + 3) / 4) * ((height + 3) / 4) * 16, 0, 0);
+				continue;
+			}
 			if (description->compressed)
 				dxt_decode_level(information.kind, source, level_dimension(description->width, level),
 					level_dimension(description->height, level), level_dimension(description->depth, level), converted);
@@ -624,6 +665,7 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 		}
 	}
 	free(converted);
+	free(blocks);
 }
 
 /* ---------- cache */

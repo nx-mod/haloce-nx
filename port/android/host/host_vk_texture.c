@@ -194,6 +194,7 @@ static VkFormat format_of(uint32_t format)
 	case VK_IMAGE_FORMAT_BC1: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 	case VK_IMAGE_FORMAT_BC2: return VK_FORMAT_BC2_UNORM_BLOCK;
 	case VK_IMAGE_FORMAT_BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
+	case VK_IMAGE_FORMAT_ASTC_4X4: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
 	default: return VK_FORMAT_B8G8R8A8_UNORM;
 	}
 }
@@ -213,6 +214,7 @@ static uint32_t level_bytes(const struct host_vk_image *image, unsigned level)
 
 	if (image->format == VK_IMAGE_FORMAT_BGRA)
 		return width * height * depth * 4;
+	/* (BC1's blocks are 8 bytes; BC2's, BC3's and ASTC 4x4's 16) */
 	return ((width + 3) / 4) * ((height + 3) / 4) * (image->format == VK_IMAGE_FORMAT_BC1 ? 8 : 16) * depth;
 }
 

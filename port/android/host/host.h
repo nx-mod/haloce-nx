@@ -321,6 +321,8 @@ uint32_t host_vk_format_supported(uint32_t format);
 /* whether BC1 to BC3 images can be sampled with linear filtering and written by a copy (the guest sends them as they are if so,
 and decodes them to BGRA if not) */
 uint32_t host_vk_bc_supported(void);
+/* whether ASTC 4x4 textures can be sampled (DXT1's, its bits moved, where BC cannot: xbox_textures_vk.c) */
+uint32_t host_vk_astc_supported(void);
 /* the most samples a pixel, up to samples, that the device draws the game's targets with (display.anti_aliasing's
 multisampling); 1 if it cannot multisample them */
 uint32_t host_vk_samples_supported(uint32_t samples);

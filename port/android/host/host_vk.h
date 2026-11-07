@@ -197,7 +197,7 @@ struct host_vk_backend
 	host_vk_present.c */
 	int color_sampled;
 	/* the optional device features that were enabled */
-	int sampler_anisotropy, fill_mode_non_solid, occlusion_query_precise, texture_compression_bc;
+	int sampler_anisotropy, fill_mode_non_solid, occlusion_query_precise, texture_compression_bc, texture_compression_astc;
 	/* VK_EXT_multisampled_render_to_single_sampled: a multisampled rendering draws into the targets' own images, its samples
 	kept in the GPU's tile memory and resolved as they are stored (the sample counts it can, 0 when it is off) */
 	VkSampleCountFlags msrtss_counts;
