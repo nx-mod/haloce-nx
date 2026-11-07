@@ -3154,7 +3154,11 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key, float texture_scal
 				}
 			}
 			if (stage == 0)
+			{
 				key->coverage_alpha = description.hires_coverage != FALSE;
+				key->point_threshold = description.hires_point_threshold != FALSE;
+				key->ce_meter_channels = description.ce_meter_channels != FALSE;
+			}
 			key->sampler_type[stage] = kind == DK_TEXTURE_CUBE ? _xgpu_sampler_cube : kind == DK_TEXTURE_3D ?
 				_xgpu_sampler_3d : _xgpu_sampler_2d;
 			sampler_make(stage, description.levels > 1, description.hires, &textures->stages[stage].sampler);
@@ -3164,6 +3168,7 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key, float texture_scal
 	key->coverage_alpha = key->coverage_alpha && D3D__RenderState[D3DRS_ALPHABLENDENABLE] &&
 		D3D__RenderState[D3DRS_SRCBLEND] == D3DBLEND_CONSTANTCOLOR &&
 		D3D__RenderState[D3DRS_DESTBLEND] == D3DBLEND_SRCALPHA;
+	key->point_threshold = key->point_threshold && key->coverage_alpha;
 	key->alpha_test_function = D3D__RenderState[D3DRS_ALPHATESTENABLE] ? D3D__RenderState[D3DRS_ALPHAFUNC] : 0;
 	key->fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
 	key->fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];

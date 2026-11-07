@@ -2617,44 +2617,11 @@ static unsigned long stage_texture_mode(int stage)
 }
 
 /* what bind_textures in d3d8_gl.c decides for the key: a stage with no texture, or in modes 0, 0x04 and 0x05, has no
-sampler (mode 0x11 a 2D one); otherwise the sampler is the texture's own type, and stage 0's coverage_alpha is whether
-its bitmap has a high-res meter (hud_hires.h) whose green is its coverage. The cache there finds the override when it
-uploads the pixels; here it is asked the same way, without the GL texture (the texture's own decoding failing, which
-d3d8_gl.c would see, is not seen) */
-/* hud_hires_override_find's answer for stage 0's texture, kept until the pixels at its address are written or a setting
-changes: it checks the bitmap's pixels (a CRC of the whole of its first level), and every textured draw asks (on the Fold
-8 at the Halo level's falls, 10% of the game thread's work; 99% of the asks are answered again) */
-#define OVERRIDE_MEMO_SLOTS 1024
-
-static struct
-{
-	unsigned long address, width, height, level0_size;
-	unsigned long generation, settings;
-	long override;
-} override_memo[OVERRIDE_MEMO_SLOTS];
-
-static long override_find_kept(unsigned long address, unsigned long width, unsigned long height,
-	unsigned long level0_size)
-{
-	/* (every bit of the address mixed in: bitmaps lie at round addresses in the texture cache's blocks, which a slot of
-	address bits alone put in a few slots, each pushing the other out, so that every draw checked its bitmap anyway) */
-	unsigned long slot = (unsigned long)(((uint32_t)address * 2654435761u) >> 22) % OVERRIDE_MEMO_SLOTS;
-	unsigned long generation = memory_watch_generation(address, level0_size);
-
-	if (override_memo[slot].address == address && override_memo[slot].width == width &&
-		override_memo[slot].height == height && override_memo[slot].level0_size == level0_size &&
-		override_memo[slot].generation == generation && override_memo[slot].settings == config_changes())
-		return override_memo[slot].override;
-	override_memo[slot].override = hud_hires_override_find(address, width, height, level0_size);
-	override_memo[slot].address = address;
-	override_memo[slot].width = width;
-	override_memo[slot].height = height;
-	override_memo[slot].level0_size = level0_size;
-	override_memo[slot].generation = generation;
-	override_memo[slot].settings = config_changes();
-	return override_memo[slot].override;
-}
-
+sampler (mode 0x11 a 2D one); otherwise the sampler is the texture's own type. Stage 0's high-res HUD flags are those of
+what the cache draws for its texture (vk_texture_get, which finds the override when the pixels come, not at every
+draw): coverage_alpha, a high-res meter whose green is its coverage; point_threshold, one whose red holds its segments'
+thresholds (hud_hires.h); and ce_meter_channels, a Custom Edition meter drawn from a sheet other art shares (both
+nv2a_psh_vk.c's) */
 static void key_textures(struct nv2a_pixel_shader_key *key)
 {
 	int stage;
@@ -2664,7 +2631,6 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 		D3DBaseTexture *texture = device.textures[stage];
 		unsigned long mode = stage_texture_mode(stage);
 		struct xgpu_texture_description description;
-		BOOL palettized;
 
 		if (!texture || !texture->Data || mode == 0 || mode == 0x04 || mode == 0x05 || mode == 0x11)
 		{
@@ -2684,14 +2650,19 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 		xgpu_texture_describe(texture->Format, texture->Size, &description);
 		if (stage == 0)
 		{
-			palettized = ((texture->Format & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
-			if (!palettized && !description.cube_map && description.depth == 1)
-			{
-				long override = override_find_kept((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(texture->Data),
-					description.width, description.height, description.levels > 1 ?
-					xgpu_texture_level_offset(&description, 1) : xgpu_texture_face_size(&description));
+			/* (what the cache draws for it, as bind_textures in d3d8_gl.c reads it: textures_make's lookup of it
+			after this one is the recent lookup's) */
+			const D3DCOLOR *palette = device.palettes[0] && device.palettes[0]->Data ?
+				(const D3DCOLOR *)PLATFORM_PHYSICAL_TO_VIRTUAL(device.palettes[0]->Data) : NULL;
+			struct xgpu_texture_description drawn;
+			int kind;
 
-				key->coverage_alpha = override >= 0 && hud_hires_override_coverage(override) != 0;
+			memset(&drawn, 0, sizeof(drawn));
+			if (vk_texture_get((const DWORD *)texture, palette, &kind, &drawn))
+			{
+				key->coverage_alpha = drawn.hires_coverage != FALSE;
+				key->point_threshold = drawn.hires_point_threshold != FALSE;
+				key->ce_meter_channels = drawn.ce_meter_channels != FALSE;
 			}
 		}
 		key->sampler_type[stage] = description.cube_map ? _xgpu_sampler_cube :
@@ -2726,6 +2697,7 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key)
 	key->coverage_alpha = key->coverage_alpha && D3D__RenderState[D3DRS_ALPHABLENDENABLE] &&
 		D3D__RenderState[D3DRS_SRCBLEND] == D3DBLEND_CONSTANTCOLOR &&
 		D3D__RenderState[D3DRS_DESTBLEND] == D3DBLEND_SRCALPHA;
+	key->point_threshold = key->point_threshold && key->coverage_alpha;
 	key->alpha_test_function = D3D__RenderState[D3DRS_ALPHATESTENABLE] ? D3D__RenderState[D3DRS_ALPHAFUNC] : 0;
 	/* multisampled (the targets are bound first: draw_make), an alpha-tested draw that is not blended covers samples in
 	proportion to how far alpha is past the reference, so that cut-out edges (foliage, grates) are smoothed too */

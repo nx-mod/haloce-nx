@@ -615,6 +615,21 @@ static void texture_stage(struct xgpu_text *text, const struct nv2a_pixel_shader
 		xgpu_text_append(text, "\tt%d = ", stage);
 		sample(text, key, stage, coordinates);
 		xgpu_text_append(text, ";\n");
+		/* (a Custom Edition meter drawn from a sheet other art shares: its fill order in alpha, its shape in red, as
+		nv2a_psh.c reads them) */
+		if (stage == 0 && key->ce_meter_channels)
+			xgpu_text_append(text, "\tt0 = t0.aaar;\n");
+		/* (a high-res meter's segments: their thresholds, in red, read from the texel itself, unfiltered, so that no
+		threshold is averaged with its neighbour's; 0 marks a continuous meter: nv2a_psh.c) */
+		if (stage == 0 && key->point_threshold && key->sampler_type[stage] == _xgpu_sampler_2d)
+		{
+			xgpu_text_append(text,
+				"\t{\n\t\tvec2 uv = (%s).xy * texture_scale[0].xy;\n"
+				"\t\tivec2 size = textureSize(tex0, 0);\n"
+				"\t\tivec2 pixel = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1);\n"
+				"\t\tfloat threshold = texelFetch(tex0, pixel, 0).r;\n"
+				"\t\tif (threshold > 0.0) t0.rb = vec2(threshold);\n\t}\n", coordinates);
+		}
 		break;
 	case _mode_cubemap:
 		snprintf(coordinates, sizeof(coordinates), "xT%d", stage);

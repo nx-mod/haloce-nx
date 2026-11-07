@@ -507,12 +507,133 @@ float dk_texture_reach(unsigned long address)
 
 /* (Custom Edition channel orders, below) */
 static uint32_t custom_edition_texels_swizzle(unsigned long address);
+static unsigned char custom_edition_texels_order(unsigned long address);
+static int custom_edition_hud_meter_active;
 
 /* the bytes of a decoded level: 32 bits a texel, whatever the format was */
 static unsigned long decoded_bytes(const struct xgpu_texture_description *description, unsigned long level)
 {
 	return level_dimension(description->width, level) * level_dimension(description->height, level) *
 		level_dimension(description->depth, level) * 4;
+}
+
+/* ---------- DXT decoding: only for a compressed HUD sheet drawn larger (upscale_image), whose texels are interpolated
+here; the textures themselves go to the host as they are (as xbox_textures_vk.c's) */
+
+static unsigned long color565(unsigned long value)
+{
+	return argb(255, expand5(value >> 11), expand6((value >> 5) & 0x3f), expand5(value & 0x1f));
+}
+
+static unsigned long mix(unsigned long a, unsigned long b, unsigned long weight_a, unsigned long weight_b,
+	unsigned long divisor)
+{
+	unsigned long result = 0;
+	int shift;
+
+	for (shift = 0; shift < 24; shift += 8)
+	{
+		unsigned long channel = (((a >> shift) & 0xff) * weight_a + ((b >> shift) & 0xff) * weight_b) / divisor;
+
+		result |= channel << shift;
+	}
+	return result | 0xff000000UL;
+}
+
+/* one 4x4 block's colors; dxt1 selects the punch-through alpha mode */
+static void dxt_color_block(const unsigned char *block, BOOL dxt1, unsigned long colors[16])
+{
+	unsigned long c0 = block[0] | (block[1] << 8);
+	unsigned long c1 = block[2] | (block[3] << 8);
+	unsigned long palette[4];
+	unsigned long bits = block[4] | (block[5] << 8) | ((unsigned long)block[6] << 16) | ((unsigned long)block[7] << 24);
+	int index;
+
+	palette[0] = color565(c0);
+	palette[1] = color565(c1);
+	if (c0 > c1 || !dxt1)
+	{
+		palette[2] = mix(palette[0], palette[1], 2, 1, 3);
+		palette[3] = mix(palette[0], palette[1], 1, 2, 3);
+	}
+	else
+	{
+		palette[2] = mix(palette[0], palette[1], 1, 1, 2);
+		palette[3] = 0;
+	}
+	for (index = 0; index < 16; index++)
+		colors[index] = palette[(bits >> (index * 2)) & 3];
+}
+
+/* a 2D level's blocks into BGRA */
+static void dxt_decode_level(unsigned char kind, const unsigned char *source, unsigned long width, unsigned long height,
+	unsigned long *destination)
+{
+	unsigned long blocks_x = (width + 3) / 4, blocks_y = (height + 3) / 4;
+	unsigned long block_bytes = kind == _texel_dxt1 ? 8 : 16;
+	unsigned long bx, by, x, y;
+
+	for (by = 0; by < blocks_y; by++)
+	{
+		for (bx = 0; bx < blocks_x; bx++)
+		{
+			const unsigned char *block = source + (by * blocks_x + bx) * block_bytes;
+			unsigned long colors[16];
+			unsigned long alpha[16];
+			int index;
+
+			if (kind == _texel_dxt1)
+			{
+				dxt_color_block(block, TRUE, colors);
+				for (index = 0; index < 16; index++)
+					alpha[index] = colors[index] >> 24;
+			}
+			else
+			{
+				dxt_color_block(block + 8, FALSE, colors);
+				if (kind == _texel_dxt3)
+				{
+					for (index = 0; index < 16; index++)
+						alpha[index] = expand4((block[index / 2] >> ((index & 1) * 4)) & 0xf);
+				}
+				else
+				{
+					unsigned long a0 = block[0], a1 = block[1], values[8];
+					unsigned long long bits = 0;
+					int bit;
+
+					for (bit = 0; bit < 6; bit++)
+						bits |= (unsigned long long)block[2 + bit] << (bit * 8);
+					values[0] = a0;
+					values[1] = a1;
+					if (a0 > a1)
+					{
+						for (index = 2; index < 8; index++)
+							values[index] = ((8 - index) * a0 + (index - 1) * a1) / 7;
+					}
+					else
+					{
+						for (index = 2; index < 6; index++)
+							values[index] = ((6 - index) * a0 + (index - 1) * a1) / 5;
+						values[6] = 0;
+						values[7] = 255;
+					}
+					for (index = 0; index < 16; index++)
+						alpha[index] = values[(bits >> (index * 3)) & 7];
+				}
+			}
+			for (y = 0; y < 4; y++)
+			{
+				for (x = 0; x < 4; x++)
+				{
+					unsigned long px = bx * 4 + x, py = by * 4 + y;
+
+					if (px < width && py < height)
+						destination[py * width + px] = (colors[y * 4 + x] & 0x00ffffffUL) | (alpha[y * 4 + x] << 24);
+				}
+			}
+		}
+	}
 }
 
 static uint32_t compressed_format(unsigned char kind)
@@ -615,6 +736,12 @@ struct texture_entry
 	placeholder_serial */
 	unsigned long placeholder_serial;
 	long placeholder_asset;
+	/* an original HUD sheet with no redraw, drawn four times larger
+	(hud_hires_upscale_at, as xbox_textures.c's hud_upscale): its image (0:
+	none), levels, and whether it has been looked for since the pixels came */
+	uint32_t upscale_id;
+	unsigned long upscale_levels;
+	BOOL upscale_checked;
 };
 
 #define TEXTURE_BUCKET_COUNT 4096
@@ -636,6 +763,20 @@ static uint32_t id_take(void)
 	if (id_next >= DK_TEXTURE_LIMIT)
 		return 0;
 	return id_next++;
+}
+
+/* the entry's upscaled sheet let go, to be looked for again (its pixels changed, or it goes) */
+static void upscale_drop(struct texture_entry *entry)
+{
+	if (entry->upscale_id)
+	{
+		struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
+
+		command->id = entry->upscale_id;
+		id_free[id_free_count++] = entry->upscale_id;
+		entry->upscale_id = 0;
+	}
+	entry->upscale_checked = FALSE;
 }
 
 /* Draws mostly bind the textures the draws before them bound. A lookup of a
@@ -735,12 +876,11 @@ static BOOL level_send(uint32_t id, unsigned long level, unsigned long width, un
 	return TRUE;
 }
 
-/* an image of a PNG (8-bit RGBA) with all its mip levels, as
-hud_hires_png_texture makes in GL: its number, or 0 */
-static uint32_t png_image(const void *png, unsigned long size, unsigned long *levels)
+/* an image of 8-bit RGBA pixels (malloc'd; freed here) with all its mip
+levels: its number, or 0 */
+static uint32_t rgba_image(unsigned char *pixels, unsigned long width, unsigned long height, unsigned long *levels)
 {
-	unsigned long width, height, level, largest, index;
-	unsigned char *pixels = hud_hires_png_pixels(png, size, &width, &height);
+	unsigned long level, largest, index;
 	uint32_t id;
 
 	if (!pixels)
@@ -796,6 +936,16 @@ static uint32_t png_image(const void *png, unsigned long size, unsigned long *le
 	}
 	free(pixels);
 	return id;
+}
+
+/* an image of a PNG (8-bit RGBA) with all its mip levels, as
+hud_hires_png_texture makes in GL: its number, or 0 */
+static uint32_t png_image(const void *png, unsigned long size, unsigned long *levels)
+{
+	unsigned long width, height;
+	unsigned char *pixels = hud_hires_png_pixels(png, size, &width, &height);
+
+	return rgba_image(pixels, width, height, levels);
 }
 
 /* the text's atlas (text_hires.h): its image, made and its changed rows sent
@@ -989,6 +1139,62 @@ static BOOL hud_image_failed(long asset)
 		(hud_images && hud_images[asset].tried && !hud_images[asset].id);
 }
 
+/* display.high_res_hud, read again only when a setting changes (as xbox_textures.c's) */
+static BOOL high_res_hud(void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static BOOL enabled;
+
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		enabled = config_boolean("display.high_res_hud") != 0;
+	}
+	return enabled;
+}
+
+/* An original HUD sheet that has no redraw (hud_hires_upscale_at: the Xbox's,
+and a Custom Edition map's stock ones), drawn four times larger, as
+texture_entry_result in xbox_textures.c does it: its image, made the first time
+it is asked for since its pixels came, or 0. The sheets the kind names (2D, not
+palettized, at most 256 texels a side, 512 for a Custom Edition stock one, which
+may be compressed) whose channels are the Xbox's. */
+static uint32_t upscale_image(struct texture_entry *entry, unsigned long *levels)
+{
+	const struct xgpu_texture_description *description = &entry->description;
+	unsigned char texel_kind = format_information(description->format).kind;
+
+	if (!entry->upscale_checked)
+	{
+		long kind = hud_hires_upscale_at(entry->address, (long)description->width, (long)description->height);
+		unsigned long limit = kind == 4 ? 512 : 256;
+
+		entry->upscale_checked = TRUE;
+		if (kind && entry->size && (!description->compressed || kind == 4) && entry->kind == DK_TEXTURE_2D &&
+			texel_kind != _texel_p8 && description->width <= limit && description->height <= limit &&
+			custom_edition_texels_order(entry->address) == _custom_edition_channels_xbox &&
+			platform_is_contiguous((void *)entry->address) &&
+			platform_is_contiguous((void *)(entry->address + entry->size - 1)))
+		{
+			unsigned long *bgra = malloc(description->width * description->height * 4);
+
+			if (bgra)
+			{
+				if (description->compressed)
+					dxt_decode_level(texel_kind, (const unsigned char *)entry->address, description->width,
+						description->height, bgra);
+				else
+					decode_level(description, 0, (const unsigned char *)entry->address, NULL, bgra);
+				entry->upscale_id = rgba_image(hud_hires_upscale_rgba((const unsigned char *)bgra, description->width,
+					description->height, kind), description->width * 4, description->height * 4, &entry->upscale_levels);
+				free(bgra);
+			}
+		}
+	}
+	*levels = entry->upscale_levels;
+	return entry->upscale_id;
+}
+
 /* an entry's image and description: its replacement's, if it has one (as
 texture_entry_result in xbox_textures.c), with the bitmap's own size, which
 its coordinates are in */
@@ -1041,8 +1247,23 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 		description->levels = levels;
 		description->hires = TRUE;
 		description->hires_coverage = hud_hires_override_coverage(entry->override);
+		description->hires_point_threshold = hud_hires_override_point_threshold(entry->override);
 		return id;
 	}
+	/* (not while a replacement's image is on its way: the original is drawn meanwhile) */
+	if (entry->override < 0 && high_res_hud() && (id = upscale_image(entry, &levels)) != 0)
+	{
+		*kind = DK_TEXTURE_2D;
+		description->levels = levels;
+		description->hires = TRUE;
+		return id;
+	}
+	/* Mixed-use Custom Edition sheets stay as they are for ordinary artwork; only
+	a meter's draw reads their alpha as the threshold and red as the shape (as
+	xbox_textures.c: the pixel shader's t0.aaar, nv2a_psh_dk.c). Replacements and
+	sheets already in another order keep theirs. */
+	description->ce_meter_channels = custom_edition_hud_meter_active &&
+		custom_edition_texels_order(entry->address) == _custom_edition_channels_xbox;
 	return entry->id;
 }
 
@@ -1141,6 +1362,7 @@ void halo_field_texture_forget(const void *texture)
 			struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
 
 			command->id = entry->id;
+			upscale_drop(entry);
 			*link = entry->next;
 			id_free[id_free_count++] = entry->id;
 			texture_drop_serial++;
@@ -1230,6 +1452,7 @@ uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 		unsigned long levels;
 
 		/* (which bitmap is here may have changed with the pixels) */
+		upscale_drop(entry);
 		entry->override = -1;
 		if (!palettized && !entry->description.cube_map && entry->description.depth == 1)
 		{
@@ -1289,6 +1512,7 @@ void xgpu_texture_cache_begin_frame(void)
 				struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
 
 				command->id = entry->id;
+				upscale_drop(entry);
 				*link = entry->next;
 				id_free[id_free_count++] = entry->id;
 				texture_drop_serial++;
@@ -1326,6 +1550,8 @@ static const unsigned char custom_edition_channel_sources[NUMBER_OF_CUSTOM_EDITI
 	{ 2, 1, 3, 0 },
 	/* the fill order in color, the shape in alpha */
 	{ 3, 3, 3, 0 },
+	/* a meter's art already in the Xbox's order, not to be read otherwise at its draws */
+	{ 0, 1, 2, 3 },
 };
 
 struct custom_edition_texels
@@ -1338,23 +1564,35 @@ static struct custom_edition_texels *custom_edition_texels;
 static unsigned long custom_edition_texel_count;
 static unsigned long custom_edition_texel_capacity;
 
-/* the swizzle of the texels at address (dk_command_texture's), 0 for the
-Xbox's order */
-static uint32_t custom_edition_texels_swizzle(unsigned long address)
+/* (between hud_draw.c's calls: a Custom Edition map's meter is being drawn) */
+void halo_custom_edition_hud_meter(int active)
+{
+	custom_edition_hud_meter_active = active;
+}
+
+/* the order of the texels at address */
+static unsigned char custom_edition_texels_order(unsigned long address)
 {
 	unsigned long index;
 
 	for (index = 0; index < custom_edition_texel_count; index++)
 	{
 		if (custom_edition_texels[index].address == address)
-		{
-			const unsigned char *sources = custom_edition_channel_sources[custom_edition_texels[index].channel_order];
-
-			return (uint32_t)sources[0] | (uint32_t)sources[1] << 8 | (uint32_t)sources[2] << 16 |
-				(uint32_t)sources[3] << 24;
-		}
+			return custom_edition_texels[index].channel_order;
 	}
-	return 0;
+	return _custom_edition_channels_xbox;
+}
+
+/* the swizzle of the texels at address (dk_command_texture's), 0 for the
+Xbox's order */
+static uint32_t custom_edition_texels_swizzle(unsigned long address)
+{
+	const unsigned char *sources = custom_edition_channel_sources[custom_edition_texels_order(address)];
+	uint32_t swizzle = (uint32_t)sources[0] | (uint32_t)sources[1] << 8 | (uint32_t)sources[2] << 16 |
+		(uint32_t)sources[3] << 24;
+
+	/* (the Xbox's own order is no swizzle) */
+	return swizzle == 0x03020100u ? 0 : swizzle;
 }
 
 void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
@@ -1398,6 +1636,7 @@ void halo_custom_edition_texels_channels(const void *texels, unsigned char chann
 
 void halo_custom_edition_texels_forget(void)
 {
+	custom_edition_hud_meter_active = 0;
 	free(custom_edition_texels);
 	custom_edition_texels = NULL;
 	custom_edition_texel_count = 0;
@@ -1405,12 +1644,7 @@ void halo_custom_edition_texels_forget(void)
 }
 
 /* ---------- upstream's OpenGL ES pieces this image has not: Custom Edition's map pixels stay in the texture cache, at their
-Xbox addresses, which this renderer reads (android_ce_texture_cache.h), and the CE meters' draw scope is xbox_textures.c's */
-
-void halo_custom_edition_hud_meter(int active)
-{
-	(void)active;
-}
+Xbox addresses, which this renderer reads (android_ce_texture_cache.h) */
 
 #ifdef HALO_ANDROID
 int android_ce_texture_enabled(void)

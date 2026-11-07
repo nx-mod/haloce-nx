@@ -133,28 +133,34 @@ then the packed mask, in that order - not the struct's, which has four
 bytes of padding at its end that would otherwise have to be promised zero
 by every caller */
 #define DK_KEY_DATA_SIZE 256UL
-/* (the pixel key's fields past them - ce_meter_channels, which deko3d never sets - are left 0 in a key read back) */
+/* (the pixel key's fields past them: ce_meter_channels in the record's
+reserved[0], record_key's; the others, which deko3d never sets, are left 0 in
+a key read back) */
 typedef char dk_key_data_within_pixel_key[sizeof(struct nv2a_pixel_shader_key) >= DK_KEY_DATA_SIZE ? 1 : -1];
 #define DK_VERTEX_KEY_BYTES 12UL
 
 struct dk_key_record
 {
 	uint8_t stage;
+	/* [0]: a pixel key's ce_meter_channels (0 in the records written before it was kept); the rest 0 */
 	uint8_t reserved[3];
 	uint32_t map_hash;
 	uint8_t data[DK_KEY_DATA_SIZE];
 };
 typedef char dk_key_record_size_check[sizeof(struct dk_key_record) == DK_KEY_RECORD_SIZE ? 1 : -1];
 
+/* a key whole, of either stage */
+union dk_key_data
+{
+	struct dk_vertex_key vertex;
+	struct nv2a_pixel_shader_key pixel;
+};
+
 struct dk_key
 {
 	uint32_t stage;
 	uint32_t map_hash;
-	union
-	{
-		struct dk_vertex_key vertex;
-		struct nv2a_pixel_shader_key pixel;
-	} data;
+	union dk_key_data data;
 	uint64_t hash;
 	/* the pass: 0 not reached, 1 asked of the host (loaded, queued, or
 	compiling), 2 skipped (its program the game never made) */
@@ -226,6 +232,8 @@ typedef char dk_pixel_key_per_pixel_lighting_after_hashed[
 	offsetof(struct nv2a_pixel_shader_key, per_pixel_lighting) == DK_PIXEL_KEY_HASHED_BYTES ? 1 : -1];
 typedef char dk_pixel_key_alpha_test_samples_where_hashed[
 	offsetof(struct nv2a_pixel_shader_key, alpha_test_samples) == 254 ? 1 : -1];
+/* (ce_meter_channels, past the bytes a record keeps: mixed after them only when it is not 0, and kept in the record's
+reserved[0]) */
 typedef char dk_pixel_key_size_as_hashed[offsetof(struct nv2a_pixel_shader_key, ce_meter_channels) == DK_KEY_DATA_SIZE ? 1 : -1];
 
 /* the debug options that change the pixel shaders' GLSL (nv2a_psh_dk.c):
@@ -281,15 +289,27 @@ static uint64_t key_hash(uint32_t stage, const void *data)
 			hash = dk_shader_hash_mix(hash, &key->per_pixel_lighting, sizeof(key->per_pixel_lighting));
 			hash = dk_shader_hash_mix(hash, &key->alpha_test_samples, sizeof(key->alpha_test_samples));
 		}
+		if (key->ce_meter_channels)
+			hash = dk_shader_hash_mix(hash, &key->ce_meter_channels, sizeof(key->ce_meter_channels));
 		hash = debug_hash_mix(hash);
 	}
 	return hash;
 }
 
-/* how many bytes of a record a stage's key takes */
+/* how many bytes of a stage's key there are (a pixel key's whole, of which a record keeps DK_KEY_DATA_SIZE and
+ce_meter_channels: record_key) */
 static unsigned long key_data_size(uint32_t stage)
 {
-	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE;
+	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : sizeof(struct nv2a_pixel_shader_key);
+}
+
+/* a record's key, whole */
+static void record_key(const struct dk_key_record *record, union dk_key_data *data)
+{
+	memset(data, 0, sizeof(*data));
+	memcpy(data, record->data, record->stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE);
+	if (record->stage == DK_SHADER_STAGE_PIXEL)
+		data->pixel.ce_meter_channels = record->reserved[0];
 }
 
 /* ---------- the key store */
@@ -394,9 +414,12 @@ static unsigned long keys_read_file(const char *xbox_path)
 		{
 			if (record.stage == DK_SHADER_STAGE_VERTEX || record.stage == DK_SHADER_STAGE_PIXEL)
 			{
-				struct dk_key *key = key_add(record.stage, record.map_hash, record.data);
+				union dk_key_data data;
+				struct dk_key *key;
 				int shared = !strcmp(xbox_path, DK_KEY_SHARED_FILE);
 
+				record_key(&record, &data);
+				key = key_add(record.stage, record.map_hash, &data);
 				if (key)
 				{
 					key->shared = shared;
@@ -405,7 +428,7 @@ static unsigned long keys_read_file(const char *xbox_path)
 				/* (a key console.dkk had first, which keys.dkk has too: the
 				shared file's, loaded with its map - console_compact takes it
 				out of console.dkk) */
-				else if (shared && (key = key_find(key_hash(record.stage, record.data))) != NULL)
+				else if (shared && (key = key_find(key_hash(record.stage, &data))) != NULL)
 					key->shared = 1;
 			}
 		}
@@ -521,7 +544,9 @@ static void console_append(uint32_t stage, uint32_t map_hash, const void *data, 
 	memset(&record, 0, sizeof(record));
 	record.stage = (uint8_t)stage;
 	record.map_hash = map_hash;
-	memcpy(record.data, data, size);
+	memcpy(record.data, data, size < DK_KEY_DATA_SIZE ? size : DK_KEY_DATA_SIZE);
+	if (stage == DK_SHADER_STAGE_PIXEL)
+		record.reserved[0] = ((const struct nv2a_pixel_shader_key *)data)->ce_meter_channels;
 	pthread_mutex_lock(&append_lock);
 	if (!append_started)
 	{
@@ -833,11 +858,13 @@ static void console_compact(void)
 		while (fread(&record, sizeof(record), 1, file) == 1)
 		{
 			struct dk_key *key;
+			union dk_key_data data;
 			unsigned long index;
 
 			if (record.stage != DK_SHADER_STAGE_VERTEX && record.stage != DK_SHADER_STAGE_PIXEL)
 				continue;
-			key = key_find(key_hash(record.stage, record.data));
+			record_key(&record, &data);
+			key = key_find(key_hash(record.stage, &data));
 			if (!key)
 				continue;
 			if (key->shared)

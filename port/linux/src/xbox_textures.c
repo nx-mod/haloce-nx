@@ -1104,8 +1104,17 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			long kind = hud_hires_upscale_at(entry->address, entry->description.width, entry->description.height);
 
 			entry->hud_upscale_checked = TRUE;
-			/* Verified stock CE sheets also include compressed and 512-pixel atlases. */
-			if (entry->size && (!entry->description.compressed || kind == 4) && entry->target == GL_TEXTURE_2D &&
+			/* Verified stock CE sheets also include compressed and 512-pixel atlases.
+			(Compressed ones decoded as DXT, which decode_level does not do: it read
+			their blocks as 32-bit texels, past the sheet's end. Only the ES builds
+			have the DXT decoder.) */
+			if (entry->size && (!entry->description.compressed ||
+#ifdef HALO_GLES
+					kind == 4
+#else
+					FALSE
+#endif
+				) && entry->target == GL_TEXTURE_2D &&
 				format_information(entry->description.format).kind != _texel_p8 &&
 				entry->description.width <= (kind == 4 ? 512 : 256) &&
 				entry->description.height <= (kind == 4 ? 512 : 256) &&
@@ -1115,6 +1124,17 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			{
 				unsigned long *pixels = malloc(entry->description.width * entry->description.height * 4);
 
+#ifdef HALO_GLES
+				if (pixels && entry->description.compressed)
+				{
+					dxt_decode_level(format_information(entry->description.format).kind,
+						(const unsigned char *)entry->address, entry->description.width, entry->description.height, 1,
+						pixels);
+					entry->hud_upscale = hud_hires_upscale_texture((const unsigned char *)pixels,
+						entry->description.width, entry->description.height, kind, &entry->hud_upscale_levels);
+				}
+				else
+#endif
 				if (pixels && decode_level(&entry->description, 0, (const unsigned char *)entry->address, NULL, pixels))
 					entry->hud_upscale = hud_hires_upscale_texture((const unsigned char *)pixels,
 						entry->description.width, entry->description.height, kind, &entry->hud_upscale_levels);

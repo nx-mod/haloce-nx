@@ -181,9 +181,10 @@ struct nv2a_pixel_shader_key
 	meters' (shader_transparent_meter) */
 	unsigned char source_blend;
 	/* A CE meter draw sampling a sheet also used as ordinary artwork. (Here,
-	past the 256 bytes the Switch's shader cards keep of a key and hash,
-	port/switch/guest/dk_shaders.c: deko3d never sets it; padded to whole
-	words, which the OpenGL and Vulkan renderers hash the key by) */
+	past the 256 bytes the Switch's shader cards keep of a key: deko3d keeps
+	it in a record's spare byte and hashes it only when it is set,
+	port/switch/guest/dk_shaders.c; padded to whole words, which the OpenGL
+	and Vulkan renderers hash the key by) */
 	unsigned char ce_meter_channels;
 	/* The dynamic lighting's model variant (XGPU_PLASMA_MODEL_*; 0 for the
 	stock shader, whose key and hash this leaves as they were). The Vulkan
