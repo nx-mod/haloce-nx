@@ -228,7 +228,9 @@ has not set them). The gyroscope aims while the touch controls show.
     where your thumb lands in the lower left of the screen), the opacity of
     the controls, how many fingers tap together to open the cheat menu
     (three, the default, or four), "Held buttons don't aim" (off by
-    default: a finger that swipes from a button only holds it),
+    default: a finger that swipes from a button only holds it), "Show
+    during cutscenes" (off by default: the controls stay on screen while a
+    cutscene plays, where they otherwise hide and a tap skips it),
     "Hide or add buttons" (hide a button, add a copy of a
     button) and "Edit buttons size".
   - "Edit buttons layout": drag the controls, and the "Options" button
