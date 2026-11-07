@@ -2093,13 +2093,21 @@ char const *d3d8_renderer_description(void)
 
 The draws between Begin and End are the test's: the host counts the samples they pass (an occlusion query, host_vk_visibility.c)
 and keeps the count, in the game's pixels, for the slot End names. The result is asked for through an import that never waits (the
-latest count of the slot: from this test, or from an earlier one while the GPU is behind), as d3d8_gl.c's query buffer path gives. */
+latest count of the slot: from this test, or from an earlier one while the GPU is behind), as d3d8_gl.c's query buffer path gives.
+
+Each End is numbered at its slot (xgpu_visibility_tests_ended), dropped tests too, and the host keeps with a slot's count the number
+of the test it is from, in the same word, so that the count and its number are read together: a lens flare's slot is read only once
+a count of one of the flare's own tests has come (xgpu_visibility_test_counted, rasterizer_lights.c). */
 
 #define VISIBILITY_TEST_SLOTS 4096
 
-uint32_t host_vk_visibility(uint32_t index);
+/* the slot's latest count (the low 32 bits) and the low 32 bits of the number of the test it is from (the high, 0 for none) */
+uint64_t host_vk_visibility(uint32_t index);
 
 static BOOL visibility_pending[VISIBILITY_TEST_SLOTS];
+/* the tests ended at each slot, and the number of the one whose count GetVisibilityTestResult last gave there (0: none) */
+static ULONGLONG visibility_ended[VISIBILITY_TEST_SLOTS];
+static ULONGLONG visibility_counted[VISIBILITY_TEST_SLOTS];
 
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
@@ -2119,6 +2127,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	index %= VISIBILITY_TEST_SLOTS;
 	command = stream_command(VK_COMMAND_VISIBILITY_END, sizeof(*command));
 	command->index = (uint32_t)index;
+	command->test = (uint32_t)++visibility_ended[index];
 	/* the target's pixels to a game pixel: the count is of the game's pixels (visibility_unscaled in d3d8_gl.c), which the game
 	divides by its own test's area (lens flares, rasterizer_lights.c), a split-screen window's or the screen's alike */
 	/* (multisampled, the host counts samples) */
@@ -2138,9 +2147,28 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 			*result = 0;
 		return S_OK;
 	}
-	if (result)
-		*result = host_vk_visibility((uint32_t)index);
+	{
+		uint64_t latest = host_vk_visibility((uint32_t)index);
+		uint32_t test = (uint32_t)(latest >> 32);
+
+		if (result)
+			*result = (UINT)(uint32_t)latest;
+		/* (the number in full: the latest ended less how far behind it the count's is) */
+		if (test)
+			visibility_counted[index] = visibility_ended[index] - (uint32_t)((uint32_t)visibility_ended[index] - test);
+	}
 	return S_OK;
+}
+
+/* (xgpu.h) */
+unsigned long long xgpu_visibility_tests_ended(unsigned long index)
+{
+	return visibility_ended[index % VISIBILITY_TEST_SLOTS];
+}
+
+unsigned long long xgpu_visibility_test_counted(unsigned long index)
+{
+	return visibility_counted[index % VISIBILITY_TEST_SLOTS];
 }
 
 /* ---------- render and texture stage state */

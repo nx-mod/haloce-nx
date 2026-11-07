@@ -385,6 +385,8 @@ struct vk_command_visibility_end
 	struct vk_command_header header;
 	uint32_t index;
 	float area;
+	/* the test's number at its slot (the low 32 bits), which host_vk_visibility gives with its count */
+	uint32_t test;
 };
 
 /* ---------- the mip composite (phase 6, step 5)

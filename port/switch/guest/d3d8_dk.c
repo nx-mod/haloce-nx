@@ -1735,7 +1735,14 @@ latest count - while the GPU is behind, an earlier test's - as d3d8_gl.c's
 query buffer gives: the game asks at the start of the next frame, and
 waiting there would stop the CPU until the GPU caught up. A count is in
 the host's pixels, made the game's (visibility_area): the screen's targets
-can be drawn bigger (display.resolution_limit). */
+can be drawn bigger (display.resolution_limit).
+
+Each End is numbered at its slot (xgpu_visibility_tests_ended), and noted
+with the submission it is in (visibility_written): once the GPU has finished
+that submission its count is in the slot, and a result read after that is of
+that test or a later one (visibility_counted). A lens flare's slot is read
+only once a count of one of the flare's own tests has come
+(xgpu_visibility_test_counted, rasterizer_lights.c). */
 
 /* the host's slot of the game's: 1 up, as the host has none 0 (dk_commands.h).
 The game's first lens flare of a frame tests in its slot 0: made slot 1, as it
@@ -1749,6 +1756,43 @@ static BOOL visibility_pending[DK_VISIBILITY_SLOTS];
 /* the host's pixels to a game pixel where each test drew: its count is
 divided by it, the game dividing by its own test's area (lens flares) */
 static float visibility_area[DK_VISIBILITY_SLOTS];
+/* the tests ended at each slot, and the number of the latest whose count the
+slot has had when a result was read (0: none) */
+static ULONGLONG visibility_ended[DK_VISIBILITY_SLOTS];
+static ULONGLONG visibility_counted[DK_VISIBILITY_SLOTS];
+/* the tests not yet known written, oldest first: their slot, number and
+submission. (Full - the GPU far behind - a test is not noted, and its count
+is never taken for its own: a later test's is.) */
+#define VISIBILITY_WRITTEN_LIMIT 4096
+static struct
+{
+	unsigned short slot;
+	unsigned long submission;
+	ULONGLONG test;
+} visibility_written[VISIBILITY_WRITTEN_LIMIT];
+static unsigned long visibility_written_first, visibility_written_count;
+
+/* the tests in the submissions the GPU has finished: their counts are in
+their slots */
+static void visibility_written_update(void)
+{
+	unsigned int retired;
+
+	if (!visibility_written_count)
+		return;
+	retired = host_dk_retired();
+	while (visibility_written_count)
+	{
+		unsigned long first = visibility_written_first;
+
+		if (retired < visibility_written[first].submission)
+			break;
+		if (visibility_counted[visibility_written[first].slot] < visibility_written[first].test)
+			visibility_counted[visibility_written[first].slot] = visibility_written[first].test;
+		visibility_written_first = (first + 1) % VISIBILITY_WRITTEN_LIMIT;
+		visibility_written_count--;
+	}
+}
 
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
@@ -1770,6 +1814,15 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	command->index = (uint32_t)index;
 	visibility_pending[index] = TRUE;
 	visibility_area[index] = target_scale[0] * target_scale[1];
+	visibility_ended[index]++;
+	if (visibility_written_count < VISIBILITY_WRITTEN_LIMIT)
+	{
+		unsigned long last = (visibility_written_first + visibility_written_count++) % VISIBILITY_WRITTEN_LIMIT;
+
+		visibility_written[last].slot = (unsigned short)index;
+		visibility_written[last].submission = submission;
+		visibility_written[last].test = visibility_ended[index];
+	}
 	return S_OK;
 }
 
@@ -1778,6 +1831,8 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (time_stamp)
 		*time_stamp = 0;
 	index = visibility_slot(index);
+	/* (before the count is read: it is then of these tests or later ones) */
+	visibility_written_update();
 	if (result)
 	{
 		unsigned int count = visibility_pending[index] ? host_dk_visibility((unsigned int)index) : 0;
@@ -1786,6 +1841,17 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		*result = visibility_area[index] > 1.0f ? (UINT)(count / visibility_area[index] + 0.5f) : count;
 	}
 	return S_OK;
+}
+
+/* (xgpu.h) */
+unsigned long long xgpu_visibility_tests_ended(unsigned long index)
+{
+	return visibility_ended[visibility_slot(index)];
+}
+
+unsigned long long xgpu_visibility_test_counted(unsigned long index)
+{
+	return visibility_counted[visibility_slot(index)];
 }
 
 /* ---------- render and texture stage state */
