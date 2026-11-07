@@ -676,7 +676,7 @@ static const struct config_setting config_settings[] =
 	{ "display.occlusion_lights", _config_integer, "6", "HALO_OCCLUSION_LIGHTS", _environment_value, _platform_android,
 		"How many lights Light Occlusion traces rays for in a frame: 8, 6 or 4.\n"
 		"Fewer are faster on a slower phone; a light past them keeps its last\n"
-		"occlusion, or has none, until its turn. Changes at once." },
+		"occlusion, or has none, until its turn. Changes at once. Vulkan only." },
 #endif
 	{ "display.plasma_lighting", _config_boolean, "false", "HALO_PLASMA_LIGHTING", _environment_value, _platform_all,
 		"Supported plasma, Covenant and rocket flight lights follow rendered poses\n"
