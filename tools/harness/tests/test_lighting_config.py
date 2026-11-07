@@ -69,3 +69,11 @@ def test_each_platform_has_its_moving_grid(flags,expected):
     code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
     status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'moving')
     assert status==0 and expected in output,output
+
+
+@pytest.mark.parametrize('flags', [('-DHALO_ANDROID=1', '-DHALO_SWITCH'), ('-DHALO_ANDROID=1', '-DHALO_PS5=1'), ('-DHALO_ANDROID=1',)])
+def test_the_overlay_chooses_a_cap(flags):
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'cap')
+    assert status==0,output
+

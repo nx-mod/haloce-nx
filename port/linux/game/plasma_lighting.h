@@ -2,6 +2,7 @@
 #define PLASMA_LIGHTING_H
 
 void plasma_lighting_prepare(long light_index, long object_index, long definition_index);
+void plasma_lighting_rank(void);
 float plasma_lighting_radius(long light_index, long object_index, float radius);
 int light_port_attachment_radius(long light_index, long object_index, float *radius, int restore);
 int plasma_lighting_vehicle_occlusion(long light_index);
@@ -22,5 +23,6 @@ void plasma_falloff_dispose(void);
 /* object_lights.c: validate the owner before refreshing an attachment. */
 int light_port_refresh_attachment(long light_index, long object_index);
 int light_port_dynamic_set(long light_index, long object_index, int enabled);
+float light_port_view_distance(long light_index);
 
 #endif

@@ -58,8 +58,10 @@ int main(void)
  sphere_radius=2;
  light_move_with_object(LIGHT);
  CHECK(joins==1&&leaves==1,"a new radius joins again");
+ joins=leaves=0;
  sphere_radius=1;
  light_move_with_object(LIGHT);
+ CHECK(!joins&&!leaves,"a smaller sphere stays in the clusters of the larger");
  joins=leaves=0;
  /* a small light goes less far */
  sphere_radius=.2f;

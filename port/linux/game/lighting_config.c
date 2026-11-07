@@ -154,6 +154,22 @@ int lighting_moving_lights_384(void)
 	return moving_lights_384;
 }
 
+/* the overlay's comparison of caps on promoted lights: for this run, not saved */
+static int promoted_cap;
+int lighting_promoted_cap(void)
+{
+	return promoted_cap;
+}
+static const struct
+{
+	const char *name;
+	int cap;
+} promoted_caps[] = {
+	{"debug.promoted_cap_8", 8},
+	{"debug.promoted_cap_6", 6},
+	{"debug.promoted_cap_4", 4}
+};
+
 int lighting_force_off(const char *name, int forced)
 {
 	unsigned int i;
@@ -162,6 +178,16 @@ int lighting_force_off(const char *name, int forced)
 		moving_lights_384 = forced != 0;
 		return 1;
 	}
+	for (i = 0; i < sizeof(promoted_caps) / sizeof(promoted_caps[0]); i++)
+		if (!strcmp(name, promoted_caps[i].name))
+		{
+			/* (one at a time: turning one off leaves another alone) */
+			if (forced)
+				promoted_cap = promoted_caps[i].cap;
+			else if (promoted_cap == promoted_caps[i].cap)
+				promoted_cap = 0;
+			return 1;
+		}
 	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
 		if (!strcmp(name, preferences[i].name))
 		{
@@ -176,6 +202,9 @@ int lighting_forced_off(const char *name)
 	unsigned int i;
 	if (!strcmp(name, "debug.moving_lights_384"))
 		return moving_lights_384;
+	for (i = 0; i < sizeof(promoted_caps) / sizeof(promoted_caps[0]); i++)
+		if (!strcmp(name, promoted_caps[i].name))
+			return promoted_cap == promoted_caps[i].cap;
 	for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
 		if (!strcmp(name, preferences[i].name)) return preferences[i].forced_off;
 	return 0;

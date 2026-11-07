@@ -854,9 +854,22 @@ int light_port_refresh_attachment(long light_index, long object_index)
 	if (TEST_FLAG(light->flags, _point_light_connects_to_map_bit) &&
 		!TEST_FLAG(light->flags, _point_light_connected_to_map_bit))
 		return FALSE;
-	light_disconnect_from_map(light_index);
-	light_reconnect_to_map(light_index);
+	/* (at each view and at each frame's end: light_move_with_object leaves its
+	clusters alone unless it has moved or needs a larger sphere) */
+	light_move_with_object(light_index);
 	return TRUE;
+}
+
+/* port: how far a promoted light is from this view, for plasma_lighting_rank:
+one no part of which is in view counts as past any that is. */
+float light_port_view_distance(long light_index)
+{
+	struct light_datum *light = datum_try_and_get(light_data, light_index);
+	real distance;
+	if (!light)
+		return 100000.0f;
+	distance = distance3d(&render.camera.position, &light->position);
+	return render_frustum_sphere_visible(&render.frustum, &light->position, light->radius) ? distance : distance + 10000.0f;
 }
 
 /* port: save/restore a render-owned radius without exposing light datums. */
@@ -1147,6 +1160,7 @@ void lights_preprocess_scene(
 			}
 		}
 	}
+	plasma_lighting_rank(); /* port: which keep their full reach, now all are known */
 
 	light_marker_begin();
 	lights_globals.scene_point_light_count = structure_visibility_find_objects(
@@ -2312,9 +2326,10 @@ void light_reconnect_to_map(
 }
 
 /* port: whether a light's clusters still hold for where it is now: it joined them
-with this radius, a short way from here. At the edge of a sphere a light gives
-almost nothing, so a cluster it reaches a little late or leaves a little late
-doesn't show. */
+with this radius or a larger one, a short way from here. At the edge of a sphere
+a light gives almost nothing, so a cluster it reaches a little late or leaves a
+little late doesn't show, and a light in a cluster it no longer reaches is only
+a light that reader passes over. */
 static boolean light_stays_connected(
 	long light_index,
 	struct light_datum const *light)
@@ -2331,7 +2346,7 @@ static boolean light_stays_connected(
 		return FALSE;
 	}
 	light_compute_bounding_sphere(light_index, TRUE, FALSE, TRUE, &position, &radius);
-	if (radius != connection->radius)
+	if (radius > connection->radius)
 	{
 		return FALSE;
 	}

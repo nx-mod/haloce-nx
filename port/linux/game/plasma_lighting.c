@@ -26,7 +26,7 @@ static struct
 	long object_index;
 	long rasterizer_index;
 	int was_dynamic, category;
-	float radius_scale, saved_radius;
+	float radius_scale, full_scale, saved_radius;
 } plasma_lighting_attachments[PLASMA_LIGHTING_MAXIMUM];
 static int plasma_lighting_count;
 static unsigned int	plasma_model_mask;
@@ -102,6 +102,7 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 		category ? authored_scale : covenant_scale ? covenant_scale :
 		!strcmp(name, "weapons\\plasma pistol\\bolt") ? 2.25f :
 		!strcmp(name, "weapons\\plasma rifle\\charged bolt") ? 2.75f : 1.75f;
+	plasma_lighting_attachments[plasma_lighting_count].full_scale = plasma_lighting_attachments[plasma_lighting_count].radius_scale;
 	plasma_lighting_attachments[plasma_lighting_count].category = category;
 	plasma_lighting_count++;
 	if (!light_port_refresh_attachment(light_index, object_index))
@@ -111,6 +112,47 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 		light_port_dynamic_set(light_index, object_index,
 			plasma_lighting_attachments[plasma_lighting_count].was_dynamic);
 	}
+}
+
+/* The overlay's cap: the nearest lights in view keep their full reach. Past those,
+a light's added reach goes with distance, down to its authored radius by
+PLASMA_LIGHTING_FAR_DISTANCE: far lighting stays, on fewer surfaces. Clusters are
+as they were: a radius only shrinks here, and they hold for a larger one. */
+#define PLASMA_LIGHTING_NEAR_DISTANCE 20.0f
+#define PLASMA_LIGHTING_FAR_DISTANCE 60.0f
+void plasma_lighting_rank(void)
+{
+	float distances[PLASMA_LIGHTING_MAXIMUM];
+	unsigned char kept[PLASMA_LIGHTING_MAXIMUM];
+	int cap = lighting_promoted_cap(), index, count;
+	for (index = 0; index < plasma_lighting_count; index++)
+		plasma_lighting_attachments[index].radius_scale = plasma_lighting_attachments[index].full_scale;
+	if (!cap || plasma_lighting_count <= cap)
+	{
+		plasma_occlusion_note_promoted(plasma_lighting_count, 0);
+		return;
+	}
+	for (index = 0; index < plasma_lighting_count; index++)
+	{
+		distances[index] = light_port_view_distance(plasma_lighting_attachments[index].light_index);
+		kept[index] = FALSE;
+	}
+	for (count = 0; count < cap; count++)
+	{
+		int nearest = NONE;
+		for (index = 0; index < plasma_lighting_count; index++)
+			if (!kept[index] && (nearest == NONE || distances[index] < distances[nearest]))
+				nearest = index;
+		kept[nearest] = TRUE;
+	}
+	for (index = 0; index < plasma_lighting_count; index++)
+		if (!kept[index])
+		{
+			float fade = (distances[index] - PLASMA_LIGHTING_NEAR_DISTANCE) / (PLASMA_LIGHTING_FAR_DISTANCE - PLASMA_LIGHTING_NEAR_DISTANCE);
+			fade = fade < 0.0f ? 0.0f : fade > 1.0f ? 1.0f : fade;
+			plasma_lighting_attachments[index].radius_scale += (1.0f - plasma_lighting_attachments[index].full_scale) * fade;
+		}
+	plasma_occlusion_note_promoted(plasma_lighting_count, plasma_lighting_count - cap);
 }
 
 float plasma_lighting_radius(long light_index, long object_index, float radius)
@@ -137,7 +179,8 @@ void plasma_lighting_frame_end(void)
 	rocket_lighting_frame_end();
 	plasma_falloff_end(); /* Also close a pass if drawing ended early. */
 	/* Called after render interpolation ends, even if the option was disabled.
-	   Restore positions AND cluster membership before the next simulation tick. */
+	   Restore positions before the next simulation tick. Clusters stay as they
+	   are: they hold for the stock radius too (light_move_with_object). */
 	for (index = 0; index < plasma_lighting_count; index++)
 	{
 		plasma_lighting_attachments[index].radius_scale = 1.0f;

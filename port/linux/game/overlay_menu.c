@@ -421,6 +421,15 @@ static struct overlay_entry overlay_lighting_entries[] =
 	OVERLAY_TOGGLE_NOTE("Moving Lights: 384 Rays", _overlay_state_lighting_forced,
 		"lighting_force_off debug.moving_lights_384 true", "lighting_force_off debug.moving_lights_384 false",
 		"debug.moving_lights_384", "ON traces a moving light with 384 rays, OFF with 1536. Until restart"),
+	OVERLAY_TOGGLE_NOTE("Full Reach: Nearest 8 Lights", _overlay_state_lighting_forced,
+		"lighting_force_off debug.promoted_cap_8 true", "lighting_force_off debug.promoted_cap_8 false",
+		"debug.promoted_cap_8", "ON shrinks the reach of farther lights. All OFF: every light has its full reach"),
+	OVERLAY_TOGGLE_NOTE("Full Reach: Nearest 6 Lights", _overlay_state_lighting_forced,
+		"lighting_force_off debug.promoted_cap_6 true", "lighting_force_off debug.promoted_cap_6 false",
+		"debug.promoted_cap_6", "ON shrinks the reach of farther lights. All OFF: every light has its full reach"),
+	OVERLAY_TOGGLE_NOTE("Full Reach: Nearest 4 Lights", _overlay_state_lighting_forced,
+		"lighting_force_off debug.promoted_cap_4 true", "lighting_force_off debug.promoted_cap_4 false",
+		"debug.promoted_cap_4", "ON shrinks the reach of farther lights. All OFF: every light has its full reach"),
 };
 static struct overlay_source overlay_lighting = OVERLAY_FOLDER_OF("Force Lighting Off", overlay_lighting_entries);
 

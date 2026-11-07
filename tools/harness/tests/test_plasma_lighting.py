@@ -24,7 +24,7 @@ def generated(fault=None):
     return (('under_test.inc', code),)
 
 
-@pytest.mark.parametrize('case', ['shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
+@pytest.mark.parametrize('case', ['cap', 'shield', 'counter_cache', 'covenant', 'muzzle', 'radius', 'rocket', 'pistol', 'model', 'off', 'filter', 'restore', 'split', 'capacity', 'unload', 'missing', 'stale', 'selection', 'disconnected', 'existing'])
 def test_case(case):
     status, output = run(build('plasma_lighting', generated()), case)
     assert status == 0, output
@@ -34,6 +34,14 @@ def test_case(case):
     ('strcmp(name, "weapons\\\\rocket launcher\\\\rocket")', '1', 'rocket'),
     ('strcmp(name, "weapons\\\\plasma pistol\\\\bolt") &&', '1 &&', 'pistol'),
     ('return radius * plasma_lighting_attachments[index].radius_scale;', 'return radius;', 'radius'),
+    # the cap does nothing
+    ('if (!cap || plasma_lighting_count <= cap)', 'if (TRUE)', 'cap'),
+    # the farthest kept, not the nearest
+    ('distances[index] < distances[nearest]', 'distances[index] > distances[nearest]', 'cap'),
+    # a shrunk light never gets its reach back
+    ('plasma_lighting_attachments[index].radius_scale = plasma_lighting_attachments[index].full_scale;', '(void)0;', 'cap'),
+    # past its far distance, it goes on shrinking
+    ('fade > 1.0f ? 1.0f : fade', 'fade', 'cap'),
     ('interpolation_rendering = FALSE;', 'interpolation_rendering = TRUE;', 'restore'),
     ('plasma_lighting_count = 0;', '(void)0;', 'unload'),
 ])

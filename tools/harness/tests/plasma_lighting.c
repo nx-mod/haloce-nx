@@ -53,6 +53,13 @@ static void light_reconnect_to_map(long index)
 	rendered_pose = interpolation_rendering;
 	{ real_point3d p; light_compute_bounding_sphere(index, TRUE, FALSE, TRUE, &p, &connected_radius); }
 }
+/* (at a view and at a frame's end: what its clusters do is tools/harness/tests/light_move.c's) */
+void light_move_with_object(long index) { light_disconnect_from_map(index); light_reconnect_to_map(index); }
+static float view_distances[8];
+static int promoted_cap, noted_promoted, noted_shrunk;
+int lighting_promoted_cap(void) { return promoted_cap; }
+float light_port_view_distance(long index) { return view_distances[index]; }
+void plasma_occlusion_note_promoted(int promoted, int shrunk) { noted_promoted = promoted; noted_shrunk = shrunk; }
 void plasma_occlusion_model_slot(long i, short s) {}
 static int visibility_resets;
 void plasma_occlusion_reset(void) { visibility_resets++; }
@@ -236,6 +243,32 @@ int main(int argc, char **argv)
 		projectile.object.type = 0;
 		plasma_lighting_prepare(1, 1, NONE);
 		CHECK(!refreshes, "other projectile tags and object types stay stock");
+	}
+	else if (!strcmp(test, "cap"))
+	{
+		static const float distances[5] = {5, 100, 30, 70, 10};
+		int i;
+		memcpy(view_distances, distances, sizeof(distances));
+		tag_name = "weapons\\plasma rifle\\bolt";
+		for (i = 0; i < 5; i++)
+			plasma_lighting_prepare(i, i, NONE);
+		CHECK(plasma_lighting_count == 5, "all promoted");
+		plasma_lighting_rank();
+		for (i = 0; i < 5; i++)
+			CHECK(plasma_lighting_radius(i, i, 1) == 1.75f, "no cap: every light has its full reach");
+		CHECK(noted_promoted == 5 && !noted_shrunk, "and they're counted");
+		promoted_cap = 2;
+		plasma_lighting_rank();
+		CHECK(plasma_lighting_radius(0, 0, 1) == 1.75f && plasma_lighting_radius(4, 4, 1) == 1.75f, "the nearest keep their full reach");
+		CHECK(plasma_lighting_radius(2, 2, 1) == 1.5625f, "a farther one's added reach goes with distance");
+		CHECK(plasma_lighting_radius(1, 1, 1) == 1.0f && plasma_lighting_radius(3, 3, 1) == 1.0f, "far away, it has its authored radius, not less");
+		CHECK(noted_promoted == 5 && noted_shrunk == 3, "the shrunk are counted");
+		promoted_cap = 0;
+		plasma_lighting_rank();
+		CHECK(plasma_lighting_radius(1, 1, 1) == 1.75f, "the cap off: full reach again");
+		promoted_cap = 5;
+		plasma_lighting_rank();
+		CHECK(!noted_shrunk && plasma_lighting_radius(1, 1, 1) == 1.75f, "a cap not reached shrinks none");
 	}
 	else if (!strcmp(test, "restore"))
 	{

@@ -32,6 +32,16 @@ int main(int argc,char **argv)
   CHECK(lighting_force_off("debug.moving_lights_384",1)&&lighting_moving_lights_384(),"and the 384");
   return 0;
  }
+ if(argc>1&&!strcmp(argv[1],"cap"))
+ {
+  CHECK(!lighting_promoted_cap(),"every platform starts with no cap");
+  CHECK(lighting_force_off("debug.promoted_cap_6",1)&&lighting_promoted_cap()==6,"a row sets its cap");
+  CHECK(lighting_forced_off("debug.promoted_cap_6")&&!lighting_forced_off("debug.promoted_cap_8"),"and only it reads as on");
+  CHECK(lighting_force_off("debug.promoted_cap_4",1)&&lighting_promoted_cap()==4&&!lighting_forced_off("debug.promoted_cap_6"),"another replaces it");
+  CHECK(lighting_force_off("debug.promoted_cap_6",0)&&lighting_promoted_cap()==4,"turning off one not chosen changes nothing");
+  CHECK(lighting_force_off("debug.promoted_cap_4",0)&&!lighting_promoted_cap(),"turning off the chosen one lifts the cap");
+  return 0;
+ }
  if(argc>1&&!strcmp(argv[1],"lookups"))
  {
   static const char muzzle[]="display.muzzle_lighting",plasma[]="display.plasma_lighting";

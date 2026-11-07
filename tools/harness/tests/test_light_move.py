@@ -21,7 +21,8 @@ def test_light_move():
     ('return dx * dx + dy * dy + dz * dz <= reach * reach;', 'return (dx + dy + dz + reach) * 0 != 0;', "a light that didn't move stays"),
     # always stays
     ('return dx * dx + dy * dy + dz * dz <= reach * reach;', 'return (dx + dy + dz + reach) * 0 == 0;', 'small moves add up'),
-    ('if (radius != connection->radius)', 'if (FALSE)', 'a new radius joins again'),
+    ('if (radius > connection->radius)', 'if (FALSE)', 'a new radius joins again'),
+    ('if (radius > connection->radius)', 'if (radius != connection->radius)', 'a smaller sphere stays'),
     ('MIN(0.25f, radius * 0.25f)', '0.25f', 'but only a part of its radius'),
     ('connection->light_index != light_index ||', '', 'another light at that slot'),
     ('connection->cluster_reference != light->cluster_reference ||', '', "a restored game's lists"),
