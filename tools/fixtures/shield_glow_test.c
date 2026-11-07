@@ -72,6 +72,8 @@ static struct object_definition *object_definition_get(long i){return &definitio
 static real_matrix4x3 *object_get_node_matrices(long i){return poses[i];}
 static short local_player_get_next(short i){return i==NONE?0:NONE;}
 static struct observer_result const *observer_get_camera(short i){return &camera;}
+static int network_replay_playing(void){return 0;}
+static struct observer_result const *network_replay_camera(void){return &camera;}
 static real distance3d(real_point3d const *a,real_point3d const *b){real x=a->x-b->x,y=a->y-b->y,z=a->z-b->z;return (real)sqrt(x*x+y*y+z*z);}
 static int valid_real(real x){return isfinite(x);}
 static struct shader *shader_definition_get(long i);

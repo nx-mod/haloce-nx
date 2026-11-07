@@ -63,6 +63,8 @@ static int first_person_weapon_adjust_light(long i,const char *n,real_point3d *p
 { memset(p,0,sizeof(*p));memset(f,0,sizeof(*f));memset(u,0,sizeof(*u));p->x=5;f->j=1;u->k=1;return first_person&&!marker_missing; }
 static short local_player_get_next(short i) { return i==NONE?0:NONE; }
 static const struct observer_result *observer_get_camera(short i) { return &camera; }
+static int network_replay_playing(void) { return 0; }
+static const struct observer_result *network_replay_camera(void) { return &camera; }
 static real distance3d(const real_point3d *a,const real_point3d *b) { return (real)fabs(a->x-b->x); }
 static long game_time_get(void) { return (long)(now*30); }
 real render_interpolation_game_time_sec(long ticks) { return now; }

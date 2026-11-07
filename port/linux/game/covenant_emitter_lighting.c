@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "lighting_config.h"
+#include "network_replay.h"
 real render_interpolation_game_time_sec(long ticks);
 long light_port_glow_definition_get(void);
 boolean light_port_glow_set(long light, long owner, real_rgb_color const *color, real radius);
@@ -181,6 +182,13 @@ static int emitter_sample(long index, int component, struct emitter_sample *samp
 		if (!object_get_marker_by_name(index, marker_name, &marker, 1))
 			return FALSE;
 		sample->position = marker.matrix.position;
+	}
+	/* a replay's playback has no local player: its view is the replay's camera */
+	if (network_replay_playing())
+	{
+		struct observer_result const *camera = network_replay_camera();
+		if (camera)
+			nearest = MIN(nearest, distance3d(&sample->position, &camera->position));
 	}
 	for (player = local_player_get_next(NONE); player != NONE; player = local_player_get_next(player))
 	{

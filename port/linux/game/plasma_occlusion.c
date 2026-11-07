@@ -117,7 +117,7 @@ static struct
 	long fade, fade_settled;
 	long textures, uploads;
 	long refused, too_far, overflow, at_rest, waited;
-	long submitted, promoted, shrunk;
+	long submitted, promoted, shrunk, bolts_seen, bolts, glows;
 } stats;
 static int submitted_count;
 static int updates_this_window;
@@ -1167,13 +1167,19 @@ static void stats_second(void)
 		(stats.fade || stats.rebuild_held || stats.rebuild_moved || stats.rebuild_stationary || stats.too_far || stats.overflow || stats.at_rest || stats.waited))
 		platform_log("lighting: %ld views; traces %ld new, %ld held, %ld moved, %ld scene changed (%ld rays, %ld refused); "
 			"rebuilds %ld held, %ld moved, %ld stationary; fades %ld (%ld settled); textures %ld built, %ld uploaded; "
-			"%ld too far, %ld overflow, %ld at rest, %ld waited; lights %ld submitted, %ld promoted, %ld shrunk",
+			"%ld too far, %ld overflow, %ld at rest, %ld waited; lights %ld submitted, %ld promoted (%ld bolts of %ld, %ld weapon glows), %ld shrunk",
 			stats.views, stats.trace_new, stats.trace_held, stats.trace_moved, stats.trace_scene, stats.rays, stats.refused,
 			stats.rebuild_held, stats.rebuild_moved, stats.rebuild_stationary, stats.fade, stats.fade_settled,
 			stats.textures, stats.uploads, stats.too_far, stats.overflow, stats.at_rest, stats.waited,
-				stats.submitted, stats.promoted, stats.shrunk);
+				stats.submitted, stats.promoted, stats.bolts, stats.bolts_seen, stats.glows, stats.shrunk);
 	memset(&stats, 0, sizeof(stats));
 	stats.logged = now;
+}
+void plasma_occlusion_note_kinds(int bolts_seen, int bolts, int glows)
+{
+	stats.bolts_seen += bolts_seen;
+	stats.bolts += bolts;
+	stats.glows += glows;
 }
 void plasma_occlusion_note_promoted(int promoted, int shrunk)
 {

@@ -57,6 +57,7 @@ unsigned int plasma_model_lighting_mask(void)
 		covenant_emitter_lighting_enabled() || authored_emitter_lighting_enabled() || shield_glow_enabled()) ? plasma_model_mask : 0;
 }
 
+static int plasma_lighting_bolts_seen;
 void plasma_lighting_prepare(long light_index, long object_index, long definition_index)
 {
 	struct object_datum *object;
@@ -74,6 +75,8 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 	category = authored_emitter_lighting_profile(object_index, definition_index, &authored_scale);
 	if (!category && (!lighting_config_boolean("display.plasma_lighting") || object->object.type != _object_type_projectile))
 		return;
+	if (!category)
+		plasma_lighting_bolts_seen++; /* (the log's: before the view's reach) */
 	/* A light no part of whose reach is in view changes nothing that is drawn:
 	   at 48 players, 97 lights a view were promoted and 17 drawn, each one updated
 	   and looked through by every other. It stays stock until it can reach the view. */
@@ -129,9 +132,15 @@ void plasma_lighting_rank(void)
 {
 	float distances[PLASMA_LIGHTING_MAXIMUM];
 	unsigned char kept[PLASMA_LIGHTING_MAXIMUM];
-	int cap = lighting_promoted_cap(), index, count;
+	int cap = lighting_promoted_cap(), index, count, bolts = 0, glows = 0;
 	for (index = 0; index < plasma_lighting_count; index++)
+	{
 		plasma_lighting_attachments[index].radius_scale = plasma_lighting_attachments[index].full_scale;
+		bolts += plasma_lighting_attachments[index].category == 0;
+		glows += plasma_lighting_attachments[index].category == 1;
+	}
+	plasma_occlusion_note_kinds(plasma_lighting_bolts_seen, bolts, glows);
+	plasma_lighting_bolts_seen = 0;
 	if (!cap || plasma_lighting_count <= cap)
 	{
 		plasma_occlusion_note_promoted(plasma_lighting_count, 0);

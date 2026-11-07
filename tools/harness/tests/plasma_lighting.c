@@ -61,6 +61,7 @@ int light_port_can_reach_view(long index) { return views_reached; }
 static int promoted_cap, noted_promoted, noted_shrunk;
 int lighting_promoted_cap(void) { return promoted_cap; }
 float light_port_view_distance(long index) { return view_distances[index]; }
+void plasma_occlusion_note_kinds(int bolts_seen, int bolts, int glows) { }
 void plasma_occlusion_note_promoted(int promoted, int shrunk) { noted_promoted = promoted; noted_shrunk = shrunk; }
 void plasma_occlusion_model_slot(long i, short s) {}
 static int visibility_resets;

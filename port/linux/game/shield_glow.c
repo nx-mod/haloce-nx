@@ -21,6 +21,7 @@
 #include <math.h>
 #include <string.h>
 #include "lighting_config.h"
+#include "network_replay.h"
 
 int config_boolean(const char *name);
 const char *config_string(const char *name);
@@ -125,6 +126,13 @@ static real shield_glow_camera_distance(real_point3d const *point)
 {
 	real nearest = SHIELD_GLOW_RANGE * 2.f;
 	short player;
+	/* a replay's playback has no local player: its view is the replay's camera */
+	if (network_replay_playing())
+	{
+		struct observer_result const *camera = network_replay_camera();
+		if (camera)
+			nearest = MIN(nearest, distance3d(point, &camera->position));
+	}
 	for (player = local_player_get_next(NONE); player != NONE; player = local_player_get_next(player))
 	{
 		struct observer_result const *camera = observer_get_camera(player);
