@@ -188,6 +188,37 @@ short halo_stick_dead_range(short stick)
 	return ranges[stick ? 1 : 0];
 }
 
+/* the right stick's turn up and down, in degrees a second, of each setting
+of input.stick_vertical_sensitivity (1 to 10): Look Sensitivity's left and
+right range, 40 to 260, in even steps; 0 is the game's, half of left and
+right's (player_ui.c) */
+#define STICK_PITCH_RATE_SLOWEST 40.0f
+#define STICK_PITCH_RATE_FASTEST 260.0f
+#define STICK_PITCH_RATE_STEPS 10
+
+float halo_stick_pitch_rate(short gamepad_index, float pitch_rate)
+{
+	static struct
+	{
+		unsigned long read_at;
+		float rate;
+	} players[PORT_COUNT];
+	int player = gamepad_index >= 0 && gamepad_index < PORT_COUNT ? gamepad_index : 0;
+
+	if (players[player].read_at != config_changes() + 1)
+	{
+		double setting = config_player_real(player, "input.stick_vertical_sensitivity");
+		long step = (long)(setting + 0.5);
+
+		/* (read_at 0 is never read: config_changes() + 1) */
+		players[player].read_at = config_changes() + 1;
+		players[player].rate = step < 1 || step > STICK_PITCH_RATE_STEPS ? 0.0f :
+			STICK_PITCH_RATE_SLOWEST + (STICK_PITCH_RATE_FASTEST - STICK_PITCH_RATE_SLOWEST) *
+			(float)(step - 1) / (STICK_PITCH_RATE_STEPS - 1);
+	}
+	return players[player].rate > 0.0f ? players[player].rate : pitch_rate;
+}
+
 /* radians of yaw and pitch for the mouse motion since the last call; the
 game adds these to the facing change of the player on gamepad 0 */
 int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)

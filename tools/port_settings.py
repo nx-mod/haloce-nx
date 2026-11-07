@@ -336,10 +336,17 @@ SCREENS = {
     "gamepad_setup": {
         "screen": "gamepad_setup_screen",
         "header": ("header_profile_controller_setting", f"{PE}/controller_edit/header_profile_controller_setting"),
-        "spacing": 30,
+        # (27: ten rows, the last clear of the help at 350)
+        "spacing": 27,
         "rows": [
             ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 11)],
-             "How fast the right stick turns the view.", None),
+             "How fast the right stick turns the view left\nand right.", None),
+            # (the profile's own settings.toml's, as Gyro Aim's: SAME is the
+            # game's, half of Look Sensitivity's; 1 to 10 are 40 to 260
+            # degrees a second, xinput_sdl.c's halo_stick_pitch_rate)
+            ("VERTICAL SENSITIVITY:", "input.stick_vertical_sensitivity",
+             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 11)],
+             "How fast the right stick turns the view up\nand down. SAME: half of Look Sensitivity's.", None),
             ("INVERT LOOK:", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("INVERT FLIGHT:", "profile.flight_inversion", YES_NO,
              "Flying vehicles pitch as aircraft do: pushing up\nflies down.", None),

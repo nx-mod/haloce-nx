@@ -165,6 +165,10 @@ char const *server_director_first_level(void);
 32767: input.left_stick_dead_zone and input.right_stick_dead_zone, else the
 game's own (port/linux/src/xinput_sdl.c) */
 short halo_stick_dead_range(short stick);
+/* the right stick's turn up and down for a gamepad's player, in degrees a
+second: input.stick_vertical_sensitivity's (the profile's own), else
+pitch_rate, the game's from Look Sensitivity (port/linux/src/xinput_sdl.c) */
+float halo_stick_pitch_rate(short gamepad_index, float pitch_rate);
 /* the mouse in the menus (source/interface/ui_widget.c) */
 #include "halo_ui_pointer.h"
 /* the overlay menu (port/linux/game/overlay_menu.c): while it is open the
