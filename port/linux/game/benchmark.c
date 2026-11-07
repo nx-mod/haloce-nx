@@ -425,16 +425,56 @@ static void benchmark_start_stage(struct benchmark_stage const *stage)
 	platform_log("benchmark: %s, a local Slayer game with %ld bots", stage->map, config_integer("debug.benchmark_bots"));
 }
 
+/* debug.benchmark_weapon: the loadout weapon of that name (_loadout_weapon_*), or
+_loadout_weapon_none */
+static byte benchmark_loadout_weapon(char const *name)
+{
+	static struct { char const *name; byte weapon; } const weapons[] = {
+		{ "assault_rifle", _loadout_weapon_assault_rifle },
+		{ "pistol", _loadout_weapon_pistol },
+		{ "shotgun", _loadout_weapon_shotgun },
+		{ "sniper_rifle", _loadout_weapon_sniper_rifle },
+		{ "rocket_launcher", _loadout_weapon_rocket_launcher },
+		{ "plasma_pistol", _loadout_weapon_plasma_pistol },
+		{ "plasma_rifle", _loadout_weapon_plasma_rifle },
+		{ "needler", _loadout_weapon_needler },
+	};
+	int index;
+
+	for (index = 0; index < (int)NUMBEROF(weapons); index++)
+		if (!strcmp(name, weapons[index].name))
+			return weapons[index].weapon;
+	if (name[0])
+		platform_log("benchmark: debug.benchmark_weapon \"%s\" names no weapon", name);
+	return _loadout_weapon_none;
+}
+
 /* the local game's lobby: its map and variant, a player, the start (network_test.c's steps) */
 static void benchmark_multiplayer_setup(struct benchmark_stage const *stage)
 {
 	if (!benchmark.map_set && benchmark.state_seconds >= 1.0 && global_network_game_server_get())
 	{
 		struct game_variant variant;
+		struct game_variant_options options;
+		byte weapon = benchmark_loadout_weapon(config_string("debug.benchmark_weapon"));
 
 		network_game_server_change_map_name(global_network_game_server_get(), stage->level);
 		variant = *game_engine_get_variant_by_name(&variant, "slayer");
+		/* (everyone with that weapon, as a gametype's loadout gives it, and none
+		lying about; a few players on a small map must not end the game early) */
+		if (weapon != _loadout_weapon_none)
+			variant.universal_variant.score_to_win = 1000;
 		player_ui_set_game_variant(&variant);
+		if (weapon != _loadout_weapon_none)
+		{
+			game_variant_options_default(&variant, &options);
+			options.loadout = _loadout_custom;
+			options.primary_weapon = weapon;
+			options.secondary_weapon = _loadout_weapon_none;
+			options.no_map_weapons = TRUE;
+			player_ui_set_game_variant_options(&options);
+			platform_log("benchmark: everyone starts with %s, and none are on the map", config_string("debug.benchmark_weapon"));
+		}
 		network_game_server_change_game_variant(global_network_game_server_get(), &variant);
 		benchmark.map_set = TRUE;
 	}
