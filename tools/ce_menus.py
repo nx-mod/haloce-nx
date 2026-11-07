@@ -355,25 +355,19 @@ def text_value(utf16: bytes) -> str:
 def strings_xml(lists: dict) -> str:
     """strings.xml: the PC version's string lists (each tag's strings), with
     the port's changes to them (port_settings.STRING_OVERRIDES and
-    STRING_INSERTS). Each list names its tag (map=) and each of its strings
-    that is the PC version's its index there (map=), which a map in another
-    language has in its language (menu_tags.c's map_strings)."""
+    STRING_INSERTS), in English: the menus never take a map's loc.map text,
+    whose language is whichever edition it came from."""
     lines = ['<?xml version="1.0" encoding="UTF-8"?>',
              "<!-- The PC version's menus' text (tools/ce_menus.py) -->", "<menus>"]
     for tag in sorted(lists):
-        strings = lists[tag]
-        originals = list(range(len(strings)))
-        if our_name(tag) in port_settings.STRING_OVERRIDES:
-            strings = port_settings.STRING_OVERRIDES[our_name(tag)]
-            originals = port_settings.OVERRIDE_ORIGINALS.get(our_name(tag), [None] * len(strings))
+        strings = port_settings.STRING_OVERRIDES.get(our_name(tag), lists[tag])
         for index, texts in port_settings.STRING_INSERTS.get(our_name(tag), []):
             strings = strings[:index] + texts + strings[index:]
-            originals = originals[:index] + [None] * len(texts) + originals[index:]
-        lines.append(f"\t<strings{attributes([('name', our_name(tag)), ('map', tag)])}>")
-        for text, original in zip(strings, originals):
+        lines.append(f"\t<strings{attributes([('name', our_name(tag))])}>")
+        for text in strings:
             # (a string that differs by platform, which keeps one place in the list on each)
             for platform, words in (text.items() if isinstance(text, dict) else [(None, text)]):
-                lines.append(f"\t\t<string{attributes([('text', words), ('map', original), ('platform', platform)])}/>")
+                lines.append(f"\t\t<string{attributes([('text', words), ('platform', platform)])}/>")
         lines.append("\t</strings>")
     lines.append("</menus>")
     return "\n".join(lines) + "\n"

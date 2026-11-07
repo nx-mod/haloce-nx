@@ -584,7 +584,7 @@ static void read_strings(struct reader *reader, const XML_Char **attributes)
 {
 	struct halo_menus *menus = &reader->menus;
 	struct halo_menu_strings strings;
-	struct attribute table[] = { { "name", &strings.name }, { "map", &strings.map } };
+	struct attribute table[] = { { "name", &strings.name } };
 
 	memset(&strings, 0, sizeof(strings));
 	strings.first = menus->string_count;
@@ -601,16 +601,11 @@ static void read_string(struct reader *reader, const XML_Char **attributes, long
 {
 	struct halo_menus *menus = &reader->menus;
 	const char *text = NULL;
-	long map = HALO_MENU_NONE, map_given = 0;
-	struct attribute table[] = { { "text", &text }, { "map", NULL, &map, &map_given } };
+	struct attribute table[] = { { "text", &text } };
 
 	read_attributes(reader, "string", attributes, table, sizeof(table) / sizeof(*table));
 	if (!reader->failed && !text)
 		reader_error(reader, "a <string> needs text");
-	if (!reader->failed && map_given && (map < 0 || !menus->string_lists[owner].map))
-		reader_error(reader, "a <string>'s map= is an index in its <strings>' map list");
-	GROW(reader, menus->string_maps, menus->string_count);
-	menus->string_maps[menus->string_count] = map_given ? map : HALO_MENU_NONE;
 	GROW(reader, menus->strings, menus->string_count);
 	menus->strings[menus->string_count++] = text ? text : "";
 	menus->string_lists[owner].count++;
