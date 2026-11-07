@@ -12,6 +12,11 @@ struct observer_result {real_point3d position;} cameras[4];
 static int local_count=1;
 int local_player_count(void) {return local_count;}
 struct observer_result const *observer_get_camera(short i) {return &cameras[i];}
+/* a replay's playback: no local player, and the replay's own camera */
+static int replaying;
+static struct observer_result replay_camera;
+int network_replay_playing(void) {return replaying;}
+struct observer_result const *network_replay_camera(void) {return &replay_camera;}
 static int weapon_on, vehicle_on, projectile_on, prong_on, lookups, generation;
 static const char *names[64];
 static long groups[64];
@@ -71,6 +76,11 @@ int main(int argc, char **argv)
 	CHECK(prong_reach(&object)==0,"distant prongs retain only their stock authored effects");
 	cameras[1].position.x=7;local_count=2;
 	CHECK(prong_reach(&object)==1,"another split-screen player retains nearby prong spill");
+	local_count=0;replaying=1;replay_camera.position.x=-20;
+	CHECK(prong_reach(&object)==0,"in a replay's playback, a prong far from its camera keeps only its stock effects");
+	replay_camera.position.x=7;
+	CHECK(prong_reach(&object)==1,"in a replay's playback, a prong near its camera spills");
+	replaying=0;local_count=1;
 	generation = 1000;
 	authored_emitter_lighting_forget();
 	object.definition_index = tag_loaded('weap', "weapons\\energy sword\\energy sword");

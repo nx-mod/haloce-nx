@@ -28,6 +28,8 @@ static const char *tag_get_name(long i) { return name; }
 static struct object_definition *object_definition_get(long i) { return &definition; }
 static short local_player_get_next(short i) { return i == NONE ? 0 : NONE; }
 static const struct observer_result *observer_get_camera(short i) { return &camera; }
+static int network_replay_playing(void) { return 0; }
+static const struct observer_result *network_replay_camera(void) { return &camera; }
 static real distance3d(const real_point3d *a, const real_point3d *b) { return a->x - b->x; }
 int lighting_config_boolean(const char *n) { return enabled; }
 long light_port_glow_definition_get(void) { return missing ? NONE : 99; }

@@ -8,6 +8,7 @@
 #include "game/players.h"
 
 #include "lighting_config.h"
+#include "network_replay.h"
 
 static const struct authored_emitter_profile
 {
@@ -40,12 +41,13 @@ static int identities_ready;
    The authored luminous surface/flare is not changed at any distance. */
 static float prong_reach(struct object_datum const *object)
 {
-	int i, count = local_player_count();
+	/* a replay's playback has no local player: its view is the replay's camera */
+	int i, replaying = network_replay_playing(), count = replaying ? 1 : local_player_count();
 	float nearest = 36.0f;
-	if (!count) return 1.0f;
+	if (!count || (replaying && !network_replay_camera())) return 1.0f;
 	for (i = 0; i < count; i++)
 	{
-		struct observer_result const *camera = observer_get_camera((short)i);
+		struct observer_result const *camera = replaying ? network_replay_camera() : observer_get_camera((short)i);
 		float x = camera->position.x - object->object.bounding_sphere_center.x;
 		float y = camera->position.y - object->object.bounding_sphere_center.y;
 		float z = camera->position.z - object->object.bounding_sphere_center.z;

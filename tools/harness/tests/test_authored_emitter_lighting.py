@@ -16,3 +16,13 @@ def test_authored_emitters(fault):
         source = source.replace('definition == identities[i].light &&', 'TRUE &&')
     status, output = run(build('authored_emitter_lighting', (('under_test.inc', source),)), 'profiles')
     assert status == (CHECK_FAILED if fault else 0), output
+
+
+def test_replay_playback_prongs_use_its_camera():
+    # without the playback's camera, no local player meant every prong's full reach
+    source = re.sub(r'^#include.*$', '', read('port/linux/game/authored_emitter_lighting.c'), flags=re.M)
+    guard = 'int i, replaying = network_replay_playing(),'
+    assert source.count(guard) == 1
+    source = source.replace(guard, 'int i, replaying = 0,')
+    status, output = run(build('authored_emitter_lighting', (('under_test.inc', source),)), 'profiles')
+    assert status == CHECK_FAILED, output
