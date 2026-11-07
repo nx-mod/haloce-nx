@@ -1,6 +1,6 @@
 # Changelog
 
-## Build 139: Dynamic lighting, and better Custom Edition maps!
+## Build 140: Dynamic lighting, and better Custom Edition maps!
 
 ### Dynamic lighting
 
@@ -14,6 +14,7 @@
 - Android: DELETE on New Game's and the Map screen's map lists deletes the custom map or folder of maps chosen, after a second press to confirm. Only custom maps can be deleted. (thelinkin3000)
 - Android: on phones whose GPU can't use the game's compressed (DXT) textures, like the Nokia 8's Adreno 540 and Mali GPUs, most textures now take a quarter of the memory they did. Big Custom Edition maps such as the_Cage no longer run the phone out of memory while they load. To go back, set `display.dxt1_astc` to `false` in `config.toml`. (thelinkin3000)
 - Switch: very large textures (over 8 MB once unpacked) are drawn again. On the_Cage the pistol's zoom showed garbage instead of its scope, and the large 3D texture the game's own dynamic lights fade with was never drawn. (thelinkin3000)
+- Custom Edition maps: a custom_maps folder with no maps of its own, only folders of maps, no longer stops the game while it looks for maps. (thelinkin3000)
 
 ### Theater and replays
 
