@@ -452,9 +452,10 @@ struct dk_command_composite
 
 The pixels the draws between a begin and an end pass go to result slot
 index (1 to DK_VISIBILITY_SLOTS - 1), which the GPU writes when it gets
-there; host_dk_visibility reads a slot's latest count. */
+there; host_dk_visibility reads a slot's latest count. Slot 0 is none, and
+the game's 4096 slots (d3d8_gl.c's VISIBILITY_TEST_SLOTS) are 1 to 4096. */
 
-#define DK_VISIBILITY_SLOTS 4096
+#define DK_VISIBILITY_SLOTS 4097
 
 struct dk_command_visibility_end
 {

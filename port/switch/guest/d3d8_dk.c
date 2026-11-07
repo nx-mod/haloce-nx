@@ -1746,7 +1746,10 @@ only once a count of one of the flare's own tests has come
 
 /* the host's slot of the game's: 1 up, as the host has none 0 (dk_commands.h).
 The game's first lens flare of a frame tests in its slot 0: made slot 1, as it
-was, the first two flares were given the second's count */
+was, the first two flares were given the second's count. Each of the game's
+4096 has its own: of 4095, the game's 0 and 4095 (the transparent geometry's
+test, 0xfff) were both slot 1, and the first lens flare slot read the
+transparent geometry's count, its own test or not (rasterizer_lights.c) */
 static unsigned long visibility_slot(DWORD index)
 {
 	return index % (DK_VISIBILITY_SLOTS - 1) + 1;
