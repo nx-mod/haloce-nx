@@ -680,6 +680,7 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#include "saved games/game_state.h" /* port: game_state_persistent_storage_check_ahead */
 /* port: port/linux/game/menu_functions.c: a text's colour in place of its
 own (the server browser's pings) */
 boolean pc_menu_text_color(struct widget_instance *widget, real_argb_color *color);
@@ -8990,6 +8991,10 @@ void process_ui_widgets(
 	}
 	if (progress_bar_is_active())
 		return;
+	/* port: the saved game checked ahead, for the campaign menus
+	(game_state_xbox.c): only in the main menu, never while a game plays */
+	if (main_menu_is_active())
+		game_state_persistent_storage_check_ahead();
 	if (virtual_keyboard_active())
 	{
 		virtual_keyboard_process();

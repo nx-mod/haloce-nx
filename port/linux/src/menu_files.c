@@ -22,6 +22,7 @@ high-res HUD's are (hud_hires.c).
 #include "menu_files.h"
 #include "platform.h"
 #include "port_config.h"
+#include "posix.h"
 #include "xgpu.h"
 
 #include "expat.h"
@@ -49,6 +50,10 @@ struct menu_file
 static struct menu_file *files;
 static long file_count;
 static char folder[1024];
+/* whether the menus folder is there at all (files_gather): port: where it is
+not, none of its files is looked for. Each embedded file's was, a failed
+open each, some 95 of them at every start on the Switch's card. */
+static int folder_present;
 
 static long file_find(const char *path)
 {
@@ -147,14 +152,20 @@ static void files_gather(void)
 
 	config_folder(folder, sizeof(folder));
 	snprintf(folder + strlen(folder), sizeof(folder) - strlen(folder), "menus");
+	{
+		struct posix_file_information information;
+
+		folder_present = posix_stat(folder, &information) == 0 && (information.flags & _posix_file_is_directory);
+	}
 	for (index = 0; index < menu_files_embedded_count; index++)
 	{
 		const struct menu_file_embedded *embedded = &menu_files_embedded[index];
 		unsigned long size = 0;
-		unsigned char *data;
+		unsigned char *data = NULL;
 
 		snprintf(path, sizeof(path), "%s/%s", folder, embedded->path);
-		data = file_read(path, &size);
+		if (folder_present)
+			data = file_read(path, &size);
 		if (data)
 		{
 			platform_log("menus: %s replaces the built-in one", path);
@@ -236,6 +247,8 @@ static const unsigned char *file_data(const char *path, unsigned long *size)
 		char full[1200];
 		unsigned char *data;
 
+		if (!folder_present)
+			return NULL;
 		snprintf(full, sizeof(full), "%s/%s", folder, path);
 		data = file_read(full, size);
 		if (!data)

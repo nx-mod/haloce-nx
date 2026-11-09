@@ -158,6 +158,236 @@ static long result_of(long value)
 	return value == -1 ? -errno : value;
 }
 
+/* ---------- the guest's use of the card, for the log
+
+With the profiler on (debug.profiler), the guest's opens, stats and reads of
+the card are counted by path, and every five seconds with any the log says
+what they were: what the menus read again and again, and what a screen reads
+when it opens, which the profiler's samples show only as time. Files the
+port keeps in memory (host_memory_files.c) are not the card's, and are not
+counted. With the profiler off, nothing is. */
+enum { SD_PATHS = 160, SD_DESCRIPTORS = 1024, SD_WINDOW_SECONDS = 5 };
+static struct sd_path
+{
+	char path[112];
+	unsigned opens, failed_opens, stats, failed_stats, reads, seeks;
+	/* folders listed (or looked through for a name) and the entries read */
+	unsigned lists, failed_lists, entries;
+	unsigned writes;
+	unsigned long long bytes, written;
+} sd_paths[SD_PATHS];
+static int sd_path_count, sd_overflow, sd_activity_on;
+/* each open descriptor's path, so its reads find their row in any window */
+static char sd_descriptor_path[SD_DESCRIPTORS][112];
+/* each open folder listing's path (posix_files.c's handles are 1 to 64) */
+static char sd_listing_path[65][112];
+static unsigned long long sd_window_start;
+static pthread_mutex_t sd_activity_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void host_sd_activity_start(int on)
+{
+	sd_activity_on = on;
+	if (on)
+		host_logf(HOST_LOG_INFO, "sd activity: the guest's use of the card is logged every %d s it has any",
+			SD_WINDOW_SECONDS);
+}
+
+/* (with the lock held) the row for a path, made if there is room */
+static struct sd_path *sd_path_row(const char *path)
+{
+	int index;
+
+	if (!path)
+		return NULL;
+	if (!strncmp(path, "sdmc:", 5))
+		path += 5;
+	for (index = 0; index < sd_path_count; index++)
+		if (!strncmp(sd_paths[index].path, path, sizeof(sd_paths[index].path) - 1))
+			return &sd_paths[index];
+	if (sd_path_count == SD_PATHS)
+	{
+		sd_overflow++;
+		return NULL;
+	}
+	snprintf(sd_paths[sd_path_count].path, sizeof(sd_paths[sd_path_count].path), "%s", path);
+	return &sd_paths[sd_path_count++];
+}
+
+/* an open (descriptor, or -1 for a failure) or a stat (descriptor -2 for one
+that worked, -3 for one that failed) of a path */
+static void sd_note_path(const char *path, int descriptor)
+{
+	struct sd_path *row;
+
+	if (!sd_activity_on)
+		return;
+	pthread_mutex_lock(&sd_activity_lock);
+	row = sd_path_row(path);
+	if (row)
+	{
+		if (descriptor >= 0)
+			row->opens++;
+		else if (descriptor == -1)
+			row->failed_opens++;
+		else if (descriptor == -2)
+			row->stats++;
+		else
+			row->failed_stats++;
+	}
+	if (descriptor >= 0 && descriptor < SD_DESCRIPTORS)
+		snprintf(sd_descriptor_path[descriptor], sizeof(sd_descriptor_path[descriptor]), "%s",
+			!strncmp(path, "sdmc:", 5) ? path + 5 : path);
+	pthread_mutex_unlock(&sd_activity_lock);
+}
+
+enum { SD_READ, SD_SEEK, SD_WRITE };
+
+/* a read, a seek or a write (of bytes) on a descriptor of the card's */
+static void sd_note_descriptor(int descriptor, int kind, long long bytes)
+{
+	struct sd_path *row;
+
+	if (!sd_activity_on || descriptor < 0 || descriptor >= SD_DESCRIPTORS)
+		return;
+	pthread_mutex_lock(&sd_activity_lock);
+	row = sd_descriptor_path[descriptor][0] ? sd_path_row(sd_descriptor_path[descriptor]) : NULL;
+	if (row)
+	{
+		if (kind == SD_SEEK)
+			row->seeks++;
+		else if (kind == SD_WRITE)
+		{
+			row->writes++;
+			row->written += bytes > 0 ? (unsigned long long)bytes : 0;
+		}
+		else
+		{
+			row->reads++;
+			row->bytes += bytes > 0 ? (unsigned long long)bytes : 0;
+		}
+	}
+	pthread_mutex_unlock(&sd_activity_lock);
+}
+
+/* a folder listed, or looked through for a name (handle 0: no listing kept
+open), and whether it could be */
+static void sd_note_list(const char *path, int ok, unsigned long handle)
+{
+	struct sd_path *row;
+
+	if (!sd_activity_on || !path)
+		return;
+	pthread_mutex_lock(&sd_activity_lock);
+	row = sd_path_row(path);
+	if (row)
+	{
+		if (ok)
+			row->lists++;
+		else
+			row->failed_lists++;
+	}
+	if (ok && handle >= 1 && handle <= 64)
+		snprintf(sd_listing_path[handle], sizeof(sd_listing_path[handle]), "%s",
+			!strncmp(path, "sdmc:", 5) ? path + 5 : path);
+	pthread_mutex_unlock(&sd_activity_lock);
+}
+
+/* an entry read from an open listing */
+static void sd_note_entry(unsigned long handle)
+{
+	struct sd_path *row;
+
+	if (!sd_activity_on || handle < 1 || handle > 64 || !sd_listing_path[handle][0])
+		return;
+	pthread_mutex_lock(&sd_activity_lock);
+	row = sd_path_row(sd_listing_path[handle]);
+	if (row)
+		row->entries++;
+	pthread_mutex_unlock(&sd_activity_lock);
+}
+
+/* a descriptor of the card's closed */
+static void sd_note_close(int descriptor)
+{
+	if (sd_activity_on && descriptor >= 0 && descriptor < SD_DESCRIPTORS)
+		sd_descriptor_path[descriptor][0] = 0;
+}
+
+static int sd_row_busier(const void *a, const void *b)
+{
+	const struct sd_path *left = a, *right = b;
+	unsigned long long left_calls = left->opens + left->failed_opens + left->stats + left->failed_stats + left->reads +
+		left->lists + left->failed_lists + left->entries + left->writes;
+	unsigned long long right_calls = right->opens + right->failed_opens + right->stats + right->failed_stats +
+		right->reads + right->lists + right->failed_lists + right->entries + right->writes;
+
+	return left_calls < right_calls ? 1 : left_calls > right_calls ? -1 : 0;
+}
+
+/* at each frame's end: the last window's use of the card, if it is over and
+had any; each window's rows are its own */
+void host_sd_activity_frame(void)
+{
+	unsigned long long now, frequency;
+	unsigned opens = 0, failed_opens = 0, stats = 0, failed_stats = 0, reads = 0, lists = 0, failed_lists = 0,
+		entries = 0, writes = 0;
+	unsigned long long bytes = 0, written = 0;
+	int index, shown;
+
+	if (!sd_activity_on)
+		return;
+	now = armGetSystemTick();
+	frequency = armGetSystemTickFreq();
+	if (!sd_window_start)
+		sd_window_start = now;
+	if (now - sd_window_start < SD_WINDOW_SECONDS * frequency)
+		return;
+	pthread_mutex_lock(&sd_activity_lock);
+	for (index = 0; index < sd_path_count; index++)
+	{
+		opens += sd_paths[index].opens;
+		failed_opens += sd_paths[index].failed_opens;
+		stats += sd_paths[index].stats;
+		failed_stats += sd_paths[index].failed_stats;
+		reads += sd_paths[index].reads;
+		lists += sd_paths[index].lists;
+		failed_lists += sd_paths[index].failed_lists;
+		entries += sd_paths[index].entries;
+		writes += sd_paths[index].writes;
+		bytes += sd_paths[index].bytes;
+		written += sd_paths[index].written;
+	}
+	if (opens + failed_opens + stats + failed_stats + reads + lists + failed_lists + entries + writes)
+	{
+		host_logf(HOST_LOG_INFO, "sd activity, the last %.1f s: %u opens (%u failed), %u stats (%u failed), "
+			"%u reads of %.1f KB, %u writes of %.1f KB, %u folders listed (%u failed) for %u entries, on %d paths%s",
+			(double)(now - sd_window_start) / (double)frequency, opens + failed_opens, failed_opens,
+			stats + failed_stats, failed_stats, reads, (double)bytes / 1024.0, writes, (double)written / 1024.0,
+			lists + failed_lists, failed_lists, entries, sd_path_count, sd_overflow ? " and more not named" : "");
+		/* (the busiest first) */
+		qsort(sd_paths, (size_t)sd_path_count, sizeof(*sd_paths), sd_row_busier);
+		for (index = 0, shown = 0; index < sd_path_count && shown < 20; index++, shown++)
+		{
+			struct sd_path const *row = &sd_paths[index];
+
+			if (row->lists + row->failed_lists + row->entries)
+				host_logf(HOST_LOG_INFO, "  %s: listed %u times (%u failed), %u entries read; %u opens, %u stats",
+					row->path, row->lists + row->failed_lists, row->failed_lists, row->entries,
+					row->opens + row->failed_opens, row->stats + row->failed_stats);
+			else
+				host_logf(HOST_LOG_INFO, "  %s: %u opens (%u failed), %u stats (%u failed), %u reads of %.1f KB, "
+					"%u writes of %.1f KB, %u seeks", row->path, row->opens + row->failed_opens, row->failed_opens,
+					row->stats + row->failed_stats, row->failed_stats, row->reads, (double)row->bytes / 1024.0,
+					row->writes, (double)row->written / 1024.0, row->seeks);
+		}
+	}
+	sd_path_count = 0;
+	sd_overflow = 0;
+	memset(sd_paths, 0, sizeof(sd_paths));
+	sd_window_start = now;
+	pthread_mutex_unlock(&sd_activity_lock);
+}
+
 /* ---------- standard output and error */
 
 struct log_stream
@@ -806,9 +1036,14 @@ static void bounce_yield(int yielding, size_t done, size_t size)
 	if (yielding && done < size)
 	{
 		host_sd_unlock();
+		host_sd_defer_to_game(); /* port: the game thread's reads first */
 		host_sd_lock();
 	}
 }
+
+/* (a transfer this large, another thread's, waits for the game thread's use
+of the card before it starts: host_sd_defer_to_game) */
+#define BULK_TRANSFER (256 * 1024)
 
 static ssize_t bounced_write(int fd, const void *buffer, size_t size, int yielding)
 {
@@ -1052,7 +1287,37 @@ int host_guest_posix_stat(const char *path, struct posix_file_information *infor
 	host_sd_lock();
 	result = posix_stat(path, information);
 	host_sd_unlock();
+	sd_note_path(path, result == 0 ? -2 : -3);
 	return result;
+}
+
+/* Listing a folder, and looking through one for a name in any case: here, not
+straight to posix_files.c (tools/android_imports.py), only so that the card's
+report counts them; they do as posix_files.c does. */
+void *host_guest_posix_directory_open(const char *path)
+{
+	void *directory = posix_directory_open(path);
+
+	sd_note_list(path, directory != NULL, (unsigned long)(uintptr_t)directory);
+	return directory;
+}
+
+int host_guest_posix_directory_next(void *directory, char *name, posix_ulong name_size)
+{
+	int result = posix_directory_next(directory, name, name_size);
+
+	if (result)
+		sd_note_entry((unsigned long)(uintptr_t)directory);
+	return result;
+}
+
+int host_guest_posix_find_entry_case_insensitive(const char *directory, const char *name,
+	char *result, posix_ulong result_size)
+{
+	int found = posix_find_entry_case_insensitive(directory, name, result, result_size);
+
+	sd_note_list(*directory ? directory : ".", 1, 0);
+	return found;
 }
 
 int host_guest_posix_set_file_times(const char *path, posix_ulong access_seconds, posix_ulong access_nanoseconds,
@@ -1361,47 +1626,70 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 				return result_of(-EBADF);
 			if (host_memory_file_is(host_fd))
 				return host_memory_file_write(host_fd, GUEST(const void *, b), (size_t)(uint32_t)c);
+			if ((size_t)(uint32_t)c >= BULK_TRANSFER)
+				host_sd_defer_to_game();
 			host_sd_lock();
 			written = bounced_write(host_fd, GUEST(const void *, b), (size_t)(uint32_t)c, 1);
 			host_sd_unlock();
+			sd_note_descriptor(host_fd, SD_WRITE, written);
 			return result_of(written);
 		}
 	case SYS_writev:
 	{
 		int host_fd = host_descriptor((int)a);
 
+		long written;
+
 		if (host_memory_file_is(host_fd))
 			return memory_file_vector(host_fd, (uint64_t)b, (int)c, 0, 0, 1);
-		return host_fd < 0 ? result_of(-EBADF) :
-			guest_writev(host_fd, (uint64_t)b, (int)c, 0, 0);
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		written = guest_writev(host_fd, (uint64_t)b, (int)c, 0, 0);
+		sd_note_descriptor(host_fd, SD_WRITE, written);
+		return written;
 	}
 	case SYS_pwritev:
 	{
 		int host_fd = host_descriptor((int)a);
 
 		note_large_offset("pwritev", a, d);
+		long written;
+
 		if (host_memory_file_is(host_fd))
 			return memory_file_vector(host_fd, (uint64_t)b, (int)c, d, 1, 1);
-		return host_fd < 0 ? result_of(-EBADF) :
-			guest_writev(host_fd, (uint64_t)b, (int)c, d, 1);
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		written = guest_writev(host_fd, (uint64_t)b, (int)c, d, 1);
+		sd_note_descriptor(host_fd, SD_WRITE, written);
+		return written;
 	}
 	case SYS_readv:
 	{
 		int host_fd = host_descriptor((int)a);
 
+		long got;
+
 		if (host_memory_file_is(host_fd))
 			return memory_file_vector(host_fd, (uint64_t)b, (int)c, 0, 0, 0);
-		return host_fd < 0 ? result_of(-EBADF) :
-			guest_readv(host_fd, (uint64_t)b, (int)c, 0, 0);
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		got = guest_readv(host_fd, (uint64_t)b, (int)c, 0, 0);
+		sd_note_descriptor(host_fd, SD_READ, got);
+		return got;
 	}
 	case SYS_preadv:
 	{
 		int host_fd = host_descriptor((int)a);
 
+		long got;
+
 		if (host_memory_file_is(host_fd))
 			return memory_file_vector(host_fd, (uint64_t)b, (int)c, d, 1, 0);
-		return host_fd < 0 ? result_of(-EBADF) :
-			guest_readv(host_fd, (uint64_t)b, (int)c, d, 1);
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		got = guest_readv(host_fd, (uint64_t)b, (int)c, d, 1);
+		sd_note_descriptor(host_fd, SD_READ, got);
+		return got;
 	}
 
 	case SYS_clock_gettime:
@@ -1596,6 +1884,7 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			return guest_fd;
 		}
 		host_fd = openat((int)a, GUEST(const char *, b), (int)c, (int)d, (int)e);
+		sd_note_path(GUEST(const char *, b), host_fd >= 0 ? host_fd : -1);
 
 		/* newlib's open says -1 and sets errno; the openat above says a
 		 * negated errno itself when the call is one it cannot take. */
@@ -1620,9 +1909,12 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			return result_of(-EBADF);
 		if (host_memory_file_is(host_fd))
 			return host_memory_file_read(host_fd, GUEST(void *, b), (size_t)c);
+		if ((size_t)c >= BULK_TRANSFER)
+			host_sd_defer_to_game();
 		host_sd_lock();
 		got = bounced_read(host_fd, GUEST(void *, b), (size_t)c, 1);
 		host_sd_unlock();
+		sd_note_descriptor(host_fd, SD_READ, got);
 		return result_of(got);
 	}
 	case SYS_close:
@@ -1632,6 +1924,7 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		 * which is what close(3) should say now that 3 means nothing. */
 		if (!guest_descriptor_is_open((int)a))
 			return result_of(-EBADF);
+		sd_note_close(host_descriptor((int)a));
 		guest_descriptor_forget((int)a);
 		return result_of(0);
 	}
@@ -1658,6 +1951,7 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 				note_large_offset("lseek", a, offset);
 			where = result_of(lseek(host_fd, (off_t)offset, (int)e));
 			host_sd_unlock();
+			sd_note_descriptor(host_fd, SD_SEEK, 0);
 		}
 		if (where < 0)
 			return where;
@@ -1668,9 +1962,15 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		int host_fd = host_descriptor((int)a);
 
+		long got;
+
 		if (host_memory_file_is(host_fd))
 			return host_memory_file_pread(host_fd, GUEST(void *, b), (size_t)c, (long long)d);
-		return result_of(host_fd < 0 ? -EBADF : pread(host_fd, GUEST(void *, b), (size_t)c, (off_t)d));
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		got = result_of(pread(host_fd, GUEST(void *, b), (size_t)c, (off_t)d));
+		sd_note_descriptor(host_fd, SD_READ, got);
+		return got;
 	}
 	case SYS_pwrite64:
 	{
@@ -1679,7 +1979,14 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		if (host_memory_file_is(host_fd))
 			return host_memory_file_pwrite(host_fd, GUEST(const void *, b), (size_t)c, (long long)d);
 		note_large_offset("pwrite64", a, d);
-		return result_of(host_fd < 0 ? -EBADF : pwrite(host_fd, GUEST(const void *, b), (size_t)c, (off_t)d));
+		if (host_fd < 0)
+			return result_of(-EBADF);
+		{
+			long written = result_of(pwrite(host_fd, GUEST(const void *, b), (size_t)c, (off_t)d));
+
+			sd_note_descriptor(host_fd, SD_WRITE, written);
+			return written;
+		}
 	}
 	case SYS_readlinkat:
 	{
@@ -1730,6 +2037,9 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		int slot = host_memory_file_path(GUEST(const char *, b));
 		int result = slot >= 0 ? host_memory_file_stat(slot, GUEST(const char *, b), &information) :
 			result_of(fstatat((int)a, GUEST(const char *, b), &information, (int)d));
+
+		if (slot < 0)
+			sd_note_path(GUEST(const char *, b), result == 0 ? -2 : -3);
 
 		if (result == 0)
 		{
@@ -1922,7 +2232,12 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			return host_memory_file_stat(host_memory_file_path(GUEST(const char *, b)), GUEST(const char *, b),
 				&information);
 		}
-		return result_of(faccessat((int)a, GUEST(const char *, b), (int)c, 0));
+		{
+			long result = result_of(faccessat((int)a, GUEST(const char *, b), (int)c, 0));
+
+			sd_note_path(GUEST(const char *, b), result == 0 ? -2 : -3);
+			return result;
+		}
 	case SYS_unlinkat:
 		if (host_memory_file_path(GUEST(const char *, b)) >= 0)
 			return host_memory_file_unlink(host_memory_file_path(GUEST(const char *, b)), GUEST(const char *, b));

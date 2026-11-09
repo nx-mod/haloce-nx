@@ -1255,13 +1255,22 @@ boolean mod_bitmaps_contain(
 }
 
 #ifdef HALO_SWITCH
-/* the host's cache's key of a bitmap's pixels: the file as the mods were last found, and where in it */
+/* the host's cache's key of a bitmap's pixels: the file as the mods were last found, and where in it. port: the
+main menu's (the ui map's) with HOST_TEXTURE_CACHE_KEEP (bit 62): kept by the host when a map goes
+(host_texture_cache_clear), so a return to the menus has them, where it read every one from the card again. (Bit 63
+is a Custom Edition map's texture's: custom_edition_cache.c.) */
+#define HOST_TEXTURE_CACHE_KEEP (1ull << 62)
 static unsigned long long mod_bitmaps_cache_key(
 	struct mod_bitmap const *made,
 	unsigned long offset)
 {
-	return ((unsigned long long)(port_mods_scans() & 0x7FFF) << 48) ^
+	unsigned long long key = ((unsigned long long)(port_mods_scans() & 0x3FFF) << 48) ^
 		((unsigned long long)(made->file & 0xFFFF) << 32) ^ (unsigned long long)offset;
+
+	/* (the map's name as the mods are given it: its scenario's, stripped) */
+	if (!csstrcasecmp(mods_map_name(), "ui"))
+		key |= HOST_TEXTURE_CACHE_KEEP;
+	return key;
 }
 
 /* Every bitmap the map plays from a mod's file, read into the host's cache

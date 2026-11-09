@@ -138,6 +138,9 @@ struct port_mod_file
 	/* lower case, backslashes */
 	char *key;
 	char *path;
+	/* (port_mods_file_stamp's answer, kept for the scan that found it) */
+	int stamped;
+	unsigned long size, stamp[2];
 };
 
 /* ---------- globals */
@@ -939,6 +942,7 @@ static long file_add(long mod, const char *key, const char *path)
 		return -1;
 	}
 	file->mod = mod;
+	file->stamped = 0;
 	file->hash = key_hash(key);
 	file->next = port_mods.buckets[file->hash % FILE_BUCKET_COUNT];
 	port_mods.buckets[file->hash % FILE_BUCKET_COUNT] = port_mods.file_count;
@@ -1144,18 +1148,30 @@ long port_mods_file_find(const char *tag_file, const char *map_name)
 	return found;
 }
 
+/* (port: looked at once a scan, and kept: the files are found again only
+when the mods are (port_mods_scan), and each map's load asked again for
+every file it played, a stat each, some 150 on the Switch's card at every
+return to the menus) */
 int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2])
 {
 	struct posix_file_information information;
+	struct port_mod_file *entry;
 
-	if (file < 0 || file >= port_mods.file_count || posix_stat(port_mods.files[file].path, &information) != 0 ||
-		information.size_high)
-	{
+	if (file < 0 || file >= port_mods.file_count)
 		return 0;
+	entry = &port_mods.files[file];
+	if (!entry->stamped)
+	{
+		if (posix_stat(entry->path, &information) != 0 || information.size_high)
+			return 0;
+		entry->size = information.size_low;
+		entry->stamp[0] = information.modification_seconds;
+		entry->stamp[1] = information.modification_nanoseconds;
+		entry->stamped = 1;
 	}
-	*size = information.size_low;
-	stamp[0] = information.modification_seconds;
-	stamp[1] = information.modification_nanoseconds;
+	*size = entry->size;
+	stamp[0] = entry->stamp[0];
+	stamp[1] = entry->stamp[1];
 	return 1;
 }
 

@@ -52,6 +52,14 @@ int host_errno(void);
 /* the end of a frame on the thread that presents: the datagrams it held to
 send together are sent (host_net.c) */
 void host_net_frame_end(void);
+/* the guest's use of the card, logged with the profiler on (host_syscall.c) */
+void host_sd_activity_start(int on);
+void host_sd_activity_frame(void);
+/* whether the calling thread is the game's (host_thread.c) */
+int host_on_game_thread(void);
+/* (another thread's bulk transfer, before it takes the card's lock: the game
+thread's use of the card first, host_main.c) */
+void host_sd_defer_to_game(void);
 void host_sd_lock(void);
 void host_sd_unlock(void);
 /* write the SD card's journal, so a file closed by the guest is still there

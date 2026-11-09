@@ -85,6 +85,8 @@ their handlers open opens.
 #include "main/main.h"
 #include "networking/network_game_manager.h"
 #include "saved games/player_profile.h"
+#include "saved games/playlist_profile.h" /* port: playlist_profile_changes */
+#include "saved games/saved_game_files.h" /* port: saved_game_files_index_generation */
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
@@ -1760,7 +1762,36 @@ static struct
 	folder's row, focused on the way out */
 	char category[CUSTOM_EDITION_MAP_CATEGORY_LENGTH];
 	short category_entry;
+	/* port: the maps awaited from their scan's thread
+	(custom_edition_maps_scan_start): the levels are listed meanwhile, the
+	maps' kinds say LOADING */
+	boolean maps_waiting;
 } level_list;
+
+/* port: a list whose rows are awaited (a scan or a read on its thread): its
+first row LOADING, the others hidden, and nothing beside it */
+static void list_loading_show(struct widget_instance *list, char const *right_item)
+{
+	struct widget_instance *description = list->parameters.list.extended_description;
+	struct widget_instance *child;
+	short index = 0;
+
+	for (child = list->child; child; child = child->next, index++)
+	{
+		if (index < 1)
+			continue;
+		if (strncmp(child->name, "list_item_", 10))
+			break;
+		child->visible = index == 1;
+		if (index == 1)
+			text_set(named(child, "list_item_text", 0), L"LOADING...");
+		visible_set(named(child, "list_item_arrows", 0), FALSE);
+		visible_set(named(child, "scroll_up_button", 0), FALSE);
+		visible_set(named(child, "scroll_down_button", 0), FALSE);
+	}
+	if (description)
+		visible_set(named(description, right_item, 0), FALSE);
+}
 
 /* a map list's entries of a kind (the Map screen's difficulties aside).
 `category` is the custom folder open, or empty at the top. */
@@ -1815,7 +1846,14 @@ static boolean level_list_initialize(struct widget_instance *list, short control
 	if (!campaign.levels[level].available)
 		level = 0;
 	campaign.shown_level = level;
-	level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
+	/* (port: the maps' scan on its thread; the levels need none, and are
+	listed meanwhile: level_list_update) */
+	custom_edition_maps_scan_start();
+	level_list.maps_waiting = !custom_edition_maps_scan_poll();
+	if (!level_list.maps_waiting)
+		level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
+	else
+		level_list.map_count = 0;
 	map_browse_forget();
 	map_import.importing = FALSE;
 	level_list.kind = MAP_KIND_SINGLEPLAYER;
@@ -1886,6 +1924,21 @@ static void level_list_update(struct widget_instance *list)
 		level_list.kind = kind;
 		level_list.category[0] = 0;
 		level_list.first = level_list.chosen = 0;
+	}
+	/* (port: the maps awaited from their scan; their kinds say LOADING
+	meanwhile, the levels' does not need them) */
+	if (level_list.maps_waiting && custom_edition_maps_scan_poll())
+	{
+		short last_used;
+
+		level_list.maps_waiting = FALSE;
+		level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
+		map_browse_forget();
+	}
+	if (level_list.maps_waiting && kind != MAP_KIND_SINGLEPLAYER)
+	{
+		list_loading_show(list, "replay_level_right_item");
+		return;
 	}
 	if (map_import_look())
 	{
@@ -4639,6 +4692,12 @@ static struct
 	short gametype_count;
 	/* (those of the bank the list's spinner shows: STANDARD, OPENCE, CUSTOM) */
 	short bank[MAXIMUM_GAMETYPES], bank_count, bank_shown;
+	/* (each gametype's bank, worked out once the list is read: the bank of
+	a saved one is its files on the card, read) */
+	short gametype_banks[MAXIMUM_GAMETYPES];
+	/* the list's gametypes awaited from their thread (gametype_load): the
+	list says LOADING meanwhile */
+	boolean gametypes_waiting;
 	short gametype_first, gametype_chosen;
 	/* the server settings */
 	wchar_t game_name[16];
@@ -4872,6 +4931,9 @@ static struct
 	folder's row, focused on the way out */
 	char category[CUSTOM_EDITION_MAP_CATEGORY_LENGTH];
 	short category_entry;
+	/* port: the maps awaited from their scan's thread
+	(custom_edition_maps_scan_start): the list says LOADING meanwhile */
+	boolean maps_waiting;
 } map_list;
 
 #define SERVER_SETUP_NAME "pc\\main_menu\\multiplayer_type_select\\server_settings\\server_settings_screen"
@@ -4954,14 +5016,13 @@ static boolean map_folder_back(struct widget_instance *list)
 }
 
 /* "mp level list initialize": on the multiplayer map used last */
-static boolean map_list_initialize(struct widget_instance *list)
+/* (the maps found: the list on the map used last) */
+static void map_list_open(struct widget_instance *list)
 {
 	char const *const *names;
 	short last_used = 0;
 
-	map_list.hosting = global_network_game_server_get() != NULL && !network_game_is_splitscreen_local();
-	/* (the maps folders looked for again as the list opens) */
-	custom_edition_maps_look_again();
+	map_list.maps_waiting = FALSE;
 	map_browse_forget();
 	map_import.importing = FALSE;
 	map_list.map_count = ui_widget_port_multiplayer_maps(&names, &last_used);
@@ -4993,6 +5054,23 @@ static boolean map_list_initialize(struct widget_instance *list)
 	}
 	map_kind_set(list, map_list.kind);
 	map_step_open(list, MAP_STEP_MAPS, last_used);
+}
+
+static boolean map_list_initialize(struct widget_instance *list)
+{
+	map_list.hosting = global_network_game_server_get() != NULL && !network_game_is_splitscreen_local();
+	map_import.importing = FALSE;
+	/* (port: the maps folders looked at, and scanned again if their names
+	have changed, on the scan's thread, the list saying LOADING till it is
+	done: custom_edition_maps.c, map_list_update) */
+	custom_edition_maps_scan_start();
+	if (custom_edition_maps_scan_poll())
+		map_list_open(list);
+	else
+	{
+		map_list.maps_waiting = TRUE;
+		list_loading_show(list, "mp_map_right_item");
+	}
 	return TRUE;
 }
 
@@ -5001,10 +5079,23 @@ them the level or map chosen: its picture, name and words */
 static void map_list_update(struct widget_instance *list)
 {
 	struct widget_instance *description = list->parameters.list.extended_description;
-	short kind = map_kind_shown(list, map_list.hosting, map_list.kind), count, entry;
+	short kind, count, entry;
 	short shown;
 	short display = NONE;
-	boolean custom = kind == MAP_KIND_CUSTOM_SINGLEPLAYER || kind == MAP_KIND_CUSTOM_MULTIPLAYER;
+	boolean custom;
+
+	/* (port: the maps awaited from their scan) */
+	if (map_list.maps_waiting)
+	{
+		if (!custom_edition_maps_scan_poll())
+		{
+			list_loading_show(list, "mp_map_right_item");
+			return;
+		}
+		map_list_open(list);
+	}
+	kind = map_kind_shown(list, map_list.hosting, map_list.kind);
+	custom = kind == MAP_KIND_CUSTOM_SINGLEPLAYER || kind == MAP_KIND_CUSTOM_MULTIPLAYER;
 
 	if (kind != map_list.kind)
 	{
@@ -5068,6 +5159,9 @@ static boolean map_list_choose(struct widget_instance *list, boolean *widget_del
 	boolean custom_campaign;
 	short flat = NONE;
 
+	/* (port: nothing to choose till the maps have come) */
+	if (map_list.maps_waiting)
+		return FALSE;
 	map_list_update(list);
 	chosen = map_list.chosen;
 	custom_campaign = map_list.kind == MAP_KIND_CUSTOM_SINGLEPLAYER;
@@ -5131,7 +5225,7 @@ static boolean map_delete_from(struct widget_instance *widget)
 
 	if ((list = named(screen, "mp_map_select_list_2", 0)) != NULL)
 	{
-		if (map_list.step != MAP_STEP_MAPS)
+		if (map_list.step != MAP_STEP_MAPS || map_list.maps_waiting)
 			return TRUE;
 		map_list_update(list);
 		map_delete_press(list, map_list.kind, map_list.category, &map_list.first, &map_list.chosen,
@@ -5139,6 +5233,8 @@ static boolean map_delete_from(struct widget_instance *widget)
 	}
 	else if ((list = named(screen, "solo_level_select_list", 0)) != NULL)
 	{
+		if (level_list.maps_waiting)
+			return TRUE;
 		level_list_update(list);
 		map_delete_press(list, level_list.kind, level_list.category, &level_list.first, &level_list.chosen,
 			&level_list.category_entry, &level_list.map_count);
@@ -5206,12 +5302,17 @@ gametypes, read once rather than every frame: the settings of the one whose
 rules are shown (a saved gametype's are its file on the card, opened, read
 and its checksum worked out), and the rows' names (each read from the saved
 games' index file, z:\saved\hdmu.map, opened for every name: ten rows of
-them took some 50 ms a frame on the Switch) */
+them took some 50 ms a frame on the Switch), and the rules shown beside
+them (the gametype's variant and options read again: the saved games'
+index file opened some thirty times a second while the list was up) */
 static struct
 {
 	long profile;
 	boolean valid;
 	struct game_variant variant;
+	long rules_profile;
+	boolean rules_valid;
+	wchar_t rules[ROW_TEXT_LENGTH * 2];
 	short name_count;
 	long name_profiles[MAXIMUM_GAMETYPES];
 	wchar_t names[MAXIMUM_GAMETYPES][ROW_TEXT_LENGTH];
@@ -5232,6 +5333,7 @@ static void gametype_shown_forget(void)
 {
 	gametype_shown.profile = NONE;
 	gametype_shown.name_count = 0;
+	gametype_shown.rules_valid = FALSE;
 }
 
 static void gametype_bank_read(short bank)
@@ -5242,7 +5344,7 @@ static void gametype_bank_read(short bank)
 	multiplayer.bank_count = 0;
 	for (index = 0; index < multiplayer.gametype_count; index++)
 	{
-		if (gametype_bank(multiplayer.gametypes[index]) == bank)
+		if (multiplayer.gametype_banks[index] == bank)
 			multiplayer.bank[multiplayer.bank_count++] = index;
 	}
 	multiplayer.gametype_first = 0;
@@ -5285,14 +5387,132 @@ static void gametype_rules_text(long profile_index, wchar_t *text, short size)
 	text[size - 1] = 0;
 }
 
-/* "mp profiles list initialize": on the gametype used last */
-static boolean gametype_list_initialize(struct widget_instance *list)
+/* gametype_rules_text's, kept for the gametype shown until the lists are
+read again (gametype_shown_forget) */
+static void gametype_rules_shown(long profile_index, wchar_t *text, short size)
+{
+	if (!gametype_shown.rules_valid || gametype_shown.rules_profile != profile_index)
+	{
+		gametype_rules_text(profile_index, gametype_shown.rules, NUMBEROF(gametype_shown.rules));
+		gametype_shown.rules_profile = profile_index;
+		gametype_shown.rules_valid = TRUE;
+	}
+	ustrncpy(text, gametype_shown.rules, size - 1);
+	text[size - 1] = 0;
+}
+
+/* port: Create Game's gametypes, read on a thread of their own as the list
+opens, and kept: each gametype's file opened and read (its bank, OpenCE's or
+not, is in it), with a stat of each, and the one used last looked up - some
+seventy calls to the card, each waiting behind the lobby's copy of a map
+into its cache file, held the list's first frame 0.6 s on the Switch. The
+list says LOADING till they come (gametype_list_update); kept, a list opened
+again has them at once, till the saved games' index changes or a gametype
+is saved (their numbers, gametype_load_current). */
+static struct
+{
+	pthread_mutex_t lock;
+	boolean loading, ready;
+	unsigned long index_generation, playlist_changes;
+	short count, last;
+	long gametypes[MAXIMUM_GAMETYPES];
+	short banks[MAXIMUM_GAMETYPES];
+} gametype_load = { PTHREAD_MUTEX_INITIALIZER };
+
+static void *gametype_load_main(void *unused)
+{
+	/* (on the heap: a thread's stack is small) */
+	struct
+	{
+		long gametypes[MAXIMUM_GAMETYPES];
+		short banks[MAXIMUM_GAMETYPES];
+	} *read = malloc(sizeof(*read));
+	unsigned long index_generation = saved_game_files_index_generation();
+	unsigned long playlist_changes = playlist_profile_changes();
+	short count = 0, last = 0, index;
+
+	(void)unused;
+	if (read)
+	{
+		count = ui_widget_port_gametypes(read->gametypes, MAXIMUM_GAMETYPES, &last);
+		/* (each one's file read for its bank, and kept: playlist_block_get,
+		so the rules shown beside the list read nothing from the card) */
+		for (index = 0; index < count; index++)
+			read->banks[index] = gametype_bank(read->gametypes[index]);
+	}
+	pthread_mutex_lock(&gametype_load.lock);
+	if (read)
+	{
+		gametype_load.count = count;
+		gametype_load.last = last;
+		memcpy(gametype_load.gametypes, read->gametypes, sizeof(read->gametypes));
+		memcpy(gametype_load.banks, read->banks, sizeof(read->banks));
+		gametype_load.index_generation = index_generation;
+		gametype_load.playlist_changes = playlist_changes;
+		gametype_load.ready = TRUE;
+	}
+	gametype_load.loading = FALSE;
+	pthread_mutex_unlock(&gametype_load.lock);
+	free(read);
+	return NULL;
+}
+
+/* (with the lock held) whether what was read is what the files say now */
+static boolean gametype_load_current(void)
+{
+	return gametype_load.ready && gametype_load.index_generation == saved_game_files_index_generation() &&
+		gametype_load.playlist_changes == playlist_profile_changes();
+}
+
+/* (with the lock held) the thread started, if it is not running */
+static void gametype_load_start(void)
+{
+	pthread_t thread;
+
+	if (gametype_load.loading)
+		return;
+	gametype_load.loading = TRUE;
+	if (pthread_create(&thread, NULL, gametype_load_main, NULL) == 0)
+		pthread_detach(thread);
+	else
+	{
+		pthread_mutex_unlock(&gametype_load.lock);
+		gametype_load_main(NULL);
+		pthread_mutex_lock(&gametype_load.lock);
+	}
+}
+
+/* the list while its gametypes are read: LOADING in its first row, nothing
+beside it */
+static void gametype_list_loading_show(struct widget_instance *list)
+{
+	struct widget_instance *description = list->parameters.list.extended_description;
+	struct widget_instance *row;
+	short row_index;
+
+	for (row = list->child, row_index = 0; row; row = row->next, row_index++)
+	{
+		if (row_index < 1 || row_index > GAMETYPE_ROWS)
+			continue;
+		row->visible = row_index == 1;
+		if (row_index == 1)
+			text_set(named(row, "list_item_text", 0), L"LOADING...");
+		if (named(row, "list_item_arrows", 0))
+			named(row, "list_item_arrows", 0)->visible = FALSE;
+	}
+	visible_set(named(description, "gametype_right_item", 0), FALSE);
+	visible_set(named(description, "locked_gametype_icon", 0), FALSE);
+}
+
+/* (the gametypes come) the list on the gametype used last, as it opens */
+static void gametype_list_show(struct widget_instance *list, short const *banks, short last)
 {
 	struct widget_instance *spinner = named(list, "list_item_0_chooser_spinner", 0);
-	short last, index;
+	short index;
 
-	multiplayer.gametype_count = ui_widget_port_gametypes(multiplayer.gametypes, MAXIMUM_GAMETYPES, &last);
-	gametype_bank_read(multiplayer.gametype_count ? gametype_bank(multiplayer.gametypes[last]) : GAMETYPE_BANK_STANDARD);
+	for (index = 0; index < multiplayer.gametype_count; index++)
+		multiplayer.gametype_banks[index] = banks[index];
+	gametype_bank_read(multiplayer.gametype_count ? multiplayer.gametype_banks[last] : GAMETYPE_BANK_STANDARD);
 	for (index = 0; index < multiplayer.bank_count; index++)
 	{
 		if (multiplayer.bank[index] == last)
@@ -5303,6 +5523,40 @@ static boolean gametype_list_initialize(struct widget_instance *list)
 	if (spinner)
 		spinner->parameters.list.selected_index = multiplayer.bank_shown;
 	focus_row(list, (short)(1 + multiplayer.gametype_chosen - multiplayer.gametype_first));
+}
+
+/* (with the lock held, and the gametypes current) taken for the list */
+static void gametype_list_take(struct widget_instance *list)
+{
+	short banks[MAXIMUM_GAMETYPES];
+	short last = gametype_load.last;
+
+	multiplayer.gametype_count = gametype_load.count;
+	memcpy(multiplayer.gametypes, gametype_load.gametypes, sizeof(multiplayer.gametypes));
+	memcpy(banks, gametype_load.banks, sizeof(banks));
+	multiplayer.gametypes_waiting = FALSE;
+	pthread_mutex_unlock(&gametype_load.lock);
+	gametype_list_show(list, banks, last);
+	pthread_mutex_lock(&gametype_load.lock);
+}
+
+/* "mp profiles list initialize": on the gametype used last (port: once its
+gametypes have been read, on their thread: gametype_load) */
+static boolean gametype_list_initialize(struct widget_instance *list)
+{
+	pthread_mutex_lock(&gametype_load.lock);
+	if (gametype_load_current() && !gametype_load.loading)
+		gametype_list_take(list);
+	else
+	{
+		multiplayer.gametypes_waiting = TRUE;
+		multiplayer.gametype_count = 0;
+		multiplayer.bank_count = 0;
+		gametype_load_start();
+	}
+	pthread_mutex_unlock(&gametype_load.lock);
+	if (multiplayer.gametypes_waiting)
+		gametype_list_loading_show(list);
 	return TRUE;
 }
 
@@ -5353,6 +5607,27 @@ static void gametype_list_update(struct widget_instance *list)
 	struct widget_instance *row;
 	struct widget_instance *widget;
 	short row_index = 0, focused = NONE, count;
+
+	/* (port: the gametypes awaited, from their thread: gametype_load) */
+	if (multiplayer.gametypes_waiting)
+	{
+		pthread_mutex_lock(&gametype_load.lock);
+		if (!gametype_load.loading)
+		{
+			if (gametype_load_current())
+				gametype_list_take(list);
+			else
+				gametype_load_start();
+		}
+		pthread_mutex_unlock(&gametype_load.lock);
+		if (multiplayer.gametypes_waiting)
+		{
+			if (spinner)
+				spinner->parameters.list.selected_index = multiplayer.bank_shown;
+			gametype_list_loading_show(list);
+			return;
+		}
+	}
 
 	if (spinner && spinner->parameters.list.selected_index != multiplayer.bank_shown)
 		gametype_bank_read((short)PIN(spinner->parameters.list.selected_index, 0, NUMBER_OF_GAMETYPE_BANKS - 1));
@@ -5409,7 +5684,7 @@ static void gametype_list_update(struct widget_instance *list)
 
 			if ((widget = named(description, "gametype_right_pic", 0)) != NULL)
 				widget->animation.current_frame_index = (short)engine;
-			gametype_rules_text(multiplayer.gametypes[multiplayer.bank[multiplayer.gametype_chosen]], text,
+			gametype_rules_shown(multiplayer.gametypes[multiplayer.bank[multiplayer.gametype_chosen]], text,
 				NUMBEROF(text));
 			text_set(named(description, "gametype_right_data", 0), text);
 		}
@@ -5420,6 +5695,9 @@ static void gametype_list_update(struct widget_instance *list)
 /* "mp profile set for game" */
 static boolean gametype_choose(struct widget_instance *list)
 {
+	/* (port: nothing to choose till the gametypes have come) */
+	if (multiplayer.gametypes_waiting)
+		return TRUE;
 	gametype_list_update(list);
 	gametype_setup_end();
 	if (multiplayer.gametype_chosen >= multiplayer.bank_count)
@@ -10376,7 +10654,7 @@ static void gametype_edit_list_update(struct widget_instance *list)
 
 			if ((widget = named(description, "gametype_right_pic", 0)) != NULL)
 				widget->animation.current_frame_index = (short)engine;
-			gametype_rules_text(profile_index, text, NUMBEROF(text));
+			gametype_rules_shown(profile_index, text, NUMBEROF(text));
 			text_set(named(description, "gametype_right_data", 0), text);
 		}
 	}

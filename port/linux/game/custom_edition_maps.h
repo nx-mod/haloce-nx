@@ -52,6 +52,19 @@ which shows maps added since). */
 void custom_edition_maps_look_again(
 	void);
 
+/* As custom_edition_maps_look_again, but only if the names in the maps
+folders have changed since the last scan (a map list opening). */
+void custom_edition_maps_look_again_if_changed(
+	void);
+
+/* (port) The maps folders looked at, and scanned again if their names have
+changed, on a thread of the scan's own (a map list's opening); and whether
+it is done, its maps then taken for the lists (TRUE also if none runs). */
+void custom_edition_maps_scan_start(
+	void);
+boolean custom_edition_maps_scan_poll(
+	void);
+
 /* the display index of an entry in the latest level list */
 short custom_edition_maps_level_display_index(
 	short level_index);

@@ -1291,6 +1291,10 @@ static boolean cache_file_read_header_from_dvd(
 	char path[256];
 	HANDLE file;
 
+	/* port: a cache file slot no map has used yet names none: maps\.map,
+	which is never there, asked of the card six times at every start */
+	if (!map_name || !map_name[0])
+		return FALSE;
 	cache_file_get_map_path(map_name, path);
 	file = CreateFileA(
 		path,

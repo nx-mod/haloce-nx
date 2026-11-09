@@ -354,12 +354,20 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 		}
 		else if (drive != 'd')
 		{
+			/* (port: looked for once a run, not at every path: each file
+			of the saved games' took a stat of its drive's folder, 199 of
+			z's in five seconds of the Switch's start) */
+			static unsigned char drive_ready[26];
 			struct posix_file_information information;
 
 			snprintf(resolved, sizeof(resolved), "%s/%c", platform_save_root(), drive);
 			/* every Xbox drive always exists; create its directory on first use */
-			if (posix_stat(resolved, &information) != 0)
-				posix_make_directory(resolved);
+			if (drive >= 'a' && drive <= 'z' && !drive_ready[drive - 'a'])
+			{
+				if (posix_stat(resolved, &information) != 0)
+					posix_make_directory(resolved);
+				drive_ready[drive - 'a'] = 1;
+			}
 		}
 		cursor += 2;
 	}
@@ -401,7 +409,10 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 
 			snprintf(on_disk, sizeof(on_disk), "%s", component);
 			snprintf(exact, sizeof(exact), "%s/%s", resolved, component);
-			if (posix_stat(exact, &information) != 0 && FILE_SYSTEM_HAS_CASE)
+			/* (port: where case does not count, the stat answered nothing
+			and cost one for each folder of every path: 1,355 of them in
+			five seconds of the Switch's start) */
+			if (FILE_SYSTEM_HAS_CASE && posix_stat(exact, &information) != 0)
 				posix_find_entry_case_insensitive(resolved, component, on_disk, sizeof(on_disk));
 		}
 		length = strlen(resolved);

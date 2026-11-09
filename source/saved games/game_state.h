@@ -57,6 +57,10 @@ void game_state_port_restamp_revert_time(
 	void);
 void game_state_save_to_persistent_storage(
 	void);
+/* port: the menus' check of the saved game made ahead, on a thread, while
+the main menu is up (game_state_xbox.c) */
+void game_state_persistent_storage_check_ahead(
+	void);
 boolean game_state_test_persistent_storage(
 	char *map_name,
 	short *difficulty,

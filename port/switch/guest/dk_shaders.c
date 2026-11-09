@@ -89,6 +89,8 @@ int d3d8_dk_vertex_program_by_id(unsigned long id, uint64_t *program_hash, const
 #define DK_KEY_FOLDER "z:\\shader_keys"
 #define DK_KEY_CONSOLE_FILE "z:\\shader_keys\\console.dkk"
 #define DK_KEY_SHARED_FILE "z:\\shader_keys\\keys.dkk"
+/* (how much of a key file stdio reads, or writes, at a time) */
+#define KEY_FILE_BUFFER (256 * 1024)
 /* d3d8_gl.c's program records (phase 4 read them for the dump) */
 #define DK_RECORDS_PATH "z:\\shader_programs.bin"
 
@@ -401,12 +403,16 @@ static unsigned long keys_read_file(const char *xbox_path)
 	struct dk_key_record record;
 	unsigned long added = 0;
 
+	char *buffer;
+
 	platform_translate_path(xbox_path, path, sizeof(path));
 	if ((file = fopen(path, "rb")) == NULL)
 		return 0;
 	/* (read a quarter of a megabyte at a time, not stdio's kilobyte: each read is a call to the host and the card's,
-	and the shared keys are 4.5 MB) */
-	setvbuf(file, NULL, _IOFBF, 256 * 1024);
+	and the shared keys are 4.5 MB. port: in a buffer of its own: musl's setvbuf keeps its kilobyte when given none,
+	and both files were read a kilobyte at a time, some 3,000 reads at every start) */
+	if ((buffer = malloc(KEY_FILE_BUFFER)) != NULL)
+		setvbuf(file, buffer, _IOFBF, KEY_FILE_BUFFER);
 	if (fread(header, sizeof(header), 1, file) == 1 && header[0] == DK_KEY_MAGIC && header[1] == DK_KEY_FORMAT &&
 		header[2] == sizeof(record))
 	{
@@ -445,12 +451,14 @@ static unsigned long keys_read_file(const char *xbox_path)
 		if (!strcmp(xbox_path, DK_KEY_CONSOLE_FILE))
 		{
 			fclose(file);
+			free(buffer);
 			if (remove(path) == 0)
 				platform_log("shader keys: %s removed, to be written again", path);
 			return 0;
 		}
 	}
 	fclose(file);
+	free(buffer);
 	return added;
 }
 
@@ -821,6 +829,7 @@ static void console_compact(void)
 	/* which keys of the store a record of this file has given already (each
 	record's key is in the store: keys_read_file put it there) */
 	unsigned char *seen = calloc(key_count ? key_count : 1, 1);
+	char *in_buffer = NULL, *out_buffer = NULL;
 	int pass;
 
 	if (!seen)
@@ -835,7 +844,11 @@ static void console_compact(void)
 	{
 		if ((file = fopen(path, "rb")) == NULL)
 			break;
-		setvbuf(file, NULL, _IOFBF, 256 * 1024);
+		/* (port: buffers of their own, as keys_read_file's) */
+		if (!in_buffer)
+			in_buffer = malloc(KEY_FILE_BUFFER);
+		if (in_buffer)
+			setvbuf(file, in_buffer, _IOFBF, KEY_FILE_BUFFER);
 		if (fread(header, sizeof(header), 1, file) != 1 || header[0] != DK_KEY_MAGIC || header[1] != DK_KEY_FORMAT ||
 			header[2] != sizeof(record))
 		{
@@ -851,7 +864,8 @@ static void console_compact(void)
 				fclose(file);
 				break;
 			}
-			setvbuf(out, NULL, _IOFBF, 256 * 1024);
+			if ((out_buffer = malloc(KEY_FILE_BUFFER)) != NULL)
+				setvbuf(out, out_buffer, _IOFBF, KEY_FILE_BUFFER);
 			fwrite(header, sizeof(header), 1, out);
 		}
 		memset(seen, 0, key_count ? key_count : 1);
@@ -905,6 +919,8 @@ static void console_compact(void)
 		}
 	}
 	free(seen);
+	free(in_buffer);
+	free(out_buffer);
 	pthread_mutex_unlock(&write_lock);
 }
 

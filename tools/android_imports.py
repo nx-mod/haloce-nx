@@ -74,8 +74,10 @@ def main():
         # translation from the guest's descriptor table (host_syscall.c), and
         # those and the two that take a path through its map cache files kept
         # in memory (host_memory_files.c)
+        # (and folder listings, only to be counted for the card's report)
         translated = {"hostposix_fstat", "hostposix_seek", "hostposix_truncate", "hostposix_stat",
-                      "hostposix_set_file_times"} if translate_descriptors else set()
+                      "hostposix_set_file_times", "hostposix_directory_open", "hostposix_directory_next",
+                      "hostposix_find_entry_case_insensitive"} if translate_descriptors else set()
 
         def symbol(n):
             if n in translated:

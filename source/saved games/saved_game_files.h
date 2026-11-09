@@ -50,6 +50,9 @@ void saved_game_files_notify_memory_units_changed(
 	void);
 boolean saved_game_files_take_mutex(
 	void);
+/* port: changes whenever the saved games' index may have changed */
+unsigned long saved_game_files_index_generation(
+	void);
 void saved_game_files_release_mutex(
 	void);
 short saved_game_perform_file_system_checks(
