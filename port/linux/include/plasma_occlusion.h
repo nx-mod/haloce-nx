@@ -2,6 +2,9 @@
 #ifndef PLASMA_OCCLUSION_H
 #define PLASMA_OCCLUSION_H
 void plasma_occlusion_reset(void);
+/* (port: the frame's end) traces on helper threads, collected into their fields */
+void plasma_occlusion_collect(void);
+void plasma_occlusion_frame_begin(void);
 void plasma_occlusion_window(void);
 void plasma_occlusion_submit(long light, long rasterizer_index);
 /* this view's lights are known, and nothing has been drawn */

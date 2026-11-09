@@ -83,7 +83,7 @@ int main(int argc,char **argv)
  for(i=0;i<32;i++)CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.4f,"same closest eligible blocker");
  CHECK(reads==3 && model_builds==1 && cluster_reads==2,"one metadata/model read per batch and cluster");
  CHECK(!stock_calls,"ordinary case uses batch");plasma_collision_end();
- CHECK(!batch.active && !batch.point && !batch.structure && !batch.objects[0].model_state,"borrowed state cleared");
+ CHECK(!game_batch.active && !game_batch.point && !game_batch.structure && !game_batch.objects[0].model_state,"borrowed state cleared");
  setup();root_count=1;object_depth[0]=-1;objects[0].object.first_child_object_index=1;object_depth[1]=.25f;
  plasma_collision_begin(flags,&p,NONE);
  for(i=0;i<32;i++)CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.25f,"missing parent model still visits child");
@@ -107,13 +107,13 @@ int main(int argc,char **argv)
  setup();bad_leaf=1;plasma_collision_begin(flags,&p,NONE);CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f && stock_calls==1,"malformed leaf uses diagnostic stock path");plasma_collision_end();
  setup();root_count=600;plasma_collision_begin(flags,&p,NONE);
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls,"past the object limit, those it has still block, with no stock queries");
- CHECK(batch.count==512 && !batch.failed,"and the batch stays a batch");
+ CHECK(game_batch.count==512 && !game_batch.failed,"and the batch stays a batch");
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls,"for its other rays too");plasma_collision_end();
  setup();root_count=600;object_depth[599]=.1f;structure_depth=.65f;plasma_collision_begin(flags,&p,NONE);
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.65f && !stock_calls,"the BSP's hit stands for every ray, and an object past the limit is not tested");plasma_collision_end();
  setup();root_count=1;objects[0].object.first_child_object_index=1;object_depth[1]=.1f;
- plasma_collision_begin(flags,&p,NONE);batch.count=512;batch.lookup[0]=1;batch.objects[0].index=0;batch.objects[0].eligible=1;batch.objects[0].child=1;batch.objects[0].next=NONE;batch.objects[0].sphere_distance=-1;
- CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls && !batch.failed,"a child past the limit is left out, not a failure");plasma_collision_end();
+ plasma_collision_begin(flags,&p,NONE);game_batch.count=512;game_batch.lookup[0]=1;game_batch.objects[0].index=0;game_batch.objects[0].eligible=1;game_batch.objects[0].child=1;game_batch.objects[0].next=NONE;game_batch.objects[0].sphere_distance=-1;
+ CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.8f && !stock_calls && !game_batch.failed,"a child past the limit is left out, not a failure");plasma_collision_end();
  setup();plasma_collision_begin(0,&p,NONE);CHECK(plasma_collision_depth(0,&p,&v,NONE)==.123f,"unsupported flags use stock");plasma_collision_end();
  CHECK(plasma_collision_depth(flags,&p,&v,NONE)==.123f,"inactive query uses stock");
  setup();plasma_collision_begin(flags,&p,NONE);
@@ -160,9 +160,9 @@ int main(int argc,char **argv)
   objects[0].object.bounding_sphere_radius=(i%7)*.25f;
   v.i=(i%11-5)*.5f;v.j=(i%13-6)*.25f;v.k=(i%17-8)*.125f;
   plasma_collision_begin(flags,&p,NONE);
-  cached=trace_object(0);
-  batch.vector_squared=v.i*v.i+v.j*v.j+v.k*v.k;
-  CHECK(trace_sphere(cached,&v)==fast_vector_intersects_sphere(&p,&v,&cached->center,cached->radius),"cached sphere matches engine predicate");
+  cached=trace_object(&game_batch,0);
+  game_batch.vector_squared=v.i*v.i+v.j*v.j+v.k*v.k;
+  CHECK(trace_sphere(&game_batch,cached,&v)==fast_vector_intersects_sphere(&p,&v,&cached->center,cached->radius),"cached sphere matches engine predicate");
   plasma_collision_end();
  }
  {
@@ -181,7 +181,7 @@ int main(int argc,char **argv)
   plasma_collision_end();
   plasma_collision_depths(flags,&p,vectors,PLASMA_COLLISION_RAYS,NONE,actual);
   CHECK(!memcmp(expected,actual,PLASMA_COLLISION_RAYS*sizeof(real)),"model-major collection preserves every sphere/child/cluster gate");
-  CHECK(!batch.active&&!batch.point&&!batch.objects[0].pending[0],"model-major completion clears borrowed state and pending rays");
+  CHECK(!game_batch.active&&!game_batch.point&&!game_batch.objects[0].pending[0],"model-major completion clears borrowed state and pending rays");
   bad_leaf=1;plasma_collision_depths(flags,&p,vectors,PLASMA_COLLISION_RAYS,NONE,actual);
   for(i=0;i<PLASMA_COLLISION_RAYS;i++)CHECK(actual[i]==.123f,"invalid geometry falls back for the complete batch");
   setup();debug_collision_skip_vectors=1;
@@ -190,6 +190,45 @@ int main(int argc,char **argv)
   setup();vectors[PLASMA_COLLISION_RAYS]=vectors[0];
   plasma_collision_depths(flags,&p,vectors,PLASMA_COLLISION_RAYS+1,NONE,actual);
   for(i=0;i<=PLASMA_COLLISION_RAYS;i++)CHECK(actual[i]==.123f,"oversized batch uses scalar stock queries without bitset writes");
+ }
+ {
+  /* port: a light's rays shared between batches an octant at a time, as the
+     helper threads and the game thread take them (task_work): the depths one
+     batch gives, whoever takes which octants, and a failed share's octants
+     traced by the stock query */
+  static struct trace_batch shares[3];
+  static struct trace_task task;
+  static real_vector3d rays[PLASMA_COLLISION_RAYS];
+  static real one[PLASMA_COLLISION_RAYS];
+  int n=0,face,x,y,round;
+  for(face=0;face<6;face++)for(y=0;y<8;y++)for(x=0;x<8;x++)
+  {
+   real c[3];int axis=face/2;
+   c[axis]=(face&1)?1.f:-1.f;c[(axis+1)%3]=2.f*(x+.5f)/8-1;c[(axis+2)%3]=2.f*(y+.5f)/8-1;
+   rays[n].i=c[0];rays[n].j=c[1];rays[n].k=c[2];n++;
+  }
+  setup();p.x=p.y=p.z=0;root_count=3;
+  objects[0].object.bounding_sphere_center.x=2;objects[0].object.bounding_sphere_radius=1.2f;object_depth[0]=.4f;
+  objects[1].object.bounding_sphere_center.y=-2;objects[1].object.bounding_sphere_radius=1.5f;object_depth[1]=.6f;
+  objects[2].object.bounding_sphere_center.z=1.5f;objects[2].object.bounding_sphere_radius=1.f;object_depth[2]=.3f;
+  plasma_collision_depths(flags,&p,rays,n,NONE,one);
+  for(i=1;i<n&&one[i]==one[0];i++);
+  CHECK(i<n,"(the rays see different objects)");
+  for(round=0;round<3;round++)
+  {
+   task_fill(&task,flags,&p,rays,n,NONE);task.next=0;
+   task_work(&task,&shares[round],1+round);task_work(&task,&shares[(round+1)%3],2);
+   while(task_work(&task,&shares[(round+2)%3],TRACE_CHUNKS));
+   CHECK(task.finished==TRACE_CHUNKS&&!task.failed,"every octant traced, once");
+   task_stock(&task);
+   CHECK(!memcmp(one,task.depths,n*sizeof(real)),"shared octants give one batch's depths");
+  }
+  bad_leaf=1;stock_calls=0;
+  task_fill(&task,flags,&p,rays,n,NONE);task.next=0;
+  task_work(&task,&shares[0],3);while(task_work(&task,&shares[1],TRACE_CHUNKS));
+  CHECK(task.finished==TRACE_CHUNKS&&task.failed==(1<<TRACE_CHUNKS)-1&&!stock_calls,"a failed share stops, and the stock query is the game thread's");
+  task_stock(&task);
+  for(i=0;i<n;i++)CHECK(task.depths[i]==.123f,"a failed share's octants are traced by the stock query");
  }
  return 0;
 }

@@ -137,6 +137,32 @@ enum { PLASMA_COLLISION_RAYS = 1536 };
 static void plasma_collision_depths(unsigned long flags, const real_point3d *p,
  const real_vector3d *vectors, int count, long ignore, float *depths)
 { int i;for(i=0;i<count;i++)depths[i]=plasma_collision_depth(flags,p,&vectors[i],ignore); }
+/* the helper threads, as the game thread sees them: the rays handed over, and
+   traced when they are collected */
+static struct { int used; unsigned long flags; real_point3d p; real_vector3d v[PLASMA_COLLISION_RAYS]; int count; long ignore; } handed;
+static int helper_starts;
+static int plasma_collision_depths_start(unsigned long flags, const real_point3d *p, const real_vector3d *v, int count, long ignore)
+{
+	if (handed.used)
+		return -1;
+	handed.used = 1;
+	handed.flags = flags;
+	handed.p = *p;
+	memcpy(handed.v, v, count * sizeof(*v));
+	handed.count = count;
+	handed.ignore = ignore;
+	helper_starts++;
+	return 0;
+}
+static int plasma_collision_depths_finish(int handle, float *depths)
+{
+	if (handle || !handed.used)
+		return 0;
+	handed.used = 0;
+	plasma_collision_depths(handed.flags, &handed.p, handed.v, handed.count, handed.ignore, depths);
+	return 1;
+}
+#define MAXIMUM_LIGHTS_PER_WINDOW 32
 static int D3DDevice_CreateVolumeTexture(int w, int h, int d, int levels, int usage, int format, int pool,
 										 IDirect3DVolumeTexture8 **t)
 {
@@ -167,6 +193,9 @@ static void D3DResource_Release(D3DResource *p)
 static int moving_384;
 int lighting_moving_lights_384(void) { return moving_384; }
 int lighting_fast_occlusion_math(void) { return 0; }
+static int background_rays;
+int lighting_parallel_light_rays(void) { return 0; }
+int lighting_background_light_rays(void) { return background_rays; }
 static int log_lines;
 void platform_log(char const *format, ...) { log_lines++; }
 void plasma_occlusion_window(void);
@@ -174,6 +203,12 @@ int plasma_lighting_vehicle_occlusion(long i) { return vehicle_on && i == 500; }
 int authored_emitter_lighting_enabled(void) { return vehicle_on; }
 int covenant_emitter_lighting_vehicle_occlusion(long light) { return vehicle_on && light == 502; }
 #include "under_test.inc"
+/* (the tests change a light between asks of one view, which the game never
+   does: each ask here is the view's first; the memo has its own check) */
+#define plasma_occlusion_texture(index, specular) \
+	(memset(view_textures, 0, sizeof(view_textures)), plasma_occlusion_texture(index, specular))
+#define plasma_occlusion_model_texture(slot, transform) \
+	(memset(view_textures, 0, sizeof(view_textures)), plasma_occlusion_model_texture(slot, transform))
 /* Match the renderer's linear filtering between vertical texel centres. */
 static float filtered_height(IDirect3DVolumeTexture8 *texture, float height, float radius)
 {
@@ -969,6 +1004,47 @@ int main(int argc, char **argv)
 		CHECK(queries>n&&f->trace_extent==3,"an extent change at the cadence traces");
 	}
 	plasma_occlusion_reset();
+	/* port: Background Light Rays. A moved light with depths is traced on the
+	   helpers: this frame draws from the depths it has, the frame's end collects
+	   the new ones, and the next frame is built from those. */
+	background_rays=1;blocked=1;door=0;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+	plasma_occlusion_frame_begin();
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(f&&!f->tracing&&!helper_starts&&f->valid,"a new light has no depths to go on with: traced at once");
+	time_ms+=12;rasterizer_lights.lights[0].position.x=.05f;n=queries;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(f&&f->tracing&&helper_starts==1&&queries==n&&f->trace_center[0]==0&&f->center[0]==.05f,
+		"moved: handed to the helpers, and drawn this frame from the depths it had, where it is");
+	time_ms+=12;rasterizer_lights.lights[0].position.x=.1f;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(helper_starts==1&&queries==n&&f->tracing,"another view before the frame's end: neither handed over again nor traced");
+	rasterizer_lights.lights[0].position.x=.05f;
+	plasma_occlusion_collect();
+	CHECK(!f->tracing&&queries>n&&f->trace_center[0]==.05f&&f->fresh&&!handed.used,"collected at the frame's end: the new depths, where they were traced");
+	{
+		real built[OCC_COUNT];
+		time_ms+=1;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+		CHECK(!f->fresh&&f->trace_center[0]==.05f,"the next frame is built from them");
+		reconstruct_visibility(f->depths,f->extent,f->trace_resolution,0,0,0,built);
+		CHECK(!memcmp(built,f->targets,sizeof(built)),"as a trace where it stands would build it");
+	}
+	background_rays=0;
+	plasma_occlusion_reset();
+	/* port: a view's later asks for a light's texture are its first's answer,
+	   with no field search or texture work; the next view asks again */
+	{
+		void *first,*again;int u;
+		blocked=1;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+		plasma_occlusion_window();plasma_occlusion_submit(950,0);
+		first=(plasma_occlusion_texture)(0,0);n=queries;u=uploads;
+		again=(plasma_occlusion_texture)(0,0);
+		CHECK(first&&again==first&&queries==n&&uploads==u,"the view's second ask: its first answer");
+		CHECK(view_textures[0][1].window==current_window+1,"kept for this view");
+		time_ms+=1;plasma_occlusion_window();plasma_occlusion_submit(950,0);
+		CHECK(view_texture_find(0,1,NULL)==NULL,"and not the next");
+		CHECK((plasma_occlusion_texture)(0,0)==first,"which asks again");
+		plasma_occlusion_reset();
+	}
 	/* lights on a weapon in a hand: the small grid, and still occluded; a light
 	   whose status changes between traces reads its depths at the grid they had */
 	blocked=1;door=0;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;

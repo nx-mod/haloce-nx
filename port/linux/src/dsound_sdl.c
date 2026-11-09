@@ -102,6 +102,7 @@ struct voice_packet
 {
 	XMEDIAPACKET packet;
 	short *samples;           /* interleaved, source channel count */
+	unsigned long samples_size; /* its bytes, as allocated */
 	unsigned long frames;
 	BOOL finished;            /* played out by the mixer, not yet completed */
 };
@@ -160,6 +161,13 @@ struct sdl_stream
 	float doppler;
 
 	struct voice_packet packets[MAXIMUM_STREAM_PACKETS];
+	/* port: the decoded samples of packets completed, kept for the next ones:
+	a malloc and free each (each a page mapping and unmapping in the C library,
+	at their size) cost the game thread more than decoding them. Under the
+	mixer's lock. */
+	short *spares[MAXIMUM_STREAM_PACKETS];
+	unsigned long spare_sizes[MAXIMUM_STREAM_PACKETS];
+	unsigned long spare_count;
 	unsigned long packet_head;
 	unsigned long packet_count;
 	/* the next frame to take from the first packet not finished */
@@ -333,12 +341,25 @@ first, and the nibbles code the 63 after it: the 64th nibble only pads the
 block (the maps' sounds always have 0 there), and decoding it in place of the
 header's sample put a wrong sample in every 64, a buzz at 344 Hz in 22 kHz
 sounds. */
+/* port: a buffer of at least bytes, buffer itself if it has room (*buffer_size
+its size, in and out) */
+static short *samples_buffer(short *buffer, unsigned long *buffer_size, unsigned long bytes)
+{
+	if (buffer && *buffer_size >= bytes)
+		return buffer;
+	free(buffer);
+	buffer = malloc(bytes);
+	*buffer_size = buffer ? bytes : 0;
+	return buffer;
+}
+
 static short *decode_adpcm(const unsigned char *source, unsigned long size, unsigned long channels,
-	unsigned long *frame_count)
+	unsigned long *frame_count, short *buffer, unsigned long *buffer_size)
 {
 	unsigned long block_bytes = XBOX_ADPCM_BLOCK_BYTES * channels;
 	unsigned long blocks = size / block_bytes;
-	short *samples = malloc((blocks ? blocks : 1) * XBOX_ADPCM_BLOCK_SAMPLES * channels * sizeof(short));
+	short *samples = samples_buffer(buffer, buffer_size,
+		(blocks ? blocks : 1) * XBOX_ADPCM_BLOCK_SAMPLES * channels * sizeof(short));
 	unsigned long block, channel;
 
 	if (!samples)
@@ -380,10 +401,10 @@ static short *decode_adpcm(const unsigned char *source, unsigned long size, unsi
 }
 
 static short *decode_pcm(const unsigned char *source, unsigned long size, unsigned long channels,
-	unsigned long *frame_count)
+	unsigned long *frame_count, short *buffer, unsigned long *buffer_size)
 {
 	unsigned long frames = size / (2 * channels);
-	short *samples = malloc((frames ? frames : 1) * channels * sizeof(short));
+	short *samples = samples_buffer(buffer, buffer_size, (frames ? frames : 1) * channels * sizeof(short));
 
 	if (samples)
 		memcpy(samples, source, frames * channels * sizeof(short));
@@ -1922,10 +1943,25 @@ void dsound_sdl_output_device_check(void)
 
 /* ---------- completion */
 
-static void packet_release(struct voice_packet *entry)
+/* (with the lock held) */
+static void samples_spare(struct sdl_stream *stream, short *samples, unsigned long size)
 {
-	free(entry->samples);
+	if (!samples)
+		return;
+	if (stream->spare_count == MAXIMUM_STREAM_PACKETS)
+	{
+		free(samples);
+		return;
+	}
+	stream->spares[stream->spare_count] = samples;
+	stream->spare_sizes[stream->spare_count++] = size;
+}
+
+static void packet_release(struct sdl_stream *stream, struct voice_packet *entry)
+{
+	samples_spare(stream, entry->samples, entry->samples_size);
 	entry->samples = NULL;
+	entry->samples_size = 0;
 }
 
 /* completes the head packet; called with the lock held, which the game's
@@ -1939,7 +1975,7 @@ static void stream_complete_head(struct sdl_stream *stream, DWORD status, DWORD 
 	mixer may take the next while the lock is let go below) */
 	if (!entry->finished)
 		stream->cursor = 0;
-	packet_release(entry);
+	packet_release(stream, entry);
 	entry->finished = FALSE;
 	stream->packet_head = (stream->packet_head + 1) % MAXIMUM_STREAM_PACKETS;
 	stream->packet_count--;
@@ -2029,6 +2065,8 @@ static ULONG STDMETHODCALLTYPE stream_release(IDirectSoundStream *object)
 		}
 	}
 	pthread_mutex_unlock(&mixer_lock);
+	while (stream->spare_count)
+		free(stream->spares[--stream->spare_count]);
 	free(stream);
 	return 0;
 }
@@ -2057,26 +2095,35 @@ static HRESULT STDMETHODCALLTYPE stream_process(IDirectSoundStream *object, LPCX
 {
 	struct sdl_stream *stream = stream_from_interface(object);
 	struct voice_packet *entry;
-	unsigned long frames = 0;
-	short *samples;
+	unsigned long frames = 0, samples_size = 0;
+	short *samples = NULL;
 
 	(void)output;
 	if (!input)
 		return E_INVALIDARG;
+	/* a completed packet's buffer, if there is one */
+	mixer_lock_take();
+	if (stream->spare_count)
+	{
+		samples = stream->spares[--stream->spare_count];
+		samples_size = stream->spare_sizes[stream->spare_count];
+	}
+	pthread_mutex_unlock(&mixer_lock);
 	/* decode outside the lock */
 	samples = stream->adpcm ?
-		decode_adpcm(input->pvBuffer, input->dwMaxSize, stream->channels, &frames) :
-		decode_pcm(input->pvBuffer, input->dwMaxSize, stream->channels, &frames);
+		decode_adpcm(input->pvBuffer, input->dwMaxSize, stream->channels, &frames, samples, &samples_size) :
+		decode_pcm(input->pvBuffer, input->dwMaxSize, stream->channels, &frames, samples, &samples_size);
 	mixer_lock_take();
 	if (stream->packet_count == MAXIMUM_STREAM_PACKETS)
 	{
+		samples_spare(stream, samples, samples_size);
 		pthread_mutex_unlock(&mixer_lock);
-		free(samples);
 		return E_OUTOFMEMORY;
 	}
 	entry = &stream->packets[(stream->packet_head + stream->packet_count) % MAXIMUM_STREAM_PACKETS];
 	entry->packet = *input;
 	entry->samples = samples;
+	entry->samples_size = samples_size;
 	entry->frames = samples ? frames : 0;
 	entry->finished = FALSE;
 	if (input->pdwStatus)

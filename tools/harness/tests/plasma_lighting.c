@@ -68,6 +68,8 @@ void plasma_occlusion_note_promoted(int promoted, int shrunk) { noted_promoted =
 void plasma_occlusion_model_slot(long i, short s) {}
 static int visibility_resets;
 void plasma_occlusion_reset(void) { visibility_resets++; }
+void plasma_occlusion_collect(void) {}
+void plasma_occlusion_frame_begin(void) {}
 void muzzle_lighting_frame_end(void) {}
 void muzzle_lighting_window_begin(void) {}
 void muzzle_lighting_submitted(long l,long r) {}

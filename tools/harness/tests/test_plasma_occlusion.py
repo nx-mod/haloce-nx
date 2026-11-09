@@ -486,3 +486,16 @@ def test_weapon_slot_negative_controls(before, after, expected):
     assert code.count(before) == 1, before
     status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'stats')
     assert status == CHECK_FAILED and expected in output, output
+
+
+@pytest.mark.parametrize('before,after', [
+    # collected depths never rebuilt from: the next frame only fades
+    ('		field->fresh = TRUE;\n', ''),
+    # a light in flight traced again before it is collected
+    ('	if (field->tracing)\n		retrace = FALSE;\n	else if (!retrace && due)', '	if (!retrace && due)'),
+])
+def test_background_rays_negative_control(before, after):
+    code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)
+    assert before in code
+    status, output = run(build('plasma_occlusion', (('under_test.inc', code.replace(before, after)),)), 'visibility')
+    assert status == CHECK_FAILED, output

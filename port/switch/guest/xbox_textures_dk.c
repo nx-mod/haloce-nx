@@ -1321,7 +1321,7 @@ int halo_field_texture_write(const void *texture, const unsigned long *pixels, f
 	if (!entry)
 		return 0;
 	bytes = decoded_bytes(&entry->description, 0);
-	decoded = malloc(bytes);
+	decoded = dk_stream_buffer(bytes);
 	if (!decoded)
 		return 0;
 	memcpy(decoded, pixels, bytes);
@@ -1388,12 +1388,21 @@ uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	unsigned long watch_serial = memory_watch_serial();
 
+	/* port: a watched page written since (a file read into the contiguous
+	memory: a sound streaming in, every few frames) is no reason to search the
+	bucket again, if it wasn't one of this texture's: its own pages are asked,
+	as the search would (a field's, never re-read, need not be). The search's
+	cache misses were most of this function's time. */
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&
-		recent_textures[recent].watch_serial == watch_serial &&
-		recent_textures[recent].drop_serial == texture_drop_serial)
+		recent_textures[recent].drop_serial == texture_drop_serial &&
+		(recent_textures[recent].watch_serial == watch_serial || recent_textures[recent].entry->field ||
+		(recent_textures[recent].entry->generation &&
+		memory_watch_generation(recent_textures[recent].entry->address, recent_textures[recent].entry->size) <=
+		recent_textures[recent].entry->generation)))
 	{
 		entry = recent_textures[recent].entry;
+		recent_textures[recent].watch_serial = watch_serial;
 		entry->last_used_frame = texture_frame;
 		return texture_entry_result(entry, kind, description);
 	}

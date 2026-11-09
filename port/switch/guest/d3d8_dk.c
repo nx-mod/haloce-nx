@@ -760,15 +760,63 @@ finished its submission, which the host ran before */
 #define HANDED_FREE_LIMIT 2048
 
 static void *pending_frees[PENDING_FREE_LIMIT];
+static unsigned long pending_free_sizes[PENDING_FREE_LIMIT];
 static unsigned long pending_free_count;
 static unsigned long pending_free_bytes;
 
 static struct
 {
 	void *buffer;
+	unsigned long size;
 	unsigned long submission;
 } handed_frees[HANDED_FREE_LIMIT];
 static unsigned long handed_free_first, handed_free_count;
+
+/* port: buffers the GPU is done with, kept for the next of their size instead
+of freed. The dynamic lighting's fields upload a few 16 KB volumes every frame,
+and each malloc and free of one was the C library mapping and unmapping pages
+(a system call each way): dk_stream_buffer hands one of these back. */
+#define RECYCLED_LIMIT 32
+#define RECYCLED_LARGEST (64 * 1024)
+static struct
+{
+	void *buffer;
+	unsigned long size;
+} recycled[RECYCLED_LIMIT];
+static unsigned long recycled_count;
+
+static void buffer_retire(void *buffer, unsigned long size)
+{
+	if (size && size <= RECYCLED_LARGEST)
+	{
+		/* (full: the one kept longest makes room, so a size no longer asked
+		for, a loading screen's texture, doesn't hold its place) */
+		if (recycled_count == RECYCLED_LIMIT)
+		{
+			free(recycled[0].buffer);
+			recycled[0] = recycled[--recycled_count];
+		}
+		recycled[recycled_count].buffer = buffer;
+		recycled[recycled_count++].size = size;
+		return;
+	}
+	free(buffer);
+}
+
+void *dk_stream_buffer(unsigned long size)
+{
+	unsigned long index;
+
+	for (index = recycled_count; index-- > 0;)
+		if (recycled[index].size == size)
+		{
+			void *buffer = recycled[index].buffer;
+
+			recycled[index] = recycled[--recycled_count];
+			return buffer;
+		}
+	return malloc(size);
+}
 
 /* the handed-over buffers whose submissions the GPU has finished, freed;
 with wait, all of them, waiting as long as it takes */
@@ -785,7 +833,7 @@ static void handed_frees_release(BOOL wait)
 			usleep(200);
 			continue;
 		}
-		free(handed_frees[index].buffer);
+		buffer_retire(handed_frees[index].buffer, handed_frees[index].size);
 		handed_free_first = (handed_free_first + 1) % HANDED_FREE_LIMIT;
 		handed_free_count--;
 	}
@@ -802,8 +850,11 @@ static void stream_flush(void)
 	{
 		if (handed_free_count == HANDED_FREE_LIMIT)
 			handed_frees_release(TRUE);
+		--pending_free_count;
 		handed_frees[(handed_free_first + handed_free_count) % HANDED_FREE_LIMIT].buffer =
-			pending_frees[--pending_free_count];
+			pending_frees[pending_free_count];
+		handed_frees[(handed_free_first + handed_free_count) % HANDED_FREE_LIMIT].size =
+			pending_free_sizes[pending_free_count];
 		handed_frees[(handed_free_first + handed_free_count) % HANDED_FREE_LIMIT].submission = submission;
 		handed_free_count++;
 	}
@@ -834,6 +885,7 @@ void *dk_stream_command(uint32_t type, unsigned long size)
 
 void dk_stream_free_after_handover(void *buffer, unsigned long size)
 {
+	pending_free_sizes[pending_free_count] = size;
 	pending_frees[pending_free_count++] = buffer;
 	pending_free_bytes += size;
 	if (pending_free_count == PENDING_FREE_LIMIT || pending_free_bytes >= PENDING_FREE_BYTES)

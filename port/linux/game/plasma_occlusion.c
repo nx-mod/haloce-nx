@@ -51,6 +51,17 @@ static struct occlusion_field
 	int trace_resolution; /* the ray grid its depths were traced with */
 	int settled; /* still, and its last fade changed nothing: nothing to do until that changes */
 	unsigned long traced_window; /* the view plan_traces traced it for */
+	/* port: a trace on the helper threads (Background Light Rays), collected at
+	   the frame's end (plasma_occlusion_collect) with what it was traced for */
+	int tracing, trace_handle;
+	struct
+	{
+		long identity;
+		real center[3], extent;
+		int resolution;
+		unsigned long scene_revision, now;
+	} pending;
+	int fresh; /* depths collected since its last update: its next rebuilds from them */
 	unsigned long waits_window; /* the view it sits out, so that another light has the slot */
 	int too_far; /* this view: it could not be traced, and has moved too far from its depths */
 	unsigned long consumed; /* the view a draw last asked for it */
@@ -232,16 +243,18 @@ static real sample_history_rows(const real *rows, int x, int y, struct sample_ax
 
 /* One depth ray per cubemap texel serves every radial cell on that ray.
    Interpolate visibility comparisons, never distances across a doorway. */
-static void trace_depths(real const extent, real_point3d const *from, long ignore, int vehicles, int resolution, real depths[6][OCC_SIZE * OCC_SIZE])
+static unsigned long trace_flags(int vehicles)
 {
-	real_vector3d vectors[PLASMA_COLLISION_RAYS];
-	real hits[PLASMA_COLLISION_RAYS];
-	int face, x, y, axis, count = 0;
 	unsigned long flags =
 		FLAG(_collision_test_structure_bit) | FLAG(_collision_test_front_facing_surfaces_bit) |
 		FLAG(_collision_test_back_facing_surfaces_bit) | FLAG(_collision_test_objects_bit) |
 		FLAG(_collision_test_objects_scenery_bit) | FLAG(_collision_test_objects_machines_bit);
 	if (vehicles) flags |= FLAG(_collision_test_objects_vehicles_bit);
+	return flags;
+}
+static int trace_vectors(real const extent, int resolution, real_vector3d vectors[PLASMA_COLLISION_RAYS])
+{
+	int face, x, y, axis, count = 0;
 	for (face = 0; face < 6; face++)
 		for (y = 0; y < resolution; y++)
 			for (x = 0; x < resolution; x++)
@@ -257,12 +270,30 @@ static void trace_depths(real const extent, real_point3d const *from, long ignor
 				ray.k = component[2];
 				vectors[count++] = ray;
 			}
-	plasma_collision_depths(flags, from, vectors, count, ignore, hits);
-	count = 0;
+	return count;
+}
+static void trace_layout(real const hits[PLASMA_COLLISION_RAYS], int resolution, real depths[6][OCC_SIZE * OCC_SIZE])
+{
+	int face, x, y, count = 0;
 	for (face = 0; face < 6; face++)
 		for (y = 0; y < resolution; y++)
 			for (x = 0; x < resolution; x++)
 				depths[face][y * OCC_SIZE + x] = hits[count++];
+}
+/* port: (Parallel Light Rays) a full or moving grid shared with the helper
+   threads; a held weapon's 96 rays are too few to be worth it */
+enum { OCC_PARALLEL_RAYS = OCC_MOVING_RESOLUTION * OCC_MOVING_RESOLUTION * 6 };
+static void trace_depths(real const extent, real_point3d const *from, long ignore, int vehicles, int resolution, real depths[6][OCC_SIZE * OCC_SIZE])
+{
+	real_vector3d vectors[PLASMA_COLLISION_RAYS];
+	real hits[PLASMA_COLLISION_RAYS];
+	unsigned long flags = trace_flags(vehicles);
+	int count = trace_vectors(extent, resolution, vectors), handle = -1;
+	if (count >= OCC_PARALLEL_RAYS && lighting_parallel_light_rays())
+		handle = plasma_collision_depths_start(flags, from, vectors, count, ignore);
+	if (handle < 0 || !plasma_collision_depths_finish(handle, hits))
+		plasma_collision_depths(flags, from, vectors, count, ignore, hits);
+	trace_layout(hits, resolution, depths);
 }
 /* port: the extent changed before the next trace is due. A depth is a fraction
    of its ray, whose length follows the extent, so the same hit is at another
@@ -608,8 +639,43 @@ static real field_extent(long rasterizer_index)
 	real specular = plasma_occlusion_specular_scale(rasterizer_index);
 	return rasterizer_lights.lights[rasterizer_index].radius * MAX(1.0f, specular);
 }
-static void trace_field(struct occlusion_field *field, struct rasterizer_light_submit_parameters *light, real extent,
-	int resolution, int vehicles, unsigned long scene_revision, unsigned long now)
+/* port: between plasma_occlusion_frame_begin and the collect at the frame's end:
+   a frame drawn any other way (a screenshot's) traces as it goes */
+static int background_open;
+void plasma_occlusion_frame_begin(void)
+{
+	background_open = TRUE;
+}
+/* port: (Background Light Rays) a field with depths to go on with is traced on
+   the helpers while the frame draws, and goes on with those until the frame's
+   end (plasma_occlusion_collect); FALSE then, as it is not traced yet. */
+static int trace_field_background(struct occlusion_field *field, struct rasterizer_light_submit_parameters *light,
+	real extent, int resolution, int vehicles, unsigned long scene_revision, unsigned long now)
+{
+	real_vector3d vectors[PLASMA_COLLISION_RAYS];
+	int count, handle;
+	if (!background_open || !field->valid || field->tracing || !lighting_background_light_rays())
+		return FALSE;
+	count = trace_vectors(extent, resolution, vectors);
+	handle = plasma_collision_depths_start(trace_flags(vehicles), &light->position, vectors, count,
+		covenant_emitter_lighting_occlusion_ignore(field->identity));
+	if (handle < 0)
+		return FALSE;
+	field->tracing = TRUE;
+	field->trace_handle = handle;
+	field->pending.identity = field->identity;
+	field->pending.center[0] = light->position.x;
+	field->pending.center[1] = light->position.y;
+	field->pending.center[2] = light->position.z;
+	field->pending.extent = extent;
+	field->pending.resolution = resolution;
+	field->pending.scene_revision = scene_revision;
+	field->pending.now = now;
+	return TRUE;
+}
+/* TRUE if traced now; FALSE if on the helpers, background allowing */
+static int trace_field(struct occlusion_field *field, struct rasterizer_light_submit_parameters *light, real extent,
+	int resolution, int vehicles, unsigned long scene_revision, unsigned long now, int background)
 {
 	if (!field->valid)
 		stats.trace_new++;
@@ -621,10 +687,12 @@ static void trace_field(struct occlusion_field *field, struct rasterizer_light_s
 	else
 		stats.trace_scene++;
 	stats.rays += resolution * resolution * 6;
-	trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
-		vehicles, resolution, field->depths);
 	view_budget.rays += resolution * resolution * 6;
 	view_budget.traces++;
+	if (background && trace_field_background(field, light, extent, resolution, vehicles, scene_revision, now))
+		return FALSE;
+	trace_depths(extent, &light->position, covenant_emitter_lighting_occlusion_ignore(field->identity),
+		vehicles, resolution, field->depths);
 	field->trace_resolution = resolution;
 	field->scene_revision = scene_revision;
 	field->traced = now;
@@ -632,6 +700,7 @@ static void trace_field(struct occlusion_field *field, struct rasterizer_light_s
 	field->trace_center[0] = light->position.x;
 	field->trace_center[1] = light->position.y;
 	field->trace_center[2] = light->position.z;
+	return TRUE;
 }
 /* port: the scene a trace is made in. Only a light traced where it stands has
    its scene compared again (field_at_rest, and update_field's check when the
@@ -697,7 +766,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 				}
 			continue;
 		}
-		if (current_window - field->consumed > OCC_UNREAD_VIEWS || count == OCC_LIGHTS)
+		if (current_window - field->consumed > OCC_UNREAD_VIEWS || count == OCC_LIGHTS || field->tracing)
 			continue;
 		if (!field->settled)
 		{
@@ -764,7 +833,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 			continue;
 		started = budget_clock();
 		trace_field(order[i], light, extent, resolution, vehicles,
-			trace_scene_revision(order[i], light, extent, vehicles), now);
+			trace_scene_revision(order[i], light, extent, vehicles), now, TRUE);
 		order[i]->traced_window = current_window;
 		budget_charge(started);
 	}
@@ -793,7 +862,9 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	trace_dy = light->position.y - field->trace_center[1];
 	trace_dz = light->position.z - field->trace_center[2];
 	vehicles = field_vehicles(field->identity);
-	retraced = field->traced_window == current_window;
+	/* (plan_traces traced it this view; or the helpers did, collected since) */
+	retraced = (field->traced_window == current_window && !field->tracing) || field->fresh;
+	field->fresh = FALSE;
 	resolution = field_trace_resolution(field, rasterizer_index);
 	/* Cache collision depths briefly, but project and fade at every rendered pose.
 	   Exact stationary poses can retain depths while all collision inputs are
@@ -804,8 +875,11 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	retrace = !field->valid || trace_dx * trace_dx + trace_dy * trace_dy + trace_dz * trace_dz > extent * extent * 0.015625f;
 	/* port: the scene is only looked at when it can decide: the cadence is due,
 	   and nothing else already asks for a trace. A moved light or a changed
-	   extent traces at the cadence; between traces the extent only rescales. */
-	if (!retrace && due)
+	   extent traces at the cadence; between traces the extent only rescales.
+	   (On the helpers: until the frame's end, the depths it has.) */
+	if (field->tracing)
+		retrace = FALSE;
+	else if (!retrace && due)
 	{
 		if (moved || field->trace_extent != extent)
 			retrace = TRUE;
@@ -835,16 +909,20 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	field->too_far = FALSE;
 	if (retrace && !revision_known)
 		scene_revision = trace_scene_revision(field, light, extent, vehicles);
+	if (retrace)
+	{
+		if (trace_field(field, light, extent, resolution, vehicles, scene_revision, now, TRUE))
+		{
+			retraced = TRUE;
+			trace_dx = trace_dy = trace_dz = 0;
+		}
+		else
+			retrace = FALSE; /* on the helpers: this view, the depths it has */
+	}
 	if (!retrace && field->trace_extent != extent)
 	{
 		rescale_depths(field->depths, field->trace_extent, extent);
 		field->trace_extent = extent;
-	}
-	if (retrace)
-	{
-		trace_field(field, light, extent, resolution, vehicles, scene_revision, now);
-		retraced = TRUE;
-		trace_dx = trace_dy = trace_dz = 0;
 	}
 	memcpy(previous, field->visibility, sizeof(previous));
 	stationary = field->valid && field->extent == extent &&
@@ -1216,9 +1294,39 @@ static void *field_texture(struct occlusion_field *field, int pass, long rasteri
 		return texture;
 	}
 }
+/* port: the traces on the helpers (Background Light Rays), waited for and put
+   in their fields: at the end of every frame, before the next tick moves
+   anything they read. A field given to another light since keeps nothing. */
+void plasma_occlusion_collect(void)
+{
+	int i;
+	background_open = FALSE;
+	for (i = 0; i < OCC_LIGHTS; i++)
+	{
+		struct occlusion_field *field = &fields[i];
+		real hits[PLASMA_COLLISION_RAYS];
+		if (!field->tracing)
+			continue;
+		field->tracing = FALSE;
+		if (!plasma_collision_depths_finish(field->trace_handle, hits) ||
+			!field->valid || field->identity != field->pending.identity)
+			continue;
+		trace_layout(hits, field->pending.resolution, field->depths);
+		field->trace_resolution = field->pending.resolution;
+		field->scene_revision = field->pending.scene_revision;
+		field->traced = field->pending.now;
+		field->trace_extent = field->pending.extent;
+		field->trace_center[0] = field->pending.center[0];
+		field->trace_center[1] = field->pending.center[1];
+		field->trace_center[2] = field->pending.center[2];
+		field->fresh = TRUE;
+		field->settled = FALSE;
+	}
+}
 void plasma_occlusion_reset(void)
 {
 	int i, j;
+	plasma_occlusion_collect();
 	ammo_counter_falloff_dispose();
 	/* The disabled frame-end path may request reset repeatedly. Clear the
 	   bounded upload/visibility storage only after it has actually been used. */
@@ -1335,6 +1443,38 @@ void plasma_occlusion_prepare_view(void)
 					field_texture(field, pass, rasterizer_index);
 		}
 }
+/* port: a draw's texture for a light, kept for the rest of the view. Every model
+drawn asks for its two lights' fields, and every receiver for the world's, and
+after the view's first ask the answer can't change: the field was updated for
+this view (field_update_for's early return), and its textures built. The asks
+were the field search, the directional profiles, and the texture checks, each
+time. Only found textures are kept; window + 1, so a cleared slot keeps none. */
+static struct
+{
+	unsigned long window;
+	void *texture;
+	float transform[4];
+} view_textures[MAXIMUM_LIGHTS_PER_WINDOW][3];
+static void *view_texture_find(long rasterizer_index, int pass, float transform[4])
+{
+	if (rasterizer_index < 0 || rasterizer_index >= MAXIMUM_LIGHTS_PER_WINDOW ||
+		view_textures[rasterizer_index][pass].window != current_window + 1)
+		return NULL;
+	if (transform)
+		memcpy(transform, view_textures[rasterizer_index][pass].transform, sizeof(view_textures[0][0].transform));
+	return view_textures[rasterizer_index][pass].texture;
+}
+static void *view_texture_keep(long rasterizer_index, int pass, void *texture, float const transform[4])
+{
+	if (texture && rasterizer_index >= 0 && rasterizer_index < MAXIMUM_LIGHTS_PER_WINDOW)
+	{
+		view_textures[rasterizer_index][pass].window = current_window + 1;
+		view_textures[rasterizer_index][pass].texture = texture;
+		if (transform)
+			memcpy(view_textures[rasterizer_index][pass].transform, transform, sizeof(view_textures[0][0].transform));
+	}
+	return texture;
+}
 void plasma_occlusion_model_slot(long rasterizer_index, short slot)
 {
 	if (slot >= 0 && slot < 2)
@@ -1342,28 +1482,34 @@ void plasma_occlusion_model_slot(long rasterizer_index, short slot)
 }
 void *plasma_occlusion_texture(long rasterizer_index, int specular)
 {
-	struct occlusion_field *field = field_for(rasterizer_index);
-	void *texture;
+	struct occlusion_field *field;
+	void *texture = view_texture_find(rasterizer_index, specular ? 2 : 1, NULL);
+	if (texture)
+		return texture;
+	field = field_for(rasterizer_index);
 	if (field)
 		field->passes_used |= 1 << (specular ? 2 : 1);
 	texture = field_texture(field, specular ? 2 : 1, rasterizer_index);
-	return texture ? texture : ammo_counter_falloff_texture(rasterizer_index, specular ? 2 : 1, NULL);
+	return view_texture_keep(rasterizer_index, specular ? 2 : 1,
+		texture ? texture : ammo_counter_falloff_texture(rasterizer_index, specular ? 2 : 1, NULL), NULL);
 }
 void *plasma_occlusion_model_texture(int slot, float transform[4])
 {
 	struct occlusion_field *field;
+	void *texture;
 	if (slot < 0 || slot >= 2)
 		return NULL;
+	if ((texture = view_texture_find(model_slots[slot], 0, transform)) != NULL)
+		return texture;
 	field = field_for(model_slots[slot]);
 	if (!field)
-		return ammo_counter_falloff_texture(model_slots[slot], 0, transform);
+		return view_texture_keep(model_slots[slot], 0, ammo_counter_falloff_texture(model_slots[slot], 0, transform), transform);
 	field->passes_used |= 1 << 0;
 	transform[0] = field->center[0];
 	transform[1] = field->center[1];
 	transform[2] = field->center[2];
 	transform[3] = 0.5f / field->extent;
-	{
-		void *texture = field_texture(field, 0, model_slots[slot]);
-		return texture ? texture : ammo_counter_falloff_texture(model_slots[slot], 0, transform);
-	}
+	texture = field_texture(field, 0, model_slots[slot]);
+	return view_texture_keep(model_slots[slot], 0,
+		texture ? texture : ammo_counter_falloff_texture(model_slots[slot], 0, transform), transform);
 }

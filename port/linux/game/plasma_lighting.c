@@ -198,10 +198,19 @@ float plasma_lighting_radius(long light_index, long object_index, float radius)
 	return radius;
 }
 
+/* port: a frame is drawn between this and plasma_lighting_frame_end, which
+   collects any occlusion traces it left to the helper threads */
+void plasma_lighting_frame_begin(void)
+{
+	plasma_occlusion_frame_begin();
+}
+
 void plasma_lighting_frame_end(void)
 {
 	int index;
 
+	/* port: the helpers' traces, before anything they read can move */
+	plasma_occlusion_collect();
 	shield_glow_frame_end();
 	muzzle_lighting_frame_end();
 	covenant_emitter_lighting_frame_end();

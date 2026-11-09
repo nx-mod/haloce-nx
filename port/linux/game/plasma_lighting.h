@@ -10,6 +10,7 @@ void plasma_lighting_rank(void);
 float plasma_lighting_radius(long light_index, long object_index, float radius);
 int light_port_attachment_radius(long light_index, long object_index, float *radius, int restore);
 int plasma_lighting_vehicle_occlusion(long light_index);
+void plasma_lighting_frame_begin(void);
 void plasma_lighting_frame_end(void);
 void plasma_lighting_reset(void);
 void plasma_lighting_window_begin(void);

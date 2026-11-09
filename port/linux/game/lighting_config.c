@@ -181,6 +181,22 @@ int lighting_fast_occlusion_math(void)
 	return fast_occlusion_math;
 }
 
+/* port: the overlay's Parallel Light Rays: a light's occlusion rays shared out
+   between the game thread and helper threads (plasma_collision.c), the same
+   depths either way; and Background Light Rays: a light that has depths to go
+   on with traced by the helpers while the frame draws, collected at its end, so
+   its new depths are drawn a frame later. For this run, never saved. */
+static int parallel_light_rays = 1;
+static int background_light_rays;
+int lighting_parallel_light_rays(void)
+{
+	return parallel_light_rays;
+}
+int lighting_background_light_rays(void)
+{
+	return background_light_rays;
+}
+
 /* the overlay's comparison of caps on promoted lights: for this run, not saved */
 static int promoted_cap;
 int lighting_promoted_cap(void)
@@ -208,6 +224,16 @@ int lighting_force_off(const char *name, int forced)
 	if (!strcmp(name, "debug.fast_occlusion_math"))
 	{
 		fast_occlusion_math = forced != 0;
+		return 1;
+	}
+	if (!strcmp(name, "debug.parallel_light_rays"))
+	{
+		parallel_light_rays = forced != 0;
+		return 1;
+	}
+	if (!strcmp(name, "debug.background_light_rays"))
+	{
+		background_light_rays = forced != 0;
 		return 1;
 	}
 	for (i = 0; i < sizeof(promoted_caps) / sizeof(promoted_caps[0]); i++)
@@ -242,6 +268,10 @@ int lighting_forced_off(const char *name)
 		return moving_lights_384;
 	if (!strcmp(name, "debug.fast_occlusion_math"))
 		return fast_occlusion_math;
+	if (!strcmp(name, "debug.parallel_light_rays"))
+		return parallel_light_rays;
+	if (!strcmp(name, "debug.background_light_rays"))
+		return background_light_rays;
 	for (i = 0; i < sizeof(promoted_caps) / sizeof(promoted_caps[0]); i++)
 		if (!strcmp(name, promoted_caps[i].name))
 			return promoted_cap == promoted_caps[i].cap;

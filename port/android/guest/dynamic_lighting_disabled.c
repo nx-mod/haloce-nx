@@ -19,6 +19,7 @@
 void plasma_lighting_prepare(long light, long object, long definition) {}
 float plasma_lighting_radius(long light, long object, float radius) { return radius; }
 int plasma_lighting_vehicle_occlusion(long light) { return FALSE; }
+void plasma_lighting_frame_begin(void) {}
 void plasma_lighting_frame_end(void) {}
 void plasma_lighting_reset(void) {}
 void plasma_lighting_window_begin(void) {}
@@ -104,5 +105,7 @@ int lighting_force_off(const char *name, int forced) { return 0; }
 int lighting_forced_off(const char *name) { return 0; }
 int lighting_moving_lights_384(void) { return 0; }
 int lighting_fast_occlusion_math(void) { return 0; }
+int lighting_parallel_light_rays(void) { return 0; }
+int lighting_background_light_rays(void) { return 0; }
 int lighting_promoted_cap(void) { return 0; }
 void plasma_lighting_rank(void) {}

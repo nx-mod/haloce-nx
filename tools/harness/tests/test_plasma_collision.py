@@ -7,7 +7,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 from harness import build,read,run,CHECK_FAILED,function,structure
 
 def code():
-    return ('enum { COLLISION_VECTOR_CACHE_NODES = 512 };\n' +
+    return ('#define PLASMA_COLLISION_NO_THREADS 1\nenum { COLLISION_VECTOR_CACHE_NODES = 512 };\n' +
             structure(read('source/physics/collision_bsp.h'),'collision_bsp_vector_cache') + '\n' +
             function(read('source/math/real_math.c'), 'fast_vector_intersects_sphere') + '\n' +
             re.sub(r'^#include.*$','',read('port/linux/game/plasma_collision.c'),flags=re.M))
@@ -17,12 +17,25 @@ def test_depth_batch():
     assert status==0,output
 
 def test_past_the_object_limit_negative_control():
-    broken=code().replace('if (batch.count == TRACE_OBJECTS) return NULL;','if (batch.count == TRACE_OBJECTS) { batch.failed = 1; return NULL; }')
+    broken=code().replace('if (batch->count == TRACE_OBJECTS) return NULL;','if (batch->count == TRACE_OBJECTS) { batch->failed = 1; return NULL; }')
     status,output=run(build('plasma_collision',(('under_test.inc',broken),)),'batch')
     assert status==CHECK_FAILED and 'no stock queries' in output,output
 
+@pytest.mark.parametrize('before,after', [
+    # the rays out of octant order: some traced twice, some never
+    ('counts[chunk] = task->starts[chunk];', 'counts[chunk] = 0;'),
+    # a failed share's octants not recorded: never traced again
+    ('mine |= 1 << chunk;', 'mine |= 0;'),
+])
+def test_shared_octants_negative_control(before, after):
+    source=code()
+    assert before in source
+    status,output=run(build('plasma_collision',(('under_test.inc',source.replace(before,after)),)),'batch')
+    assert status==CHECK_FAILED,output
+
+
 def test_child_gating_regression():
-    broken=code().replace('object->eligible && trace_sphere(object, vector)', 'object->eligible')
+    broken=code().replace('object->eligible && trace_sphere(batch, object, vector)', 'object->eligible')
     status,output=run(build('plasma_collision',(('under_test.inc',broken),)),'batch')
     assert status==CHECK_FAILED,output
 

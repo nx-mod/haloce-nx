@@ -537,6 +537,7 @@ void render_interpolation_frame_begin(void)
 	interpolation_drawing = TRUE;
 	interpolation_frame++;
 	interpolation_fraction = game_time_get_tick_fraction();
+	plasma_lighting_frame_begin();
 }
 
 void render_interpolation_frame_end(void)

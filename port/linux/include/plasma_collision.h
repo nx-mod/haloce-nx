@@ -11,6 +11,14 @@ float plasma_collision_depth(unsigned long flags, union real_point3d const *poin
 void plasma_collision_end(void);
 void plasma_collision_depths(unsigned long flags, union real_point3d const *point,
 	union real_vector3d const *vectors, int count, long ignore, float *depths);
+/* The same depths, traced by helper threads and the game thread: start hands
+   the rays over (a handle, or -1 with no helpers or no room: depths, then), and
+   finish waits for them, taking a share itself. Between the two the game thread
+   may draw, but nothing may move the world (objects, their models or matrices,
+   the BSP) until finish. */
+int plasma_collision_depths_start(unsigned long flags, union real_point3d const *point,
+	union real_vector3d const *vectors, int count, long ignore);
+int plasma_collision_depths_finish(int handle, float *depths);
 /* Internal model-major phase; all state and borrowed pointers are synchronous. */
 void plasma_collision_model_depths(struct collision_model_instance const *instance,
 	union real_point3d const *point, union real_vector3d const *vectors, int count,
