@@ -255,6 +255,11 @@ BOOL platform_sdl_initialize(void)
 	/* touching the screen must not aim or fire (the mouse drives the
 	controller emulation in xinput_sdl.c) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+	/* AAudio's ordinary path, not its low latency one: on a phone that
+	has it, low latency plays straight to the hardware (MMAP), past the
+	system's mixer, where a screen recorder takes the app's sound, so
+	recordings came out silent */
+	SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "0");
 #endif
 #if defined(__linux__) && !defined(HALO_ANDROID)
 	/* input.playstation_kernel_driver: a PlayStation pad through the
