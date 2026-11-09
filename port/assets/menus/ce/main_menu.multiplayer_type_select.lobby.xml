@@ -329,8 +329,8 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/join4_qtr_ready" width="254" height="164" bitmap="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\4way_profile_border">
 		<on event="created" run="port join4 ready"/>
-		<on event="a" run="port join4 done" back="true"/>
-		<on event="start" run="port join4 done" back="true"/>
+		<on event="a" run="port join4 done"/>
+		<on event="start" run="port join4 done"/>
 		<on event="b" run="port join4 unready" replace="main_menu/multiplayer_type_select/lobby/join4_qtr_select"/>
 		<on event="back"/>
 		<child widget="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\qtr_screen_profile_color_pic_selected"/>
@@ -338,8 +338,8 @@
 		<child widget="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\qtr_screen_profile_selected_name"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/join4_qtr_playing" width="254" height="164" bitmap="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\4way_profile_border">
-		<on event="a" run="port join4 done" back="true"/>
-		<on event="start" run="port join4 done" back="true"/>
+		<on event="a" run="port join4 done"/>
+		<on event="start" run="port join4 done"/>
 		<on event="b"/>
 		<on event="back"/>
 		<child widget="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\qtr_screen_profile_color_pic_selected"/>
@@ -347,5 +347,36 @@
 		<child widget="ui\shell\main_menu\multiplayer_type_select\split_screen\4way_profile_select\qtr_screen_profile_selected_name"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/join4_hint" type="text" width="345" height="24" font="ui\small_ui" color="#FF2896FF" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_screen" width="640" height="480">
+		<on event="created" run="port ingame join open"/>
+		<on event="a" run="port ingame join select" close="current"/>
+		<on event="start" run="port ingame join select" close="current"/>
+		<on event="b" close="current"/>
+		<on event="back" close="current"/>
+		<on event="left" run="port ingame join previous"/>
+		<on event="right" run="port ingame join next"/>
+		<data input="port ingame join update"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_box"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_box" width="226" height="194">
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_box_left" x="0" y="0"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_box_center" x="16" y="0"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_box_right" x="210" y="0"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_title" x="0" y="34"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_name" x="0" y="82"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/ingame_join_hint" x="0" y="168"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_box_left" width="16" height="194" bitmap="pause/joinbox_left">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_box_center" width="194" height="194" bitmap="pause/joinbox_center">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_box_right" width="16" height="194" bitmap="pause/joinbox_right">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_title" type="text" width="226" height="30" font="ui\large_ui" color="#FFFFFFFF" align="center" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_name" type="text" width="226" height="30" font="ui\large_ui" color="#FF2896FF" align="center" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/ingame_join_hint" type="text" width="226" height="24" text="B=CANCEL    A=JOIN" font="ui\small_ui" color="#FF2896FF" align="center" text_y="3" text_flags="no_focus_test">
 	</widget>
 </menus>

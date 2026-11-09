@@ -1881,6 +1881,20 @@ boolean network_game_client_remove_player(
 			of its own goes, which none is; nor has a replay's playback, which
 			plays on as the game's players leave
 			(port/linux/game/network_replay_playback.c) */
+			/* port: a split screen player of this machine who quit, the others
+			staying: their view goes, the others' filling the screen (and
+			their menus close); the unit dies at the quit (game.c) */
+			if (reason != NONE && player->machine_index == client->machine_index &&
+				network_player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
+				VALID_INDEX(player->controller_index, MAXIMUM_NUMBER_OF_LOCAL_PLAYERS) &&
+				local_player_get_player_index(player->controller_index) == player_index)
+			{
+				extern void ui_widgets_port_close_for_controller(short controller_index);
+
+				local_player_set_player_index(player->controller_index, NONE);
+				ui_widgets_port_close_for_controller(player->controller_index);
+				network_event("local player #%d left, the others staying", player->controller_index);
+			}
 			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS && !network_replay_playing() &&
 				(!halo_server_mode() || player->machine_index == client->machine_index))
 			{

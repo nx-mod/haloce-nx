@@ -371,6 +371,7 @@ static char const *const port_function_names[] =
 	"port join4 open", "port join4 back", "port join4 done", "port join4 playing", "port join4 opener",
 	"port join4 select", "port join4 join", "port join4 choosing", "port join4 leave", "port join4 ready",
 	"port join4 unready",
+	"port ingame join open", "port ingame join previous", "port ingame join next", "port ingame join select",
 	"port lobby player list initialize", "port lobby player choose",
 	"port lobby preview add", "port lobby preview leave",
 	/* (the gametype editor's: the Xbox's walk their rows by place, which the
@@ -429,7 +430,7 @@ static char const *const port_game_data_input_names[] =
 	"mp map list update", "gt select list update", "gt edit list update", "load game list update",
 	"direct ip connect update", "network settings update",
 	"port settings help", "color picker update", "3wide player profile list update", "port lobby update",
-	"port lobby preview update", "port join4 update",
+	"port lobby preview update", "port join4 update", "port ingame join update",
 	/* (the gametype editor's: the Xbox's stops the game on the buttons'
 	row; the Xbox's read only player_ui's gametype, not Server Setup's) */
 	"game settings lists text update", "get edit game settings name", "mp edit profile set rule text",
@@ -2117,6 +2118,81 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 		platform_log("menus: the pause menu has SETTINGS%s", host ? " and END GAME" : "");
 }
 
+/* ---------- the in-game join box's button key
+
+The box a controller joining the game in progress opens
+(menu_functions.c's ingame_join, tools/port_settings.py's _ingame_join)
+shows the pause screens' own key (B=CANCEL A=SELECT, the console's own
+letters) in its footer band, in the place of its words, which are left
+for a map whose pause screens have none. */
+
+#define INGAME_JOIN_BOX "pc\\main_menu\\multiplayer_type_select\\lobby\\ingame_join_box"
+#define INGAME_JOIN_HINT "pc\\main_menu\\multiplayer_type_select\\lobby\\ingame_join_hint"
+
+static void ingame_join_key_patch(void)
+{
+	long collection = tag_loaded('Soul', MULTIPLAYER_COLLECTION);
+	long quit_function = ui_function_named("mp game player quit");
+	long box_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, INGAME_JOIN_BOX);
+	long hint_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, INGAME_JOIN_HINT);
+	long key_tag = NONE, screen, child;
+	struct tag_block const *screens;
+	struct ui_widget_definition *box;
+	struct ui_widget_child_reference *children;
+
+	if (collection == NONE || quit_function == NONE || box_tag == NONE || hint_tag == NONE)
+		return;
+	screens = tag_get('Soul', collection);
+	for (screen = 0; screen < screens->count && key_tag == NONE; screen++)
+	{
+		long screen_tag = ((struct tag_reference const *)TAG_BLOCK_ADDRESS_AT(screens))[screen].index;
+		struct ui_widget_definition const *definition;
+		struct ui_widget_child_reference const *screen_children;
+		long list_child, box_child = NONE, key;
+
+		if (screen_tag == NONE)
+			continue;
+		definition = tag_get(UI_WIDGET_DEFINITION_TAG, screen_tag);
+		screen_children = definition->child_widgets.address;
+		if ((list_child = pause_list_child(definition, quit_function)) == NONE)
+			continue;
+		for (child = 0; child < definition->child_widgets.count; child++)
+		{
+			if (child != list_child && screen_children[child].widget_tag.index != NONE &&
+				pause_box_stock(tag_get(UI_WIDGET_DEFINITION_TAG, screen_children[child].widget_tag.index)))
+			{
+				box_child = child;
+			}
+		}
+		if (box_child == NONE)
+			box_child = pause_box_child(definition, list_child);
+		key = pause_key_child(definition, list_child, box_child);
+		if (key != NONE)
+			key_tag = screen_children[key].widget_tag.index;
+	}
+	if (key_tag == NONE)
+		return;
+	box = tag_get(UI_WIDGET_DEFINITION_TAG, box_tag);
+	children = box->child_widgets.address;
+	for (child = 0; child < box->child_widgets.count; child++)
+	{
+		struct ui_widget_definition const *key;
+		short width, height;
+
+		if (children[child].widget_tag.index != hint_tag)
+			continue;
+		key = tag_get(UI_WIDGET_DEFINITION_TAG, key_tag);
+		width = (short)(key->bounds.x1 - key->bounds.x0);
+		height = (short)(key->bounds.y1 - key->bounds.y0);
+		reference_set(&children[child].widget_tag, UI_WIDGET_DEFINITION_TAG, key_tag);
+		/* (in the middle of the footer band, as the pause box's: pause_box_fit) */
+		children[child].horizontal_offset = (short)((box->bounds.x1 - box->bounds.x0 - width) / 2 - key->bounds.x0);
+		children[child].vertical_offset = (short)(box->bounds.y1 - box->bounds.y0 - PAUSE_BOX_FOOTER +
+			(PAUSE_BOX_FOOTER - height) / 2 - key->bounds.y0);
+		platform_log("menus: the in-game join box has the pause screens' key (%s)", tag_get_name(key_tag));
+	}
+}
+
 /* ---------- the campaign's pause menu
 
 Its list gets the same SETTINGS (pause_list_patch) before REVERT TO SAVED, a
@@ -2624,6 +2700,7 @@ void menu_tags_loaded(
 	if (game_map)
 	{
 		pause_patch(instances);
+		ingame_join_key_patch();
 		if (campaign)
 			pause_campaign_patch(instances);
 		pause_network_patch();

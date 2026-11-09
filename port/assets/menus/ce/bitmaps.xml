@@ -371,6 +371,15 @@
 		<frame png="ce/port/pause/pausebox_right__2.png" width="16" height="256"/>
 		<frame png="ce/port/pause/pausebox_right__3.png" width="16" height="256"/>
 	</bitmap>
+	<bitmap name="pause/joinbox_left">
+		<frame png="ce/port/pause/pausebox_left__0.png" width="16" height="256"/>
+	</bitmap>
+	<bitmap name="pause/joinbox_center">
+		<frame png="ce/port/pause/pausebox_center__0.png" width="4" height="256"/>
+	</bitmap>
+	<bitmap name="pause/joinbox_right">
+		<frame png="ce/port/pause/pausebox_right__0.png" width="16" height="256"/>
+	</bitmap>
 	<bitmap name="pause/objectives_left">
 		<frame png="ce/port/pause/objectives_left__0.png" width="16" height="256"/>
 		<frame png="ce/port/pause/objectives_left__1.png" width="16" height="256"/>

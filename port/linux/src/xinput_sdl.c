@@ -1575,29 +1575,32 @@ static BOOL menu_buttons_swapped(BOOL menus)
 
 /* the bottom and right face buttons held when the menus' swap of them starts or ends count as up until let go of:
 the right button that chose the level is not the game's B, a melee, at its first frame (as keys_held_over_switch) */
-static void face_buttons_held_over_swap(SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
+static void face_buttons_held_over_swap(int port, SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
 {
-	static int swapped = -1;
-	static BOOL held_south, held_east;
+	/* (each port's: a split screen player's menu swaps theirs alone) */
+	static int swapped[PORT_COUNT] = { -1, -1, -1, -1 };
+	static BOOL held_south[PORT_COUNT], held_east[PORT_COUNT];
 	BOOL south = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
 	BOOL east = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
 
-	if (swapped != (int)swap)
+	if (port < 0 || port >= PORT_COUNT)
+		return;
+	if (swapped[port] != (int)swap)
 	{
-		if (swapped >= 0)
+		if (swapped[port] >= 0)
 		{
-			held_south = south;
-			held_east = east;
+			held_south[port] = south;
+			held_east[port] = east;
 		}
-		swapped = (int)swap;
+		swapped[port] = (int)swap;
 	}
 	if (!south)
-		held_south = FALSE;
+		held_south[port] = FALSE;
 	if (!east)
-		held_east = FALSE;
-	if (held_south)
+		held_east[port] = FALSE;
+	if (held_south[port])
 		held_back[SDL_GAMEPAD_BUTTON_SOUTH] = TRUE;
-	if (held_east)
+	if (held_east[port])
 		held_back[SDL_GAMEPAD_BUTTON_EAST] = TRUE;
 }
 
@@ -2005,7 +2008,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			for (index = 0; index < INPUT_GAMEPAD_END - INPUT_GAMEPAD; index++)
 				held_back[index] = !replay &&
 					(gamepad_bound_to_talk[index] || (!input.menus && gamepad_bound_in_game[index]));
-			face_buttons_held_over_swap(gamepad, swap, held_back);
+			face_buttons_held_over_swap(0, gamepad, swap, held_back);
 			sdl_gamepad_state(gamepad, &state->Gamepad, held_back, scoreboard_picking_port == 0, swap);
 		}
 		test_input_gamepad(&state->Gamepad);
@@ -2027,8 +2030,17 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	}
 	else if (port_gamepad(gamepads, count, port))
 	{
-		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad, NULL, scoreboard_picking_port == port,
-			menu_buttons_swapped(menus_up));
+		/* (its own player's menu, in a game: a split screen player's pause
+		menu, not player 1's, swaps its face buttons: ui_widget.c's
+		halo_ui_controller_menu_up) */
+		extern unsigned char halo_ui_controller_menu_up(short controller_index);
+		SDL_Gamepad *gamepad = port_gamepad(gamepads, count, port);
+		BOOL swap = menu_buttons_swapped(halo_ui_controller_menu_up((short)port) != 0);
+		BOOL held_back[INPUT_GAMEPAD_END - INPUT_GAMEPAD];
+
+		memset(held_back, 0, sizeof(held_back));
+		face_buttons_held_over_swap(port, gamepad, swap, held_back);
+		sdl_gamepad_state(gamepad, &state->Gamepad, held_back, scoreboard_picking_port == port, swap);
 	}
 	/* (the text chat's on-screen keyboard reads each controller's, and
 	takes its owner's while it is up) */

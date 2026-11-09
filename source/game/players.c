@@ -703,6 +703,17 @@ long find_unused_local_player_index(
 void player_delete(
 	long player_index)
 {
+	short local_player_index;
+
+	/* port: a local player of the player deleted (one who quit, whose slot
+	another player takes: network_game_spawn_player) is no one's: else the
+	slot would name a datum gone, and local_player_set_player_index would
+	get it */
+	for (local_player_index = 0; local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; local_player_index++)
+	{
+		if (players_globals->local_players[local_player_index] == player_index)
+			players_globals->local_players[local_player_index] = NONE;
+	}
 	datum_delete(
 		player_data,
 		player_index);

@@ -9283,7 +9283,7 @@ static boolean join4_open(struct widget_instance *screen)
 			continue;
 		if (lobby_controller_playing(controller))
 			ui_widget_port_dispatch_event(quarters[index], JOIN4_EVENT_PLAYING, controller, &deleted);
-		else if (controller > 0 && controller == join4.opener && input_has_gamepad(controller))
+		else if (controller == join4.opener && input_has_gamepad(controller))
 			ui_widget_port_dispatch_event(quarters[index], JOIN4_EVENT_OPENER, controller, &deleted);
 	}
 	join4.opener = NONE;
@@ -9291,11 +9291,26 @@ static boolean join4_open(struct widget_instance *screen)
 }
 
 /* "port join4 join" (A, START): a controller not playing joins (FALSE:
-its quarter stays) */
+its quarter stays). Controller 1 too: when player 2's controller made the
+game, player 1's has yet to join */
 static boolean join4_join(short controller)
 {
-	return controller > 0 && controller < MAXIMUM_LOCAL_PLAYERS && input_has_gamepad(controller) &&
+	return controller >= 0 && controller < MAXIMUM_LOCAL_PLAYERS && input_has_gamepad(controller) &&
 		!lobby_controller_playing(controller);
+}
+
+/* the controller whose B leaves the screen: the first that plays (player
+1's, unless another controller made the game and player 1's has not joined) */
+static short join4_owner(void)
+{
+	short controller;
+
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	{
+		if (lobby_controller_playing(controller))
+			return controller;
+	}
+	return 0;
 }
 
 /* whether another player of this machine plays, or has selected, the
@@ -9356,11 +9371,11 @@ static boolean join4_set(short controller, unsigned char state)
 	return TRUE;
 }
 
-/* "port join4 back" (player 1's B): back to the lobby, nobody added
-(FALSE for another player's) */
+/* "port join4 back" (the owner's B, join4_owner): back to the lobby, nobody
+added (FALSE for another player's, whose quarter takes it) */
 static boolean join4_back(short controller)
 {
-	if (controller > 0)
+	if (controller != join4_owner())
 		return FALSE;
 	lobby_join_reset();
 	return TRUE;
@@ -9369,14 +9384,18 @@ static boolean join4_back(short controller)
 /* "port join4 done" (a selected or playing quarter's A): those who
 selected their profile join, back to the lobby (whose "net splitscreen
 prejoin players" adds them); FALSE while a player is still choosing, and
-for the keyboard's SPACE (join4_keyboard's) */
-static boolean join4_done(short pressed_by)
+for the keyboard's SPACE (join4_keyboard's). It goes back by the screen,
+not the quarter: a quarter is its controller's, and going back by player
+2's history (empty: the lobby is player 1's) left no screen, which left the
+game for the main menu */
+static boolean join4_done(struct widget_instance *widget, boolean *widget_deleted)
 {
+	short pressed_by = controller_of(widget);
 	short controller;
 
 	if (pressed_by == 0 && halo_keyboard_join_held())
 		return FALSE;
-	for (controller = 1; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
 	{
 		if (join4.state[controller] == _join4_choosing)
 		{
@@ -9384,7 +9403,7 @@ static boolean join4_done(short pressed_by)
 			return FALSE;
 		}
 	}
-	for (controller = 1; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
 	{
 		long profile = player_ui_get_active_player_profile_index(controller);
 
@@ -9395,6 +9414,9 @@ static boolean join4_done(short pressed_by)
 		}
 	}
 	lobby_join_reset();
+	ui_play_audio_feedback_sound(SOUND_BACK);
+	ui_widget_port_go_back(screen_of(widget));
+	*widget_deleted = TRUE;
 	return TRUE;
 }
 
@@ -9462,6 +9484,194 @@ unsigned char pc_menu_screen_routes_by_controller(struct widget_instance const *
 	while (screen && screen->parent)
 		screen = screen->parent;
 	return screen && screen->definition_tag_index != NONE && screen->definition_tag_index == join4_tag();
+}
+
+/* ---- joining a network game in progress: a controller with no player
+presses START (ui_widget.c's ui_check_for_ingame_join), and a box of its
+own over the game (drawn over the whole screen: pc_menu_ingame_join_screen)
+shows a profile, left and right choosing another; A joins with it (the
+host adds the player to the game, and this machine gives them their view:
+network_game_client_add_player_to_game), B goes back to watching. The
+screen is the port's own widgets alone: a multiplayer map has none of
+ui.map's */
+
+#define INGAME_JOIN_NAME "pc\\main_menu\\multiplayer_type_select\\lobby\\ingame_join_screen"
+#define INGAME_JOIN_RETRY_MILLISECONDS 3000UL
+
+extern boolean game_engine_in_play(void);
+extern boolean game_engine_showing_postgame(void);
+extern boolean network_coop_active(void);
+extern boolean network_game_client_add_player(void *client, short local_player_index);
+extern long local_player_get_player_index(short local_player_index);
+
+static struct
+{
+	/* each joining controller's profile (profile_list's) */
+	short chosen[MAXIMUM_LOCAL_PLAYERS];
+	/* when each asked the host last (a join is asked once: another START
+	asks again after a while) */
+	unsigned long asked_at[MAXIMUM_LOCAL_PLAYERS];
+	boolean asked[MAXIMUM_LOCAL_PLAYERS];
+} ingame_join;
+
+/* (ui_widget.c) the join box's screen */
+unsigned char pc_menu_ingame_join_screen(struct widget_instance const *widget)
+{
+	return widget && widget->definition_tag_index != NONE &&
+		widget->definition_tag_index == tag_loaded('DeLa', INGAME_JOIN_NAME);
+}
+
+/* (ui_widget.c) whether the controller may join the network game in
+progress: a multiplayer game under way (not network co-op, not its
+postgame), with room, the controller a gamepad with no player of this
+machine, and not asked moments ago */
+unsigned char pc_menu_ingame_join_allowed(short controller)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short state_data;
+
+	if (controller < 0 || controller >= MAXIMUM_LOCAL_PLAYERS || !game ||
+		network_game_client_get_state(client, &state_data) != _client_state_ingame ||
+		!game_engine_running() || !game_engine_in_play() || game_engine_showing_postgame() ||
+		network_coop_active() || !input_has_gamepad(controller) ||
+		local_player_get_player_index(controller) != NONE || lobby_local_player(controller) ||
+		players_port_local_player_count() >= MAXIMUM_LOCAL_PLAYERS)
+	{
+		return FALSE;
+	}
+	if (game->player_count >= game->maximum_players)
+	{
+		display_error_text_deferred(L"The game is full.", controller);
+		return FALSE;
+	}
+	return !ingame_join.asked[controller] ||
+		system_milliseconds() - ingame_join.asked_at[controller] >= INGAME_JOIN_RETRY_MILLISECONDS;
+}
+
+/* (ui_widget.c) the screen's name, to open it */
+char const *pc_menu_ingame_join_name(void)
+{
+	return INGAME_JOIN_NAME;
+}
+
+/* whether another player of this machine plays with the profile */
+static boolean ingame_join_profile_taken(short controller, long profile)
+{
+	short other;
+
+	for (other = 0; other < MAXIMUM_LOCAL_PLAYERS; other++)
+	{
+		if (other != controller && lobby_controller_playing(other) &&
+			player_ui_get_active_player_profile_index(other) == profile)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* "port ingame join open": on the controller's profile if it has one no
+other player has, else the first free; the box in the controller's
+quarter of the screen (two joining at once do not cover each other) */
+static boolean ingame_join_open(struct widget_instance *screen)
+{
+	short controller = controller_of(screen);
+	long mine = player_ui_get_active_player_profile_index(controller);
+	struct widget_instance *box = named(screen, "ingame_join_box", 0);
+	short index;
+
+	profile_list_read(TRUE);
+	ingame_join.chosen[controller] = 0;
+	for (index = profile_list.count - 1; index >= 0; index--)
+	{
+		if (!ingame_join_profile_taken(controller, profile_list.indices[index]))
+			ingame_join.chosen[controller] = index;
+	}
+	for (index = 0; index < profile_list.count && mine != NONE; index++)
+	{
+		if (profile_list.indices[index] == mine && !ingame_join_profile_taken(controller, mine))
+			ingame_join.chosen[controller] = index;
+	}
+	if (box)
+	{
+		/* (the pause box's 226 by 194, in the middle of the quarter) */
+		box->horizontal_offset = (short)(controller % 2 ? 367 : 47);
+		box->vertical_offset = (short)(controller / 2 ? 263 : 23);
+	}
+	return TRUE;
+}
+
+/* "port ingame join previous" (left), "port ingame join next" (right): the
+profile before or after */
+static boolean ingame_join_step(struct widget_instance *widget, short step)
+{
+	short controller = controller_of(widget);
+
+	if (profile_list.count <= 0)
+		return FALSE;
+	ingame_join.chosen[controller] =
+		(short)((ingame_join.chosen[controller] + step + profile_list.count) % profile_list.count);
+	ui_play_audio_feedback_sound(SOUND_CURSOR);
+	return TRUE;
+}
+
+/* "port ingame join select" (A, START): the controller's player on the
+profile, asked of the host (FALSE: the box stays) */
+static boolean ingame_join_select(struct widget_instance *widget)
+{
+	short controller = controller_of(widget);
+	short chosen = ingame_join.chosen[controller];
+	void *client = global_network_game_client_get();
+	long profile;
+
+	if (!client || chosen < 0 || chosen >= profile_list.count)
+		return campaign_fail();
+	profile = profile_list.indices[chosen];
+	if (ingame_join_profile_taken(controller, profile))
+	{
+		display_error_text_deferred(L"Another player has that profile.", controller);
+		return campaign_fail();
+	}
+	if (!ui_widget_port_multiplayer_player(controller, profile))
+		return FALSE;
+	if (!network_game_client_add_player(client, controller))
+	{
+		player_ui_local_player_left_multiplayer_game(controller);
+		return campaign_fail();
+	}
+	ingame_join.asked[controller] = TRUE;
+	ingame_join.asked_at[controller] = system_milliseconds();
+	platform_log("menus: controller %d asked to join the game in progress", controller + 1);
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* "port ingame join update" (each frame): the box's words */
+static void ingame_join_update(struct widget_instance *widget)
+{
+	struct widget_instance *screen = screen_of(widget);
+	short controller = controller_of(screen);
+	short chosen = ingame_join.chosen[controller];
+	wchar_t text[64];
+
+	usnprintf(text, NUMBEROF(text) - 1, L"PLAYER %d JOINS", controller + 1);
+	text[NUMBEROF(text) - 1] = 0;
+	text_set(named(screen, "ingame_join_title", 0), text);
+	if (chosen >= 0 && chosen < profile_list.count)
+	{
+		wchar_t name[NUMBEROF(profile_list.profiles[0].player_name) + 1];
+
+		ustrncpy(name, profile_list.profiles[chosen].player_name, NUMBEROF(name) - 1);
+		name[NUMBEROF(name) - 1] = 0;
+		usnprintf(text, NUMBEROF(text) - 1, L"<  %s  >", name);
+	}
+	else
+	{
+		usnprintf(text, NUMBEROF(text) - 1, L"No profiles");
+	}
+	text[NUMBEROF(text) - 1] = 0;
+	text_set(named(screen, "ingame_join_name", 0), text);
 }
 
 /* ---- the gametype editor: Edit Gametypes' list (the built-in gametypes
@@ -10887,7 +11097,19 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port join4 done"))
 		{
-			return join4_done(controller_of(widget));
+			return join4_done(widget, widget_deleted);
+		}
+		else if (!strcmp(name, "port ingame join open"))
+		{
+			return ingame_join_open(widget);
+		}
+		else if (!strcmp(name, "port ingame join previous") || !strcmp(name, "port ingame join next"))
+		{
+			return ingame_join_step(widget, (short)(strcmp(name, "port ingame join next") ? -1 : 1));
+		}
+		else if (!strcmp(name, "port ingame join select"))
+		{
+			return ingame_join_select(widget);
 		}
 		else if (!strcmp(name, "port lobby join"))
 		{
@@ -11043,6 +11265,8 @@ void pc_menu_game_data_function_invoke(
 		map_vote_update(widget);
 	else if (!strcmp(name, "port join4 update"))
 		join4_update(widget);
+	else if (!strcmp(name, "port ingame join update"))
+		ingame_join_update(widget);
 	else if (!strcmp(name, "port settings help"))
 	{
 		video_rows_show(widget);

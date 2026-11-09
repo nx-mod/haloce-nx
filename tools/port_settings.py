@@ -1819,6 +1819,10 @@ PAUSE_BOX_BUTTONS = [3, 4]
 PAUSE_BOX_EXTRA_HEIGHTS = [195, 225]
 
 
+# the in-game join box's width (the pause box's: menu_tags.c's PAUSE_BOX_WIDTH)
+INGAME_JOIN_WIDTH = 226
+
+
 def pause_box_height(buttons: int) -> int:
     return 159 + (buttons - 2) * 35
 
@@ -2540,6 +2544,53 @@ def _lobby() -> list:
                          [f'<on event="a" run="{run}"{opened}/>', f'<on event="start" run="{run}"{opened}/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _join4(base)
+    lines += _ingame_join(base)
+    return lines
+
+
+def _ingame_join(base: str) -> list:
+    """joining a network game in progress: a controller with no player
+    presses START in the game, and this box of its own (in its quarter of
+    the screen: menu_functions.c's ingame_join_open) shows a profile, left
+    and right choosing another; A joins with it, B goes back to watching.
+    It looks as the pause menu does (the port's box, the key in its footer
+    band, the controller's own button icons), but of the port's own widgets
+    alone: a multiplayer map has none of ui.map's"""
+    height = pause_box_height(3)
+    lines = _widget(f"{base}/ingame_join_screen", [("width", 640), ("height", 480)],
+                    ['<on event="created" run="port ingame join open"/>',
+                     '<on event="a" run="port ingame join select" close="current"/>',
+                     '<on event="start" run="port ingame join select" close="current"/>',
+                     '<on event="b" close="current"/>', '<on event="back" close="current"/>',
+                     '<on event="left" run="port ingame join previous"/>',
+                     '<on event="right" run="port ingame join next"/>',
+                     '<data input="port ingame join update"/>',
+                     f'<child widget="{base}/ingame_join_box"/>'])
+    # (the box: the pause box's three pieces, its 3-button frame; the strip
+    # tiles across)
+    lines += _widget(f"{base}/ingame_join_box", [("width", INGAME_JOIN_WIDTH), ("height", height)],
+                     [f'<child widget="{base}/ingame_join_box_left" x="0" y="0"/>',
+                      f'<child widget="{base}/ingame_join_box_center" x="16" y="0"/>',
+                      f'<child widget="{base}/ingame_join_box_right" x="{INGAME_JOIN_WIDTH - 16}" y="0"/>',
+                      f'<child widget="{base}/ingame_join_title" x="0" y="34"/>',
+                      f'<child widget="{base}/ingame_join_name" x="0" y="82"/>',
+                      f'<child widget="{base}/ingame_join_hint" x="0" y="{height - 26}"/>'])
+    for piece, width in (("left", 16), ("center", INGAME_JOIN_WIDTH - 32), ("right", 16)):
+        lines += _widget(f"{base}/ingame_join_box_{piece}", [("width", width), ("height", height),
+                                                            ("bitmap", f"pause/joinbox_{piece}")], [])
+    lines += _widget(f"{base}/ingame_join_title", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 30),
+                                                   ("font", "ui\\large_ui"), ("color", "#FFFFFFFF"),
+                                                   ("align", "center"), ("text_flags", "no_focus_test")], [])
+    lines += _widget(f"{base}/ingame_join_name", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 30),
+                                                  ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                                                  ("align", "center"), ("text_flags", "no_focus_test")], [])
+    # (the key: menu_tags.c puts the pause screens' own in its place, B=CANCEL
+    # A=SELECT; these words are for a map whose pause screens have none)
+    lines += _widget(f"{base}/ingame_join_hint", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 24),
+                                                  ("text", "B=CANCEL    A=JOIN"),
+                                                  ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                                                  ("align", "center"), ("text_y", 3),
+                                                  ("text_flags", "no_focus_test")], [])
     return lines
 
 
@@ -2605,16 +2656,16 @@ def _join4(base: str) -> list:
     lines += _widget(f"{base}/join4_qtr_ready",
                      [("width", 254), ("height", 164), ("bitmap", f"{xbox}4way_profile_border")],
                      ['<on event="created" run="port join4 ready"/>',
-                      '<on event="a" run="port join4 done" back="true"/>',
-                      '<on event="start" run="port join4 done" back="true"/>',
+                      '<on event="a" run="port join4 done"/>',
+                      '<on event="start" run="port join4 done"/>',
                       f'<on event="b" run="port join4 unready" replace="{base}/join4_qtr_select"/>',
                       '<on event="back"/>',
                       *selected])
     # (a player in the game already)
     lines += _widget(f"{base}/join4_qtr_playing",
                      [("width", 254), ("height", 164), ("bitmap", f"{xbox}4way_profile_border")],
-                     ['<on event="a" run="port join4 done" back="true"/>',
-                      '<on event="start" run="port join4 done" back="true"/>',
+                     ['<on event="a" run="port join4 done"/>',
+                      '<on event="start" run="port join4 done"/>',
                       '<on event="b"/>', '<on event="back"/>',
                       *selected])
     lines += _widget(f"{base}/join4_hint", [("type", "text"), ("width", 345), ("height", 24),

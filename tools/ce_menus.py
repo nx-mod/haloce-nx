@@ -657,6 +657,13 @@ def pause_art(art):
         heights += list(port_settings.PAUSE_BOX_EXTRA_HEIGHTS)
         lines.append(art.port_picture(f"pause/pausebox_{piece}", [
             (port_settings.pause_box_svg(piece, height), 4 if piece == "center" else 16, 256) for height in heights]))
+    # (the in-game join box's: the 3-button box's frames alone, which the
+    # pause menu's own does not change: port_settings.py's _ingame_join)
+    for piece in ("left", "center", "right"):
+        width = 4 if piece == "center" else 16
+        lines.append(f'\t<bitmap name="pause/joinbox_{piece}">\n'
+                     f'\t\t<frame png="ce/port/pause/pausebox_{piece}__0.png" width="{width}" height="256"/>\n'
+                     '\t</bitmap>')
     for piece in ("left", "center", "right"):
         lines.append(art.port_picture(f"pause/objectives_{piece}", [
             (port_settings.pause_box_svg(piece, height, header=True), 4 if piece == "center" else 16, 256)
