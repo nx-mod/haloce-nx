@@ -166,6 +166,7 @@ static void D3DResource_Release(D3DResource *p)
 }
 static int moving_384;
 int lighting_moving_lights_384(void) { return moving_384; }
+int lighting_fast_occlusion_math(void) { return 0; }
 static int log_lines;
 void platform_log(char const *format, ...) { log_lines++; }
 void plasma_occlusion_window(void);
@@ -948,9 +949,13 @@ int main(int argc, char **argv)
 	CHECK(revision_calls==1&&queries==n,"due and stationary: the scene is asked, unchanged, and nothing is traced");
 	revision_calls=0;time_ms+=12;rasterizer_lights.lights[0].position.x+=.01f;
 	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
-	CHECK(revision_calls==1&&queries>n,"due and moved: it traces, with the revision to keep");
+	CHECK(!revision_calls&&queries>n,"due and moved: it traces, with no snapshot of the scene (a moving light's is never compared)");
 	rasterizer_lights.lights[0].position.x-=.01f;
+	n=queries;revision_calls=0;
 	time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(!revision_calls&&queries>n,"moved again: traced again, still with no snapshot");
+	n=queries;time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(revision_calls==1&&queries>n,"at rest where it was traced: the scene is asked, and as its trace had none, traced again");
 	{
 		/* (the wall is at +x: face 1) */
 		real before=f->depths[1][0];

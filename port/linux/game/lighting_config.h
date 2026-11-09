@@ -7,6 +7,8 @@ int lighting_config_boolean(const char *name);
 int lighting_force_off(const char *name, int forced);
 int lighting_forced_off(const char *name);
 int lighting_moving_lights_384(void);
+/* the overlay's Fast Occlusion Math, for this run: 0 unless turned on there */
+int lighting_fast_occlusion_math(void);
 /* how many promoted lights keep their full reach; 0: all */
 int lighting_promoted_cap(void);
 /* What occlusion may spend each view: active fields, and rays or microseconds of

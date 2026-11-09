@@ -348,6 +348,17 @@ static vis_real vis_all_set(void) { return _mm_castsi128_ps(_mm_set1_epi32(-1));
 static int vis_all(vis_real mask) { return _mm_movemask_ps(mask) == 15; }
 static void vis_store_int(int *to, vis_real value) { _mm_storeu_si128((__m128i *)to, _mm_cvttps_epi32(value)); }
 static vis_real vis_truncate(vis_real value) { return _mm_cvtepi32_ps(_mm_cvttps_epi32(value)); }
+/* (Fast Occlusion Math's: an estimate and one Newton step, near 22 bits) */
+static vis_real vis_reciprocal(vis_real a)
+{
+	vis_real r = _mm_rcp_ps(a);
+	return _mm_mul_ps(r, _mm_sub_ps(_mm_set1_ps(2.0f), _mm_mul_ps(a, r)));
+}
+static vis_real vis_reciprocal_sqrt(vis_real a)
+{
+	vis_real r = _mm_rsqrt_ps(a);
+	return _mm_mul_ps(_mm_mul_ps(_mm_set1_ps(0.5f), r), _mm_sub_ps(_mm_set1_ps(3.0f), _mm_mul_ps(_mm_mul_ps(a, r), r)));
+}
 #elif defined(__ARM_NEON) && defined(__aarch64__)
 #define VISIBILITY_VECTOR
 typedef float32x4_t vis_real;
@@ -371,12 +382,31 @@ static vis_real vis_all_set(void) { return vreinterpretq_f32_u32(vdupq_n_u32(0xf
 static int vis_all(vis_real mask) { return vminvq_u32(vreinterpretq_u32_f32(mask)) == 0xffffffffu; }
 static void vis_store_int(int *to, vis_real value) { vst1q_s32(to, vcvtq_s32_f32(value)); }
 static vis_real vis_truncate(vis_real value) { return vcvtq_f32_s32(vcvtq_s32_f32(value)); }
+/* (Fast Occlusion Math's: an estimate and two Newton steps) */
+static vis_real vis_reciprocal(vis_real a)
+{
+	vis_real r = vrecpeq_f32(a);
+	r = vmulq_f32(vrecpsq_f32(a, r), r);
+	return vmulq_f32(vrecpsq_f32(a, r), r);
+}
+static vis_real vis_reciprocal_sqrt(vis_real a)
+{
+	vis_real r = vrsqrteq_f32(a);
+	r = vmulq_f32(r, vrsqrtsq_f32(vmulq_f32(a, r), r));
+	return vmulq_f32(r, vrsqrtsq_f32(vmulq_f32(a, r), r));
+}
 #endif
 #ifdef VISIBILITY_VECTOR
-static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real xs[OCC_SIZE], real y, real z,
-								 real extent, int resolution, real *output)
+/* port: fast, the overlay's Fast Occlusion Math (lighting_fast_occlusion_math):
+   a reciprocal estimate in place of each divide, by the cell's magnitude, the
+   extent and the feather's .025, and a reciprocal square root's for the ray's
+   length. Its cells differ from the exact ones by a fraction of a texture step;
+   not bit for bit, so off by default. (A constant once inlined: no branch.) */
+static inline __attribute__((always_inline)) void depth_visibility_row_math(real depths[6][OCC_SIZE * OCC_SIZE],
+	const real xs[OCC_SIZE], real y, real z, real extent, int resolution, real *output, int fast)
 {
 	vis_real zero = vis_set(0), one = vis_set(1), half = vis_set(.5f);
+	vis_real inverse_extent = vis_set(1.0f / extent), feather = vis_set(1.0f / .025f);
 	vis_real py = vis_set(y), pz = vis_set(z), ey = vis_set(fabsf(y)), ez = vis_set(fabsf(z));
 	vis_real ex = vis_set(extent), size = vis_set((real)resolution), limit = vis_set((real)(resolution - 1));
 	vis_real facey = vis_set((real)(2 + (y > 0))), facez = vis_set((real)(4 + (z > 0)));
@@ -387,7 +417,7 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 		vis_real mask = vis_greater(ey, magnitude), u = vis_choose(mask, pz, py),
 			   v = vis_choose(mask, px, pz);
 		vis_real face = vis_choose(mask, facey, vis_and(vis_greater(px, zero), one));
-		vis_real near_origin, tx, ty, fraction, hits[4], length;
+		vis_real near_origin, tx, ty, fraction, hits[4], length, inverse_magnitude = one;
 		vis_real clear = vis_all_set(), result = zero;
 		int faces[4], columns[4], rows[4];
 		real gather[4];
@@ -399,8 +429,17 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 		v = vis_choose(mask, py, v);
 		near_origin = vis_less(magnitude, vis_set(.0001f));
 		magnitude = vis_choose(near_origin, one, magnitude);
-		u = vis_sub(vis_mul(vis_mul(vis_add(vis_div(u, magnitude), one), half), size), half);
-		v = vis_sub(vis_mul(vis_mul(vis_add(vis_div(v, magnitude), one), half), size), half);
+		if (fast)
+		{
+			inverse_magnitude = vis_reciprocal(magnitude);
+			u = vis_sub(vis_mul(vis_mul(vis_add(vis_mul(u, inverse_magnitude), one), half), size), half);
+			v = vis_sub(vis_mul(vis_mul(vis_add(vis_mul(v, inverse_magnitude), one), half), size), half);
+		}
+		else
+		{
+			u = vis_sub(vis_mul(vis_mul(vis_add(vis_div(u, magnitude), one), half), size), half);
+			v = vis_sub(vis_mul(vis_mul(vis_add(vis_div(v, magnitude), one), half), size), half);
+		}
 		u = vis_max(zero, vis_min(limit, u));
 		v = vis_max(zero, vis_min(limit, v));
 		vis_store_int(faces, face);
@@ -408,7 +447,7 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 		vis_store_int(rows, v);
 		tx = vis_sub(u, vis_truncate(u));
 		ty = vis_sub(v, vis_truncate(v));
-		fraction = vis_div(magnitude, ex);
+		fraction = fast ? vis_mul(magnitude, inverse_extent) : vis_div(magnitude, ex);
 		for (j = 0; j < 2; j++)
 			for (i = 0; i < 2; i++)
 			{
@@ -423,6 +462,20 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 			result = vis_add(vis_mul(vis_sub(one, tx), vis_sub(one, ty)), vis_mul(tx, vis_sub(one, ty)));
 			result = vis_add(result, vis_mul(vis_sub(one, tx), ty));
 			result = vis_add(result, vis_mul(tx, ty));
+		}
+		else if (fast)
+		{
+			/* (a lane near the middle, its square 0, is one at the end whatever this makes of it) */
+			vis_real square = vis_add(vis_add(vis_mul(px, px), vis_mul(py, py)), vis_mul(pz, pz));
+			vis_real scaled = vis_mul(vis_mul(vis_mul(square, vis_reciprocal_sqrt(vis_max(square, vis_set(1e-30f)))),
+				vis_mul(ex, inverse_magnitude)), feather);
+			for (j = 0; j < 2; j++)
+				for (i = 0; i < 2; i++)
+				{
+					vis_real visible = vis_sub(one, vis_mul(vis_sub(fraction, hits[j * 2 + i]), scaled));
+					visible = vis_max(zero, vis_min(one, visible));
+					result = vis_add(result, vis_mul(vis_mul(visible, i ? tx : vis_sub(one, tx)), j ? ty : vis_sub(one, ty)));
+				}
 		}
 		else
 		{
@@ -439,6 +492,16 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 		vis_store(output + x, vis_choose(near_origin, one, result));
 	}
 }
+static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real xs[OCC_SIZE], real y, real z,
+								 real extent, int resolution, real *output)
+{
+	depth_visibility_row_math(depths, xs, y, z, extent, resolution, output, FALSE);
+}
+static void depth_visibility_row_fast(real depths[6][OCC_SIZE * OCC_SIZE], const real xs[OCC_SIZE], real y, real z,
+									  real extent, int resolution, real *output)
+{
+	depth_visibility_row_math(depths, xs, y, z, extent, resolution, output, TRUE);
+}
 #else
 static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real xs[OCC_SIZE], real y, real z,
 								 real extent, int resolution, real *output)
@@ -453,6 +516,8 @@ static void depth_visibility_row(real depths[6][OCC_SIZE * OCC_SIZE], const real
 		output[x] = depth_visibility(depths, &ray, extent, resolution);
 	}
 }
+/* (no vector instructions, no estimates: the exact) */
+#define depth_visibility_row_fast depth_visibility_row
 #endif
 
 static void reconstruct_visibility(real depths[6][OCC_SIZE * OCC_SIZE], real extent, int resolution, real dx, real dy,
@@ -460,6 +525,7 @@ static void reconstruct_visibility(real depths[6][OCC_SIZE * OCC_SIZE], real ext
 {
 	real offsets[OCC_SIZE], xs[OCC_SIZE];
 	int x, y, z;
+	int fast = lighting_fast_occlusion_math();
 	for (x = 0; x < OCC_SIZE; x++)
 	{
 		offsets[x] = (2.0f * (x + 0.5f) / OCC_SIZE - 1) * extent;
@@ -467,8 +533,8 @@ static void reconstruct_visibility(real depths[6][OCC_SIZE * OCC_SIZE], real ext
 	}
 	for (z = 0; z < OCC_SIZE; z++)
 		for (y = 0; y < OCC_SIZE; y++)
-			depth_visibility_row(depths, xs, offsets[y] + dy, offsets[z] + dz, extent, resolution,
-								 output + (z * OCC_SIZE + y) * OCC_SIZE);
+			(fast ? depth_visibility_row_fast : depth_visibility_row)(depths, xs, offsets[y] + dy, offsets[z] + dz,
+				extent, resolution, output + (z * OCC_SIZE + y) * OCC_SIZE);
 }
 
 static real filter_visibility(real history, real target, real clear_alpha, real block_alpha)
@@ -566,6 +632,20 @@ static void trace_field(struct occlusion_field *field, struct rasterizer_light_s
 	field->trace_center[0] = light->position.x;
 	field->trace_center[1] = light->position.y;
 	field->trace_center[2] = light->position.z;
+}
+/* port: the scene a trace is made in. Only a light traced where it stands has
+   its scene compared again (field_at_rest, and update_field's check when the
+   cadence is due): a moving light's next trace is due for having moved, so its
+   snapshot, a walk of every scenery and machine in reach, is never looked at.
+   0 is no revision (a scene's is never 0), so the light's first check where it
+   stands finds the scene changed, as it would anyway at another position. */
+static unsigned long trace_scene_revision(struct occlusion_field *field,
+	struct rasterizer_light_submit_parameters const *light, real extent, int vehicles)
+{
+	if (field->valid && (light->position.x != field->trace_center[0] || light->position.y != field->trace_center[1] ||
+		light->position.z != field->trace_center[2]))
+		return 0;
+	return plasma_collision_scene_revision(&field->scene, &light->position, extent, vehicles);
 }
 static int field_vehicles(long identity)
 {
@@ -684,7 +764,7 @@ static __attribute__((noinline)) void plan_traces(unsigned long now)
 			continue;
 		started = budget_clock();
 		trace_field(order[i], light, extent, resolution, vehicles,
-			plasma_collision_scene_revision(&order[i]->scene, &light->position, extent, vehicles), now);
+			trace_scene_revision(order[i], light, extent, vehicles), now);
 		order[i]->traced_window = current_window;
 		budget_charge(started);
 	}
@@ -754,7 +834,7 @@ static __attribute__((noinline)) struct occlusion_field *update_field(struct occ
 	}
 	field->too_far = FALSE;
 	if (retrace && !revision_known)
-		scene_revision = plasma_collision_scene_revision(&field->scene, &light->position, extent, vehicles);
+		scene_revision = trace_scene_revision(field, light, extent, vehicles);
 	if (!retrace && field->trace_extent != extent)
 	{
 		rescale_depths(field->depths, field->trace_extent, extent);
@@ -1058,6 +1138,8 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 	{
 		if (directional == 3)
 			plasma_prong_falloff_mask(axis, prong_mask);
+		else if (directional == 1)
+			ammo_counter_falloff_mask(axis, prong_mask);
 		for (z = 0; z < OCC_SIZE; z++)
 			for (y = 0; y < OCC_SIZE; y++)
 				for (x = 0; x < OCC_SIZE; x++)
@@ -1077,9 +1159,9 @@ static __attribute__((noinline)) void *prepare_field_texture(struct occlusion_fi
 								0.5f + dy * scale * 0.5f, 0.5f + dz * scale * 0.5f);
 					value = 1 - field->admission + field->admission * value;
 					if (directional)
-						value *= directional == 3 ? prong_mask[i] : directional == 2 ? needler_falloff_factor(dz *
+						value *= directional == 2 ? needler_falloff_factor(dz *
 							(pass == 0 ? field->extent / field->radius : pass == 2 ? field->specular : 1.0f)) :
-							ammo_counter_falloff_factor(axis, dx, dy, dz);
+							prong_mask[i];
 					if (pass)
 						value *= remaining * remaining;
 					pixels[i] = (unsigned long)(255 * value + 0.5f) * 0x01010101UL;

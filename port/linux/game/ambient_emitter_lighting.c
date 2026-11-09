@@ -106,6 +106,20 @@ unsigned long ambient_emitter_lighting_begin(void)
 	return mask;
 }
 
+int ambient_emitter_lighting_candidate(long index, long definition)
+{
+	int i;
+	for (i = 0; i < flame_count; i++)
+		if (flames[i].owner == index)
+			return TRUE;
+	if (!ambient_ready)
+		return FALSE;
+	for (i = 0; i < NUMBEROF(ambient_profiles); i++)
+		if (ambient_identities[i] != NONE && definition == ambient_identities[i])
+			return TRUE;
+	return FALSE;
+}
+
 int ambient_emitter_lighting_sample(long index, int component, struct emitter_sample *sample)
 {
 	struct object_datum *object = object_try_and_get(index);

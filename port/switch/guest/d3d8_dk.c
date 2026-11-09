@@ -70,6 +70,48 @@ static float screen_scale[2] = { 1.0f, 1.0f };
 static long ui_offset;
 #define UI_OFFSET ((GLint)ui_offset)
 
+#ifdef HALO_ANDROID
+/* port: the settings screen_mode_choose reads, read again only when a setting
+changes: it runs every frame, and each read is a search of every setting by
+name (a fifth of the game thread's string compares in a campaign fight) */
+static struct
+{
+	unsigned long changes;
+	int ready;
+	long width;
+#ifdef HALO_SWITCH
+	long lines;
+	int uncapped, dynamic;
+#endif
+} screen_settings;
+static void screen_settings_read(void)
+{
+	/* display.screen_width, or 0 for the display's shape, which the app
+	passes (port/android/host/host_main.c) */
+	const char *display;
+	long width;
+
+	if (screen_settings.ready && screen_settings.changes == config_changes())
+		return;
+	screen_settings.changes = config_changes();
+	display = getenv("HALO_DISPLAY_WIDTH");
+	width = config_integer("display.screen_width");
+	if (width <= 0)
+		width = display ? atol(display) : 640;
+	if (width < 640)
+		width = 640;
+	if (width > 1600)
+		width = 1600;
+	screen_settings.width = width & ~1L;
+#ifdef HALO_SWITCH
+	screen_settings.lines = atol(config_string("display.resolution_limit"));
+	screen_settings.uncapped = config_boolean("debug.resolution_uncapped") != 0;
+	screen_settings.dynamic = config_boolean("display.dynamic_resolution") != 0;
+#endif
+	screen_settings.ready = 1;
+}
+#endif
+
 #ifdef HALO_SWITCH
 /* the host's (host_dk.c): the height it presents at, 1080 docked and 720 in
 handheld */
@@ -113,7 +155,7 @@ static unsigned int dynamic_resolution(unsigned int lines)
 {
 	unsigned int gpu_us;
 
-	if (!config_boolean("display.dynamic_resolution") || lines <= SCREEN_HEIGHT)
+	if (!screen_settings.dynamic || lines <= SCREEN_HEIGHT)
 	{
 		dynamic.dropped = 0;
 		dynamic.chosen = lines;
@@ -171,18 +213,8 @@ int halo_screen_dynamic_resolution_dropped(void)
 static void screen_mode_choose(long *width, float scale[2])
 {
 #ifdef HALO_ANDROID
-	/* display.screen_width, or 0 for the display's shape, which the app
-	passes (port/android/host/host_main.c) */
-	const char *display = getenv("HALO_DISPLAY_WIDTH");
-
-	*width = config_integer("display.screen_width");
-	if (*width <= 0)
-		*width = display ? atol(display) : 640;
-	if (*width < 640)
-		*width = 640;
-	if (*width > 1600)
-		*width = 1600;
-	*width &= ~1L;
+	screen_settings_read();
+	*width = screen_settings.width;
 	scale[0] = scale[1] = 1.0f;
 #ifdef HALO_SWITCH
 	/* display.resolution_limit: the lines the screen's targets are drawn at,
@@ -191,14 +223,14 @@ static void screen_mode_choose(long *width, float scale[2])
 	which the host scales them up to: "900" docked is 69% of 1080p's pixels,
 	the GPU's room for 60 a second in a heavy scene */
 	{
-		long lines = atol(config_string("display.resolution_limit"));
+		long lines = screen_settings.lines;
 		unsigned int height = lines > SCREEN_HEIGHT ? (unsigned int)(lines < 1080 ? lines : 1080) : SCREEN_HEIGHT;
 		unsigned int output = host_dk_output_height();
 
 		/* (debug.resolution_uncapped: drawn at those lines all the same, and
 		scaled down to the screen: a Lite's handheld 720p drawing docked
 		1080p's load, for testing it) */
-		if (height > output && !config_boolean("debug.resolution_uncapped"))
+		if (height > output && !screen_settings.uncapped)
 			height = output;
 		height = dynamic_resolution(height);
 		if (height > SCREEN_HEIGHT)

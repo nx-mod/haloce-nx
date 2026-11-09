@@ -201,6 +201,54 @@ static int emitter_sample(long index, int component, struct emitter_sample *samp
 	return TRUE;
 }
 
+/* port: the tags emitter_sample, ammo_counter_lighting_position and
+   needler_lighting_position take by name. Each frame walked every biped, weapon
+   and scenery, its datum read twice over and its tag's name compared with all of
+   these, for the few that are any of them: now a tag is named once a map, and
+   only a candidate has its datum read past the line its tag is on. */
+static const char *const emitter_tag_names[] = {
+	"characters\\jackal\\jackal", "characters\\jackal\\jackal major",
+	"scenery\\c_field_generator\\c_field_generator", "weapons\\fuel rod gun\\fuel rod",
+	"characters\\hunter\\hunter", "weapons\\assault rifle\\assault rifle",
+	"weapons\\needler\\needler", "weapons\\needler\\mp_needler"
+};
+enum { EMITTER_TAGS = 256 };
+static struct
+{
+	long definition;
+	int named; /* 0: not looked at, 1: one of them, -1: none */
+} emitter_tags[EMITTER_TAGS];
+static int emitter_tag_name_listed(long definition)
+{
+	const char *name = tag_get_name(definition);
+	int i;
+	for (i = 0; name && i < (int)(sizeof(emitter_tag_names) / sizeof(emitter_tag_names[0])); i++)
+		if (!strcmp(name, emitter_tag_names[i]))
+			return TRUE;
+	return FALSE;
+}
+static int emitter_tag_named(long definition)
+{
+	unsigned long slot = ((unsigned long)definition * 2654435761u) % EMITTER_TAGS, probes;
+	for (probes = 0; probes < 16; probes++, slot = (slot + 1) % EMITTER_TAGS)
+	{
+		if (emitter_tags[slot].named && emitter_tags[slot].definition == definition)
+			return emitter_tags[slot].named > 0;
+		if (!emitter_tags[slot].named)
+		{
+			emitter_tags[slot].definition = definition;
+			emitter_tags[slot].named = emitter_tag_name_listed(definition) ? 1 : -1;
+			return emitter_tags[slot].named > 0;
+		}
+	}
+	return emitter_tag_name_listed(definition); /* (a crowded table: named every time, as before) */
+}
+static int emitter_candidate(struct object_datum const *object, long index)
+{
+	return ambient_emitter_lighting_candidate(index, object->definition_index) ||
+		emitter_tag_named(object->definition_index);
+}
+
 static void emitter_release(struct emitter_light *emitter)
 {
 	if (emitter->active && emitter->light != NONE &&
@@ -242,7 +290,7 @@ void covenant_emitter_lighting_update(void)
 		real_rgb_color color;
 		real blend;
 		long definition;
-		if (!emitter_sample(iterator.index, component, &sample))
+		if (!emitter_candidate(object, iterator.index) || !emitter_sample(iterator.index, component, &sample))
 			continue;
 		slot = NONE;
 		for (i = 0; i < EMITTER_LIGHTS; i++)
@@ -355,6 +403,7 @@ void covenant_emitter_lighting_forget(void)
 	authored_emitter_lighting_forget();
 	ambient_emitter_lighting_forget();
 	memset(emitters, 0, sizeof(emitters));
+	memset(emitter_tags, 0, sizeof(emitter_tags)); /* (another map's tags) */
 }
 
 void covenant_emitter_lighting_window_begin(void)

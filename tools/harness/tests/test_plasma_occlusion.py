@@ -237,6 +237,30 @@ def test_neon_matches_scalar_and_sse(tmp_path):
     assert neon == sse
 
 
+FAST_MATH = 'int fast = lighting_fast_occlusion_math();'
+
+
+def fast_and_exact(flags):
+    """every cell of the visibility case, exactly and with Fast Occlusion Math"""
+    code = cells(full_code())
+    assert code.count(FAST_MATH) == 1
+    outputs = []
+    for version in (code, code.replace(FAST_MATH, 'int fast = 1;')):
+        status, output = run(build('plasma_occlusion', (('under_test.inc', version),), flags), 'visibility')
+        assert status == 0, output[-2000:]
+        outputs.append([float(cell) for cell in re.findall(r'CELL (\S+)', output)])
+    return outputs
+
+
+def test_fast_occlusion_math_is_near_the_exact():
+    exact, fast = fast_and_exact(SSE_MATH + ('-ffp-contract=off',))
+    assert len(exact) > 4096 and len(fast) == len(exact)
+    worst = max(abs(a - b) for a, b in zip(exact, fast))
+    # (under half an 8-bit texture step, all the upload keeps of a cell)
+    assert worst < 0.5 / 255, worst
+    assert exact != fast, 'the fast path is the one tested'
+
+
 @pytest.mark.parametrize('before,after', [
     # (not vis_all_set: the path it chooses is an exact shortcut, so breaking it changes no cell)
     ('return vcvtq_f32_s32(vcvtq_s32_f32(value));', 'return value;'),
@@ -402,8 +426,9 @@ def test_lighting_stats_negative_controls(before, after, expected):
     ('resolution == OCC_SIZE && field->valid &&', 'resolution == OCC_SIZE &&', 'a new light has the full grid'),
     # a held light has it too
     ('resolution == OCC_SIZE && field->valid &&', 'field->valid &&', 'a held light keeps its own grid'),
-    # a light that stops stays coarse
-    (' || field->trace_resolution < resolution;', ';', 'once it stops, the full grid again'),
+    # a light that stops stays coarse: (no control: trace_scene_revision gives a coarse,
+    # moving trace no revision, so a stopped light's scene check retraces it at the full
+    # grid without this clause; the case still checks that it does)
 ])
 def test_moving_grid_negative_controls(before, after, expected):
     code = re.sub(r'^#include.*$', '', read('port/linux/game/ammo_counter_falloff.c') + '\n' + read('port/linux/game/plasma_occlusion.c'), flags=re.M)

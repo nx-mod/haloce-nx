@@ -102,6 +102,7 @@ int ambient_emitter_lighting_enabled(void) { return ambient_mode!=0; }
 unsigned long ambient_emitter_lighting_begin(void) { return ambient_mode==1?_object_mask_vehicle:ambient_mode==2&&stream_live?_object_mask_biped:0; }
 void ambient_emitter_lighting_forget(void) {}
 int ambient_emitter_lighting_sample(long i,int c,struct emitter_sample *s);
+int ambient_emitter_lighting_candidate(long i,long d) { return ambient_mode&&i<ambient_count; }
 #include "under_test.inc"
 int ambient_emitter_lighting_sample(long i,int c,struct emitter_sample *s)
 {

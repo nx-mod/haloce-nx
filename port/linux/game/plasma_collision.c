@@ -42,11 +42,16 @@ static struct
 	real extent;
 	real vector_squared;
 	struct { int ready; long node; short depth; } prefixes[8];
+	/* port: the tables below outlive a batch, as clearing them all (300 KB) for
+	   every light's trace cost more than its rays: a batch's objects, and their
+	   lookups, are cleared as it ends (batch_clear); the cache's slots, clusters
+	   and visits count only with this batch's generation or ray stamp. */
+	unsigned long generation, stamp;
 	struct collision_bsp_vector_cache cache[8];
 	struct trace_object objects[TRACE_OBJECTS];
 	unsigned short lookup[MAXIMUM_OBJECTS_PER_MAP];
 	unsigned long visited[MAXIMUM_OBJECTS_PER_MAP];
-	struct { int ready, first, count; unsigned long visited; } clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+	struct { unsigned long generation; int first, count; unsigned long visited; } clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
 	long roots[TRACE_REFERENCES];
 } batch;
 
@@ -106,6 +111,7 @@ static void trace_prepare(long index, short depth, int octant, int *work, long *
 		trace_prepare(node->children[1], depth + 1, octant, work, &child_target, &child_skipped);
 	}
 	slot = (unsigned long)index % COLLISION_VECTOR_CACHE_NODES;
+	batch.cache[octant].nodes[slot].generation = batch.cache[octant].generation;
 	batch.cache[octant].nodes[slot].index_plus_one = index + 1;
 	batch.cache[octant].nodes[slot].node = node;
 	batch.cache[octant].nodes[slot].plane = plane;
@@ -242,9 +248,9 @@ static void trace_objects(long index, real_vector3d const *vector, real *depth, 
 static void trace_cluster(long cluster, real_vector3d const *vector, real *depth)
 {
 	int i;
-	if (batch.clusters[cluster].visited == batch.ray) return;
-	batch.clusters[cluster].visited = batch.ray;
-	if (!batch.clusters[cluster].ready)
+	if (batch.clusters[cluster].visited == batch.stamp) return;
+	batch.clusters[cluster].visited = batch.stamp;
+	if (batch.clusters[cluster].generation != batch.generation)
 	{
 		long reference, index;
 		batch.clusters[cluster].first = batch.references;
@@ -262,18 +268,32 @@ static void trace_cluster(long cluster, real_vector3d const *vector, real *depth
 			batch.roots[batch.references++] = index;
 		}
 		batch.clusters[cluster].count = batch.references - batch.clusters[cluster].first;
-		batch.clusters[cluster].ready = 1;
+		batch.clusters[cluster].generation = batch.generation;
 	}
 	for (i = 0; i < batch.clusters[cluster].count && !batch.failed; i++)
 	{
 		long index = batch.roots[batch.clusters[cluster].first+i];
 		unsigned long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(index);
-		if (batch.visited[slot] != batch.ray)
+		if (batch.visited[slot] != batch.stamp)
 		{
-			batch.visited[slot] = batch.ray;
+			batch.visited[slot] = batch.stamp;
 			trace_objects(index, vector, depth, 0);
 		}
 	}
+}
+
+/* the objects a batch read, and their lookups: all else of the last batch's is
+   out of date by its generation or stamp */
+static void batch_clear(void)
+{
+	int i;
+	for (i = 0; i < batch.count; i++)
+	{
+		unsigned long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(batch.objects[i].index);
+		if (slot < MAXIMUM_OBJECTS_PER_MAP) batch.lookup[slot] = 0;
+	}
+	memset(batch.objects, 0, (size_t)batch.count * sizeof(batch.objects[0]));
+	batch.count = 0;
 }
 
 void plasma_collision_begin(unsigned long flags, real_point3d const *point, long ignore)
@@ -281,7 +301,25 @@ void plasma_collision_begin(unsigned long flags, real_point3d const *point, long
 	unsigned long supported = FLAG(_collision_test_structure_bit) | FLAG(_collision_test_objects_bit) |
 		FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_back_facing_surfaces_bit) |
 		FLAG(_collision_test_objects_scenery_bit) | FLAG(_collision_test_objects_machines_bit);
-	memset(&batch, 0, sizeof(batch));
+	int octant;
+	batch_clear();
+	/* (a generation that comes round again could find a slot of its last time
+	   round: those are cleared, once in four billion batches) */
+	if (!++batch.generation)
+	{
+		memset(batch.cache, 0, sizeof(batch.cache));
+		int cluster;
+		for (cluster = 0; cluster < MAXIMUM_CLUSTERS_PER_STRUCTURE; cluster++) batch.clusters[cluster].generation = 0;
+		batch.generation = 1;
+	}
+	for (octant = 0; octant < 8; octant++)
+		batch.cache[octant].generation = batch.generation;
+	memset(batch.prefixes, 0, sizeof(batch.prefixes));
+	batch.failed = batch.references = batch.defer_models = 0;
+	batch.ray = 0;
+	batch.structure = NULL;
+	batch.bsp = NULL;
+	batch.extent = batch.vector_squared = 0;
 	batch.active = flags == supported || flags == (supported | FLAG(_collision_test_objects_vehicles_bit));
 	batch.flags = flags;
 	batch.point = point;
@@ -319,6 +357,13 @@ float plasma_collision_depth(unsigned long flags, real_point3d const *point, rea
 			trace_prepare(batch.prefixes[octant].node, batch.prefixes[octant].depth, octant, &work, &target, &skipped);
 	}
 	batch.ray++;
+	/* (a stamp that comes round again: the visits marked with it are cleared) */
+	if (!++batch.stamp)
+	{
+		memset(batch.visited, 0, sizeof(batch.visited));
+		for (i = 0; i < MAXIMUM_CLUSTERS_PER_STRUCTURE; i++) batch.clusters[i].visited = 0;
+		batch.stamp = 1;
+	}
 	batch.vector_squared = vector->i * vector->i + vector->j * vector->j + vector->k * vector->k;
 	hit = collision_bsp_test_vector_from_node(FLAG(_collision_test_front_facing_surfaces_bit) |
 		FLAG(_collision_test_back_facing_surfaces_bit), batch.bsp,
@@ -378,11 +423,11 @@ void plasma_collision_depths(unsigned long flags, real_point3d const *point,
 
 void plasma_collision_end(void)
 {
-	/* Model instances borrow tag and object matrices only during the batch. */
-	memset(batch.objects, 0, (size_t)batch.count * sizeof(batch.objects[0]));
+	/* Model instances borrow tag and object matrices only during the batch;
+	   the cache's slots, the tree's nodes (out of date with the generation). */
+	batch_clear();
 	batch.active = 0;
 	batch.point = NULL;
 	batch.structure = NULL;
 	batch.bsp = NULL;
-	memset(&batch.cache, 0, sizeof(batch.cache));
 }

@@ -18,12 +18,16 @@ header included in hcex build.
 /* ---------- structures */
 
 /* port: optional synchronous vector-batch scratch. Zero before use; all rays
-must share the same BSP and point. No pointers may survive the batch. */
+must share the same BSP and point. No pointers may survive the batch. A slot
+counts only while its generation is the cache's: a new batch moves the
+cache's on, rather than clearing every slot. */
 enum { COLLISION_VECTOR_CACHE_NODES = 512 };
 struct collision_bsp_vector_cache
 {
+	unsigned long generation;
 	struct
 	{
+		unsigned long generation;
 		long index_plus_one;
 		struct bsp3d_node const *node;
 		real_plane3d const *plane;

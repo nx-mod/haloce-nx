@@ -24,7 +24,7 @@ def test_model_major_batch_matches_original_queries():
 
 def test_full_cache_clear_is_detected():
     code = source()
-    before = 'memset(&cache, 0, MIN(bsp->bsp3d.nodes.count, (long)COLLISION_VECTOR_CACHE_NODES) * sizeof(cache.nodes[0]));'
+    before = 'memset(&cache.nodes, 0, MIN(bsp->bsp3d.nodes.count, (long)COLLISION_VECTOR_CACHE_NODES) * sizeof(cache.nodes[0]));'
     assert code.count(before) == 1
     status, output = run(build('plasma_collision_models', (('under_test.inc', code.replace(before, 'memset(&cache, 0, sizeof(cache));')),)), 'batch')
     assert status == CHECK_FAILED and 'clears only' in output, output

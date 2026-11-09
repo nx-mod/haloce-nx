@@ -7,6 +7,7 @@
 
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #define MIN(a,b) ((a)<(b)?(a):(b))
+static int lighting_fast_occlusion_math(void) { return 0; }
 #include "under_test.inc"
 int main(int argc,char **argv)
 {

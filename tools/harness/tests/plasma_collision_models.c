@@ -17,7 +17,8 @@ struct collision_model { struct block nodes; };
 enum { COLLISION_VECTOR_CACHE_NODES = 512 };
 struct collision_bsp_vector_cache
 {
- struct { long index_plus_one; void const *node; void const *plane; real distance; long skip_node; short skip_count; }
+ unsigned long generation;
+ struct { unsigned long generation; long index_plus_one; void const *node; void const *plane; real distance; long skip_node; short skip_count; }
   nodes[COLLISION_VECTOR_CACHE_NODES];
 };
 struct collision_bsp_test_vector_result { real t; };

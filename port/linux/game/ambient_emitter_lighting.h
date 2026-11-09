@@ -16,5 +16,8 @@ int ambient_emitter_lighting_enabled(void);
 unsigned long ambient_emitter_lighting_begin(void);
 void ambient_emitter_lighting_forget(void);
 int ambient_emitter_lighting_sample(long object, int component, struct emitter_sample *sample);
+/* port: whether ambient_emitter_lighting_sample could take this object, from
+   what is known without its datum: a flame stream's owner, or a profile's tag */
+int ambient_emitter_lighting_candidate(long object, long definition);
 
 #endif

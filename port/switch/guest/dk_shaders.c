@@ -1584,22 +1584,36 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 	uint64_t hash;
 	uint32_t state = 0;
 	uint32_t handle;
-	/* each stage's last key and its handle: draws in a row mostly share
+	/* each stage's latest keys and their handles: draws in a row mostly share
 	their shaders, and the copy and the hash below are a byte at a time
-	(dk_shader_for_draw was 3.8% of the game thread in a match) */
-	static uint32_t last_key[2][(sizeof(struct nv2a_pixel_shader_key) + 3) / 4];
-	static uint32_t last_handle[2];
+	(dk_shader_for_draw was 3.8% of the game thread in a match). port: eight,
+	not one: draws that alternate between a few materials missed every time,
+	and hashed (key_hash was 1% of the game thread in a campaign fight). A handle is never taken back. */
+	enum { RECENT_KEYS = 8 };
+	static uint32_t recent_key[2][RECENT_KEYS][(sizeof(struct nv2a_pixel_shader_key) + 3) / 4];
+	static uint32_t recent_handle[2][RECENT_KEYS];
+	static unsigned int recent_last[2], recent_next[2];
 	int which = stage == DK_SHADER_STAGE_PIXEL;
 	const uint32_t *words = key_data;
 	unsigned long word;
+	unsigned int probe;
 
-	if (last_handle[which] && !(size % 4) && !((uintptr_t)key_data % 4))
-	{
-		for (word = 0; word < size / 4 && words[word] == last_key[which][word]; word++)
-			;
-		if (word == size / 4)
-			return last_handle[which];
-	}
+	if (!(size % 4) && !((uintptr_t)key_data % 4))
+		for (probe = 0; probe < RECENT_KEYS; probe++)
+		{
+			/* (the latest found first) */
+			unsigned int slot = (recent_last[which] + probe) % RECENT_KEYS;
+
+			if (!recent_handle[which][slot])
+				continue;
+			for (word = 0; word < size / 4 && words[word] == recent_key[which][slot][word]; word++)
+				;
+			if (word == size / 4)
+			{
+				recent_last[which] = slot;
+				return recent_handle[which][slot];
+			}
+		}
 
 	/* the key as it is known: a pixel key with count_samples at 0 (it does
 	not change the GLSL), which is how the imported and shared keys hash */
@@ -1612,8 +1626,11 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 	entry = handle_slot(hash);
 	if (entry->hash == hash)
 	{
-		memcpy(last_key[which], key_data, size);
-		last_handle[which] = entry->handle;
+		unsigned int slot = recent_next[which]++ % RECENT_KEYS;
+
+		memcpy(recent_key[which][slot], key_data, size);
+		recent_handle[which][slot] = entry->handle;
+		recent_last[which] = slot;
 		return entry->handle;
 	}
 	handle = host_dk_shader_find(stage, hash, (uint32_t)(uintptr_t)&state);

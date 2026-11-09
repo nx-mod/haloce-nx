@@ -2193,7 +2193,8 @@ static boolean collision_bsp_test_vector_recursive(
 		/* port: identical BSP and origin throughout the batch. Keep the
 		original checked lookup and arithmetic on a miss or a stock query. */
 		cache_slot = (unsigned long)node_index % COLLISION_VECTOR_CACHE_NODES;
-		if (data->cache && data->cache->nodes[cache_slot].index_plus_one == node_index + 1)
+		if (data->cache && data->cache->nodes[cache_slot].index_plus_one == node_index + 1 &&
+			data->cache->nodes[cache_slot].generation == data->cache->generation)
 		{
 			node = data->cache->nodes[cache_slot].node;
 			plane = data->cache->nodes[cache_slot].plane;
@@ -2224,6 +2225,7 @@ static boolean collision_bsp_test_vector_recursive(
 			distance = plane3d_distance_to_point(plane, data->point);
 			if (data->cache)
 			{
+				data->cache->nodes[cache_slot].generation = data->cache->generation;
 				data->cache->nodes[cache_slot].index_plus_one = node_index + 1;
 				data->cache->nodes[cache_slot].node = node;
 				data->cache->nodes[cache_slot].plane = plane;

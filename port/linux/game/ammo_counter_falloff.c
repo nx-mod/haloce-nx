@@ -52,33 +52,52 @@ float plasma_prong_falloff_factor(const float axis[3], float x, float y, float z
 	return t*t*(3.0f - 2.0f*t);
 }
 
-/* plasma_prong_falloff_factor for every cell of a field, in its texels' order. A
-   weapon's mask is made again each time its field changes, and a cell's distance
-   never does, so those are kept: what's left is a flat loop with no call and no
-   square root. (No cell centre is near enough to the middle for the factor's zero.) */
+/* A field's cells, in its texels' order: their offsets from the middle, and their
+   distances from it, which never change, so a mask is a flat loop with no call
+   and no square root. (No cell centre is near enough to the middle for the
+   factors' zero.) */
+enum { MASK_CELLS = 16 * 16 * 16 };
+static float mask_xs[MASK_CELLS], mask_ys[MASK_CELLS], mask_zs[MASK_CELLS], mask_lengths[MASK_CELLS];
+static void mask_cells_prepare(void)
+{
+	static int ready;
+	int x, y, z, i;
+	if (ready)
+		return;
+	for (z = 0, i = 0; z < 16; z++)
+		for (y = 0; y < 16; y++)
+			for (x = 0; x < 16; x++, i++)
+			{
+				mask_xs[i] = 2.0f * (x + 0.5f) / 16 - 1;
+				mask_ys[i] = 2.0f * (y + 0.5f) / 16 - 1;
+				mask_zs[i] = 2.0f * (z + 0.5f) / 16 - 1;
+				mask_lengths[i] = sqrtf(mask_xs[i]*mask_xs[i] + mask_ys[i]*mask_ys[i] + mask_zs[i]*mask_zs[i]);
+			}
+	ready = 1;
+}
+
+/* plasma_prong_falloff_factor for every cell of a field. A weapon's mask is made
+   again each time its field changes. */
 void plasma_prong_falloff_mask(const float axis[3], float *mask)
 {
-	enum { CELLS = 16 * 16 * 16 };
-	static float xs[CELLS], ys[CELLS], zs[CELLS], lengths[CELLS];
-	static int ready;
 	int i;
-	if (!ready)
+	mask_cells_prepare();
+	for (i = 0; i < MASK_CELLS; i++)
 	{
-		int x, y, z;
-		for (z = 0, i = 0; z < 16; z++)
-			for (y = 0; y < 16; y++)
-				for (x = 0; x < 16; x++, i++)
-				{
-					xs[i] = 2.0f * (x + 0.5f) / 16 - 1;
-					ys[i] = 2.0f * (y + 0.5f) / 16 - 1;
-					zs[i] = 2.0f * (z + 0.5f) / 16 - 1;
-					lengths[i] = sqrtf(xs[i]*xs[i] + ys[i]*ys[i] + zs[i]*zs[i]);
-				}
-		ready = 1;
+		float t = PIN(((axis[0]*mask_xs[i] + axis[1]*mask_ys[i] + axis[2]*mask_zs[i]) / mask_lengths[i] + 0.2f) / 0.7f, 0.0f, 1.0f);
+		mask[i] = t*t*(3.0f - 2.0f*t);
 	}
-	for (i = 0; i < CELLS; i++)
+}
+
+/* port: ammo_counter_falloff_factor for every cell of a field, as the prong's: a
+   counter's field texture called it for each of its 4,096 texels, for each pass */
+void ammo_counter_falloff_mask(const float axis[3], float *mask)
+{
+	int i;
+	mask_cells_prepare();
+	for (i = 0; i < MASK_CELLS; i++)
 	{
-		float t = PIN(((axis[0]*xs[i] + axis[1]*ys[i] + axis[2]*zs[i]) / lengths[i] + 0.2f) / 0.7f, 0.0f, 1.0f);
+		float t = PIN((axis[0]*mask_xs[i] + axis[1]*mask_ys[i] + axis[2]*mask_zs[i]) / (mask_lengths[i] * 0.6f), 0.0f, 1.0f);
 		mask[i] = t*t*(3.0f - 2.0f*t);
 	}
 }

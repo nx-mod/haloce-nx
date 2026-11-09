@@ -46,7 +46,8 @@ void plasma_collision_model_depths(struct collision_model_instance const *instan
 		matrix4x3_transform_point(&inverse, point, &origin);
 		/* port: only the slots this node's tree can use (a slot is a tree node's
 		   index modulo the cache's size): most object BSPs are far smaller. */
-		memset(&cache, 0, MIN(bsp->bsp3d.nodes.count, (long)COLLISION_VECTOR_CACHE_NODES) * sizeof(cache.nodes[0]));
+		cache.generation = 0;
+		memset(&cache.nodes, 0, MIN(bsp->bsp3d.nodes.count, (long)COLLISION_VECTOR_CACHE_NODES) * sizeof(cache.nodes[0]));
 		for (ray = 0; ray < count; ray++)
 			if (pending[ray / 32] & (1U << (ray % 32)))
 			{
