@@ -1766,6 +1766,32 @@ static const char *audio_device_setting(void)
 	return name && name[0] ? name : "default";
 }
 
+#ifdef HALO_ANDROID
+/* audio.realtime as the stream was opened with it; -1 before it is */
+static int audio_realtime = -1;
+#endif
+
+/* audio.realtime (Android's): AAudio's low latency path, which on a phone
+that has it plays straight to the hardware (MMAP), past the system's mixer
+that screen recorders take the app's sound from, or its ordinary one. SDL's
+hint is read as a stream opens, so it is set for the next one; TRUE when it
+changed */
+static BOOL audio_realtime_read(void)
+{
+#ifdef HALO_ANDROID
+	int realtime = config_boolean("audio.realtime") ? 1 : 0;
+
+	if (realtime == audio_realtime)
+		return FALSE;
+	audio_realtime = realtime;
+	SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, realtime ? "1" : "0");
+	platform_log("audio: realtime %s", realtime ? "on" : "off");
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
 static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
 	float buffer[MIX_CHUNK_FRAMES * MAXIMUM_OUTPUT_CHANNELS];
@@ -1881,6 +1907,7 @@ static void audio_start(void)
 		}
 #endif
 		audio_device_read_at = config_changes();
+		audio_realtime_read();
 		audio_stream = SDL_OpenAudioDeviceStream(platform_audio_device(FALSE, audio_device_name), &spec,
 			audio_callback, NULL);
 		if (!audio_stream && strcmp(audio_device_name, "default"))
@@ -1902,17 +1929,20 @@ static void audio_start(void)
 }
 
 /* (the event thread, each frame: sdl_platform.c) audio.output_device
-changed (Settings > Audio): the sound goes on on the new device, else the
-system's default */
+changed (Settings > Audio), or Android's audio.realtime (Sound Processing):
+the sound goes on on the new device, else the system's default, opened
+anew */
 void dsound_sdl_output_device_check(void)
 {
 	SDL_AudioSpec spec;
 	SDL_AudioStream *stream;
+	BOOL realtime_changed;
 
 	if (!audio_stream || audio_device_read_at == config_changes())
 		return;
 	audio_device_read_at = config_changes();
-	if (!strcmp(audio_device_name, audio_device_setting()))
+	realtime_changed = audio_realtime_read();
+	if (!strcmp(audio_device_name, audio_device_setting()) && !realtime_changed)
 		return;
 	snprintf(audio_device_name, sizeof(audio_device_name), "%s", audio_device_setting());
 	spec.format = SDL_AUDIO_F32;

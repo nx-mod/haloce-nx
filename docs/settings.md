@@ -88,6 +88,7 @@ The **Platforms** column says which platforms' `config.toml` has the setting.
 | `audio.effects_volume` | `1.0` | All | The volume of every other sound (effects and speech), 0.0 to 1.0 (of audio.volume). |
 | `audio.reverb` | `true` | All | Reverberate the world's sounds as the place the player is in does (the maps' sound environments, as the Xbox's I3DL2 reverb did); false keeps them dry. |
 | `audio.resampler` | `"sinc"` | All | How sounds are converted to the output's rate: "sinc" with a band-limited low pass; "linear" between neighbouring samples, brighter for the aliasing it lets through. |
+| `audio.realtime` | `true` | Android | Play through AAudio's low latency path (on a phone that has it, straight to the hardware, past the system's mixer); false goes through the mixer, where screen recorders take the app's sound. Changes at once. |
 | `audio.voice_chat` | `"push_to_talk"` | All | Talking in network games' voice chat: "push_to_talk" (while controls.push_to_talk is held; the microphone opens the first time), "open_mic" (whenever the microphone hears speech), or "off". Others' voices play whatever this is (audio.voice_volume 0 silences them). |
 | `audio.voice_volume` | `1.0` | All | The volume of the other players' voices (0 to 2). |
 

@@ -116,9 +116,9 @@ static unsigned long keystroke_head, keystroke_count;
 /* the system's on-screen keyboard shown or hidden as wanted (Steam's, or
 Android's) */
 static void screen_keyboard_update(void);
-#ifndef HALO_ANDROID
-/* dsound_sdl.c's: the output device followed */
+/* dsound_sdl.c's: the output device (and Android's realtime audio) followed */
 void dsound_sdl_output_device_check(void);
+#ifndef HALO_ANDROID
 /* updater.c's: the desktop self-updater */
 void updater_start(void);
 void updater_poll(SDL_Window *window);
@@ -255,11 +255,6 @@ BOOL platform_sdl_initialize(void)
 	/* touching the screen must not aim or fire (the mouse drives the
 	controller emulation in xinput_sdl.c) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-	/* AAudio's ordinary path, not its low latency one: on a phone that
-	has it, low latency plays straight to the hardware (MMAP), past the
-	system's mixer, where a screen recorder takes the app's sound, so
-	recordings came out silent */
-	SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "0");
 #endif
 #if defined(__linux__) && !defined(HALO_ANDROID)
 	/* input.playstation_kernel_driver: a PlayStation pad through the
@@ -2326,9 +2321,10 @@ void platform_pump_events(void)
 #endif
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);
-	/* (Settings > Audio's output device, as it changes: dsound_sdl.c) */
-	dsound_sdl_output_device_check();
 #endif
+	/* (Settings > Audio's output device, and Android's realtime audio, as
+	they change: dsound_sdl.c) */
+	dsound_sdl_output_device_check();
 	screen_keyboard_update();
 	pthread_mutex_lock(&input_lock);
 #ifndef HALO_ANDROID

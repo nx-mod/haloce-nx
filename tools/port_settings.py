@@ -625,6 +625,10 @@ SCREENS["audio_settings/sound_processing"] = {
         ("RESAMPLER:", "audio.resampler", [("SINC", "sinc"), ("LINEAR", "linear")],
          "How sounds are converted to the output's rate:\nsinc is clean; linear is brighter, with aliasing.",
          None),
+        # (AAudio's low latency path, which screen recorders cannot hear on a phone where it
+        # goes straight to the hardware: dsound_sdl.c's audio_realtime_read)
+        ("REALTIME AUDIO:", "audio.realtime", ON_OFF,
+         "Uses realtime audio to reduce latency.\nMay affect screen recordings.", "android"),
     ],
 }
 _audio["rows"] = [row for row in _audio["rows"] if row[1] not in _processing]
