@@ -62,7 +62,7 @@ public final class TouchLayoutTest {
         check(wide.add(4) == 4 && wide.shown(4), "Add must restore a hidden button first");
         wide.setShown(TouchLayout.LEFT, false);
         check(wide.add(TouchLayout.LEFT) == TouchLayout.LEFT, "Hidden move stick must be restorable");
-        reject(exported.replace("version=5", "version=9"));
+        reject(exported.replace("version=6", "version=9"));
         reject(exported.replace("control.18.type=4", "control.18.type=16"));
         reject(exported.replace("control.18.x=240.0", "control.18.x=NaN"));
         reject(exported.replace("count=19", "count=10000"));
@@ -86,7 +86,7 @@ public final class TouchLayoutTest {
         reject(sizedText.replace("control.18.size=1.6", "control.18.size=3.0"));
         reject(sizedText.replace("rumble=false", "rumble=invalid"));
         reject(sizedText.replace("gyroscope=true", "gyroscope=invalid"));
-        String legacy = sizedText.replace("version=5", "version=1").replaceAll("(?m)^.*\\.size=.*\\R", "")
+        String legacy = sizedText.replace("version=6", "version=1").replaceAll("(?m)^.*\\.size=.*\\R", "")
             .replaceAll("(?m)^(rumble|gyroscope|opacity|floating-stick|menu-fingers|buttons-aim|options\\.x|options\\.y)=.*\\R", "");
         TouchLayout.Configuration old = TouchLayout.importConfiguration(legacy);
         check(old.layout.sizeScale(copy) == 1 && old.layout.rumbleEnabled && !old.layout.gyroscopeEnabled,
@@ -102,7 +102,7 @@ public final class TouchLayoutTest {
               "The floating stick must survive export/import");
         sized.layout.floatingStick = false;
         reject(translucent.replace("floating-stick=false", "floating-stick=maybe"));
-        String version2 = translucent.replace("version=5", "version=2").replaceAll("(?m)^(opacity|floating-stick|menu-fingers|buttons-aim)=.*\\R", "");
+        String version2 = translucent.replace("version=6", "version=2").replaceAll("(?m)^(opacity|floating-stick|menu-fingers|buttons-aim)=.*\\R", "");
         check(TouchLayout.importConfiguration(version2).layout.opacity == 1f
               && !TouchLayout.importConfiguration(version2).layout.floatingStick,
               "Version 2 layouts load fully opaque, with the stick in its place");
@@ -144,7 +144,7 @@ public final class TouchLayoutTest {
         reject(movedOptions.replaceAll("(?m)^options\\.x=.*", "options.x=5000"));
         sized.layout.resetDefaults();
         check(!sized.layout.optionsMoved(), "Reset puts Options back in its place");
-        String version3 = fourFingers.replace("version=5", "version=3")
+        String version3 = fourFingers.replace("version=6", "version=3")
             .replaceAll("(?m)^(menu-fingers|buttons-aim)=.*\\R", "");
         check(TouchLayout.importConfiguration(version3).layout.menuFingers == 3
               && TouchLayout.importConfiguration(version3).layout.buttonsAim,
@@ -158,9 +158,30 @@ public final class TouchLayoutTest {
               "Showing the controls during cutscenes must survive export/import");
         reject(duringCutscenes.replace("cinematics=true", "cinematics=maybe"));
         reject(duringCutscenes.replaceAll("(?m)^cinematics=.*\\R", ""));
-        String version4 = duringCutscenes.replace("version=5", "version=4").replaceAll("(?m)^cinematics=.*\\R", "");
+        String version4 = duringCutscenes.replace("version=6", "version=4").replaceAll("(?m)^cinematics=.*\\R", "");
         check(!TouchLayout.importConfiguration(version4).layout.cinematics,
               "Version 4 layouts hide the controls during cutscenes");
+        // Split screen (version 6): off unless turned on; on, it hides the Fire buttons (reset too), off shows
+        // them again; version 5 files load with it off.
+        check(!TouchLayout.importConfiguration(duringCutscenes).layout.splitScreen, "Split screen is off by default");
+        sized.layout.setSplitScreen(true);
+        check(!sized.layout.shown(4) && !sized.layout.shown(TouchLayout.FIRE_LEFT) && sized.layout.shown(0)
+              && sized.layout.shown(TouchLayout.LEFT), "Split screen hides the Fire buttons only");
+        String split = sized.layout.exportConfiguration(2.25f);
+        TouchLayout.Configuration splitImported = TouchLayout.importConfiguration(split);
+        check(splitImported.layout.splitScreen && !splitImported.layout.shown(4),
+              "Split screen must survive export/import");
+        sized.layout.resetDefaults();
+        check(!sized.layout.shown(4) && !sized.layout.shown(TouchLayout.FIRE_LEFT),
+              "Reset keeps the Fire buttons hidden while split screen is on");
+        sized.layout.setSplitScreen(false);
+        check(sized.layout.shown(4) && sized.layout.shown(TouchLayout.FIRE_LEFT),
+              "Turning split screen off shows the Fire buttons again");
+        reject(split.replace("split-screen=true", "split-screen=maybe"));
+        reject(split.replaceAll("(?m)^split-screen=.*\\R", ""));
+        String version5 = split.replace("version=6", "version=5").replaceAll("(?m)^split-screen=.*\\R", "");
+        check(!TouchLayout.importConfiguration(version5).layout.splitScreen,
+              "Version 5 layouts load without split screen");
         try {
             sized.layout.setOpacity(1.5f);
             throw new AssertionError("Out-of-range opacity was accepted");

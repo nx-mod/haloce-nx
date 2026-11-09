@@ -16,6 +16,7 @@ import java.util.Properties;
  */
 final class TouchLayout {
     /** the kinds of control: a button of TouchControls's list, by index */
+    static final int RT = 4;
     static final int LEFT = 16;
     static final int FIRE_LEFT = 17;
     static final int BASE_COUNT = 18;
@@ -39,7 +40,7 @@ final class TouchLayout {
     /** the saved grid */
     private static final float GRID_WIDTH = 960;
     private static final float GRID_HEIGHT = 540;
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
     private static final int MAX_FILE_LENGTH = 65536;
 
     /** each kind's default place on the grid, and its radius */
@@ -100,6 +101,13 @@ final class TouchLayout {
     boolean buttonsAim = true;
     /** the controls show during cutscenes (cinematics) too, where the game otherwise hides them (version 5) */
     boolean cinematics = false;
+    /**
+     * split screen (version 6): the left half of the display moves (a stick
+     * where the thumb lands), the right half aims, and a tap on it fires; the
+     * Fire buttons are hidden while it is on (they can be shown again). Off
+     * unless turned on
+     */
+    boolean splitScreen = false;
     /** where the Options button is, in logical units; NaN until it is dragged (TouchControls then places it) */
     private float optionsX = Float.NaN;
     private float optionsY = Float.NaN;
@@ -192,7 +200,28 @@ final class TouchLayout {
         controls.clear();
         for (int i = 0; i < DEFAULTS.length; i++)
             controls.add(new Control(i, DEFAULTS[i][0] * width / GRID_WIDTH, DEFAULTS[i][1] * height / GRID_HEIGHT));
+        if (splitScreen)
+            showFireButtons(false);
         keepAllInside();
+    }
+
+    /** a Fire button (the right trigger, either of them) */
+    static boolean isFire(int type) {
+        return type == RT || type == FIRE_LEFT;
+    }
+
+    /** shows or hides every Fire button, copies too */
+    void showFireButtons(boolean shown) {
+        for (Control control : controls) {
+            if (isFire(control.type))
+                control.shown = shown;
+        }
+    }
+
+    /** split screen on or off: the Fire buttons go with it (a tap on the right half fires) */
+    void setSplitScreen(boolean on) {
+        splitScreen = on;
+        showFireButtons(!on);
     }
 
     /** adds a copy of a control beside it; -1 if there may be no more (or it is the stick) */
@@ -287,6 +316,7 @@ final class TouchLayout {
         values.setProperty("menu-fingers", Integer.toString(menuFingers));
         values.setProperty("buttons-aim", Boolean.toString(buttonsAim));
         values.setProperty("cinematics", Boolean.toString(cinematics));
+        values.setProperty("split-screen", Boolean.toString(splitScreen));
         if (optionsMoved()) {
             values.setProperty("options.x", Float.toString(optionsX * GRID_WIDTH / width));
             values.setProperty("options.y", Float.toString(optionsY * GRID_HEIGHT / height));
@@ -357,6 +387,8 @@ final class TouchLayout {
                 layout.cinematics = readBoolean(values, "cinematics");
             for (int i = 0; i < count; i++)
                 layout.controls.add(readControl(values, i, version));
+            if (version >= 6)
+                layout.splitScreen = readBoolean(values, "split-screen");
             return new Configuration(layout, sensitivity);
         } catch (IOException | NullPointerException e) {
             throw new IllegalArgumentException("Incomplete layout file", e);
