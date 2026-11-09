@@ -233,8 +233,9 @@ SCREENS = {
              "Stock picks models' detail by the Xbox's 480 lines;\nnative by this display's; highest, always the best.", None),
             ("SHIELD GLOW:", "display.shield_glow", ON_OFF,
              "Shields light their surroundings as they flare.\nOnline: the host's choice.", None),
-            ("GLOW INTENSITY:", "display.shield_glow_intensity", [("DEFAULT", "default"), ("LIGHT SHOW", "light_show")],
-             "Light Show: three times as far, at full from a\nthird of the flare. Online: the host's choice.", None),
+            ("GLOW INTENSITY:", "display.shield_glow_intensity",
+             [("1X", "default"), ("1.5X", "1.5x"), ("2X", "2x"), ("3X", "light_show")],
+             "How far and bright every dynamic light shines.\nOnline, Shield Glow's is the host's choice.", None),
             # (the OpenGL renderer's alone, as texture filtering: the deko3d
             # and Vulkan ones draw the Xbox's range)
             ("HDR:", "display.hdr", ON_OFF,

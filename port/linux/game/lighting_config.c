@@ -157,6 +157,47 @@ int lighting_config_boolean(const char *name)
 	return config_boolean(name);
 }
 
+/* display.shield_glow_intensity, Video Setup's Glow Intensity: how far and how
+   bright every dynamic light is, 1, 1.5, 2 or 3 times ("light_show"). Each light
+   scales where its maker stores its radius, so that the radius it is drawn with,
+   its clusters and its occlusion and falloff masks all agree. In a network game
+   only Shield Glow follows the host's choice (shield_glow_enabled). */
+float lighting_glow_scale(void)
+{
+	extern const char *config_string(const char *name);
+	static unsigned long changes;
+	static int ready;
+	static float scale = 1.0f;
+	if (!ready || changes != config_changes())
+	{
+		const char *intensity;
+		changes = config_changes();
+		intensity = config_string("display.shield_glow_intensity");
+		scale = !intensity ? 1.0f :
+			!strcmp(intensity, "light_show") ? 3.0f :
+			!strcmp(intensity, "2x") ? 2.0f :
+			!strcmp(intensity, "1.5x") ? 1.5f : 1.0f;
+		ready = 1;
+	}
+	return scale;
+}
+
+/* a light's color at the glow's intensity: brighter by its scale, as far as its
+   brightest channel's full, with its hue kept */
+void lighting_glow_brighten(float scale, float *red, float *green, float *blue)
+{
+	float peak;
+	if (scale == 1.0f)
+		return;
+	*red *= scale; *green *= scale; *blue *= scale;
+	peak = *red > *green ? *red : *green;
+	peak = peak > *blue ? peak : *blue;
+	if (peak > 1.0f)
+	{
+		*red /= peak; *green /= peak; *blue /= peak;
+	}
+}
+
 /* A moving light's grid. The Switch traces 384 rays: at a Pillar of Autumn firefight,
    59.6 fps to 1,536's 57.1, with room for more lights to have occlusion
    (docs/dynamic_lighting_performance_plan.md). The overlay can change it for this

@@ -103,6 +103,11 @@ unsigned long ambient_emitter_lighting_begin(void) { return ambient_mode==1?_obj
 void ambient_emitter_lighting_forget(void) {}
 int ambient_emitter_lighting_sample(long i,int c,struct emitter_sample *s);
 int ambient_emitter_lighting_candidate(long i,long d) { return ambient_mode&&i<ambient_count; }
+/* Glow Intensity (lighting_config.c) */
+static float glow_scale = 1.0f;
+float lighting_glow_scale(void) { return glow_scale; }
+void lighting_glow_brighten(float s, float *r, float *g, float *b)
+{ float p; *r *= s; *g *= s; *b *= s; p = *r > *g ? *r : *g; p = p > *b ? p : *b; if (p > 1.0f) { *r /= p; *g /= p; *b /= p; } }
 #include "under_test.inc"
 int ambient_emitter_lighting_sample(long i,int c,struct emitter_sample *s)
 {

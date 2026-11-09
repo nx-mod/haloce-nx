@@ -49,6 +49,11 @@ static void light_delete(long l) { storage[l-100].active=0; deletes++; }
 static void light_disconnect_from_map(long l) { CHECK(storage[l-100].connected,"disconnect requires connected light"); storage[l-100].connected=0; disconnects++; }
 static void light_reconnect_to_map(long l) { CHECK(!storage[l-100].connected,"connect requires disconnected light"); storage[l-100].connected=1; }
 void plasma_occlusion_submit(long l,long r) { submits++; }
+/* Glow Intensity (lighting_config.c) */
+static float glow_scale = 1.0f;
+float lighting_glow_scale(void) { return glow_scale; }
+void lighting_glow_brighten(float s, float *r, float *g, float *b)
+{ float p; *r *= s; *g *= s; *b *= s; p = *r > *g ? *r : *g; p = p > *b ? p : *b; if (p > 1.0f) { *r /= p; *g /= p; *b /= p; } }
 #include "under_test.inc"
 int main(void)
 {
@@ -58,6 +63,7 @@ int main(void)
  rocket_lighting_update(); CHECK(allocs==8,"bounded eight owned lights");
  CHECK(rocket_lighting_radius(100,0,0.25f)==1.75f,"owned radius covers template");
  CHECK(rocket_lighting_radius(100,1,0.25f)==0.25f,"wrong owner keeps bounds");
+ glow_scale=3.0f; CHECK(rocket_lighting_radius(100,0,0.25f)==1.75f*3.0f,"bounds at Glow Intensity"); glow_scale=1.0f;
  rocket_lighting_window_begin();
  for(i=0;i<8;i++) { rocket_lighting_submitted(100+i,i); CHECK(rocket_lighting_selected(i),"submitted rocket selected"); }
  CHECK(submits==8 && !rocket_lighting_selected(NONE),"only valid submissions");

@@ -15,6 +15,10 @@ static int integer_reads;
 long config_integer(const char *name) { integer_reads++;return occlusion_lights; }
 int config_boolean(const char *name)
 { reads++;if(reads==change_at){enabled=1;generation++;}return enabled; }
+/* display.shield_glow_intensity, and how often it is read */
+static const char *intensity="default";
+static int string_reads;
+const char *config_string(const char *name) { string_reads++;return intensity; }
 static int string_compares;
 static int counted_strcmp(const char *a,const char *b) { string_compares++;return (strcmp)(a,b); }
 #define strcmp counted_strcmp
@@ -42,6 +46,33 @@ int main(int argc,char **argv)
   before_reads=integer_reads;
   for(i=0;i<1000;i++) CHECK(lighting_budget()->fields==6,"read again");
   CHECK(integer_reads==before_reads,"the setting is read only when the settings change");
+  return 0;
+ }
+ if(argc>1&&!strcmp(argv[1],"glow"))
+ {
+  static const struct { const char *value; float scale; } levels[]={
+   {"default",1.0f},{"1.5x",1.5f},{"2x",2.0f},{"light_show",3.0f},{"bogus",1.0f}};
+  float r,g,b;int before_reads;
+  for(i=0;i<sizeof(levels)/sizeof(levels[0]);i++)
+  {
+   intensity=levels[i].value;generation++;
+   CHECK(lighting_glow_scale()==levels[i].scale,"each Glow Intensity has its scale");
+  }
+  intensity=NULL;generation++;
+  CHECK(lighting_glow_scale()==1.0f,"no setting is as made");
+  intensity="2x";generation++;
+  CHECK(lighting_glow_scale()==2.0f,"read again when the settings change");
+  before_reads=string_reads;
+  for(i=0;i<1000;i++) CHECK(lighting_glow_scale()==2.0f,"read again");
+  CHECK(string_reads==before_reads,"the setting is read only when the settings change");
+  r=.2f;g=.4f;b=.1f;lighting_glow_brighten(2.0f,&r,&g,&b);
+  CHECK(r==.4f&&g==.8f&&b==.2f,"a dim light is brighter by the scale");
+  r=.5f;g=1.0f;b=.25f;lighting_glow_brighten(3.0f,&r,&g,&b);
+  CHECK(r==.5f&&g==1.0f&&b==.25f,"a light at full stays at full, its hue kept");
+  r=.4f;g=.2f;b=.1f;lighting_glow_brighten(3.0f,&r,&g,&b);
+  CHECK(r==1.0f&&g>.49f&&g<.51f&&b>.24f&&b<.26f,"past full, its brightest channel is full, its hue kept");
+  r=.3f;g=.6f;b=.9f;lighting_glow_brighten(1.0f,&r,&g,&b);
+  CHECK(r==.3f&&g==.6f&&b==.9f,"1x changes nothing");
   return 0;
  }
  if(argc>1&&!strcmp(argv[1],"moving"))

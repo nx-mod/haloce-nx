@@ -24,6 +24,8 @@ static struct rocket_light
 } rocket_lights[ROCKET_LIGHTS];
 static const real_rgb_color rocket_color = {1.0f, 0.45f, 0.12f};
 static const real_rgb_color rocket_black = {0.0f, 0.0f, 0.0f};
+/* the flight glow's reach, at Glow Intensity (its color is already at full) */
+#define ROCKET_RADIUS (1.75f * lighting_glow_scale())
 
 static int rocket_visible(long object_index)
 {
@@ -102,7 +104,7 @@ void rocket_lighting_update(void)
 		if (slot == NONE)
 			continue;
 		light = &rocket_lights[slot];
-		if (light->active && light_port_glow_set(light->light_index, iterator.index, &rocket_color, 1.75f))
+		if (light->active && light_port_glow_set(light->light_index, iterator.index, &rocket_color, ROCKET_RADIUS))
 		{
 			if (!light->connected)
 				light_reconnect_to_map(light->light_index);
@@ -120,7 +122,7 @@ void rocket_lighting_update(void)
 		light->object_index = iterator.index;
 		light->rasterizer_index = NONE;
 		light->active = light->connected = TRUE;
-		light_port_glow_set(light->light_index, iterator.index, &rocket_color, 1.75f);
+		light_port_glow_set(light->light_index, iterator.index, &rocket_color, ROCKET_RADIUS);
 	}
 }
 
@@ -189,6 +191,6 @@ float rocket_lighting_radius(long light_index, long object_index, float radius)
 	for (i = 0; i < ROCKET_LIGHTS; i++)
 		if (rocket_lights[i].active && rocket_lights[i].light_index == light_index &&
 			rocket_lights[i].object_index == object_index)
-			return MAX(radius, 1.75f);
+			return MAX(radius, ROCKET_RADIUS);
 	return radius;
 }

@@ -128,6 +128,7 @@ void muzzle_lighting_shot(long weapon_index, short trigger_index)
 		pulse->radius = 2.2f;
 		pulse->duration = 0.16f;
 	}
+	pulse->radius *= lighting_glow_scale(); /* (Glow Intensity) */
 }
 
 static int muzzle_position(struct muzzle_pulse *pulse, real_point3d *position)
@@ -211,6 +212,7 @@ void muzzle_lighting_update(void)
 		color.red *= strength;
 		color.green *= strength;
 		color.blue *= strength;
+		lighting_glow_brighten(lighting_glow_scale(), &color.red, &color.green, &color.blue);
 		if (pulse->light == NONE)
 		{
 			definition = light_port_glow_definition_get();

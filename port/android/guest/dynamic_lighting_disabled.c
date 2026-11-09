@@ -18,6 +18,8 @@
 
 void plasma_lighting_prepare(long light, long object, long definition) {}
 float plasma_lighting_radius(long light, long object, float radius) { return radius; }
+void plasma_lighting_color(long light, long object, float *red, float *green, float *blue) {}
+float lighting_glow_scale(void) { return 1.0f; }
 int plasma_lighting_vehicle_occlusion(long light) { return FALSE; }
 void plasma_lighting_frame_begin(void) {}
 void plasma_lighting_frame_end(void) {}

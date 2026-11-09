@@ -58,6 +58,12 @@ float covenant_lighting_scale(const char *name)
 }
 
 static const real_rgb_color covenant_black = {0.0f, 0.0f, 0.0f};
+
+/* a profile's glow at Glow Intensity (its color is already at full) */
+static real covenant_radius(int profile)
+{
+	return covenant_profiles[profile].radius * lighting_glow_scale();
+}
 static long covenant_fuel_exhaust = NONE - 1;
 
 /* Tint only the submitted copy of the shared Grunt/Hunter flight light.
@@ -167,7 +173,7 @@ void covenant_lighting_update(void)
 			continue;
 		light = &covenant_lights[slot];
 		light->profile = profile;
-		if (light->active && light_port_glow_set(light->light_index, iterator.index, &covenant_profiles[light->profile].color, covenant_profiles[light->profile].radius))
+		if (light->active && light_port_glow_set(light->light_index, iterator.index, &covenant_profiles[light->profile].color, covenant_radius(light->profile)))
 		{
 			if (!light->connected)
 				light_reconnect_to_map(light->light_index);
@@ -186,7 +192,7 @@ void covenant_lighting_update(void)
 		light->object_index = iterator.index;
 		light->rasterizer_index = NONE;
 		light->active = light->connected = TRUE;
-		light_port_glow_set(light->light_index, iterator.index, &covenant_profiles[light->profile].color, covenant_profiles[light->profile].radius);
+		light_port_glow_set(light->light_index, iterator.index, &covenant_profiles[light->profile].color, covenant_radius(light->profile));
 	}
 }
 
@@ -256,7 +262,7 @@ float covenant_lighting_radius(long light_index, long object_index, float radius
 	for (i = 0; i < COVENANT_LIGHTS; i++)
 		if (covenant_lights[i].active && covenant_lights[i].light_index == light_index &&
 			covenant_lights[i].object_index == object_index)
-			return MAX(radius, covenant_profiles[covenant_lights[i].profile].radius);
+			return MAX(radius, covenant_radius(covenant_lights[i].profile));
 	return radius;
 }
 

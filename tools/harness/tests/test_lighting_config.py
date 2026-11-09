@@ -100,3 +100,9 @@ def test_the_overlay_chooses_a_cap(flags):
     status,output=run(build('lighting_config',(('under_test.inc',code),),flags),'cap')
     assert status==0,output
 
+
+
+def test_glow_intensity_scales_and_brightens():
+    code=re.sub(r'^#include.*$','',read('port/linux/game/lighting_config.c'),flags=re.M)
+    status,output=run(build('lighting_config',(('under_test.inc',code),)),'glow')
+    assert status==0,output

@@ -192,6 +192,7 @@ symbols in this file:
 #include "rocket_lighting.h" /* port: port/linux/game/rocket_lighting.c */
 #include "plasma_lighting.h" /* port: port/linux/game/plasma_lighting.c */
 #include "shield_glow.h" /* port: port/linux/game/shield_glow.c */
+#include "lighting_config.h" /* port: lighting_glow_scale */
 
 /* port: port/linux/src (halo.log) */
 void platform_log(const char *format, ...);
@@ -874,7 +875,9 @@ int light_port_can_reach_view(long light_index)
 	reach = definition->radius_modifier_upper_bound * definition->radius;
 	if (!TEST_FLAG(definition->flags, _light_definition_no_specular_bit))
 		reach *= definition->specular_radius_multiplier;
-	return render_frustum_sphere_visible(&render.frustum, &light->position, reach * PLASMA_LIGHTING_MAXIMUM_SCALE + 2.0f);
+	/* (and Glow Intensity's, which scales them all) */
+	return render_frustum_sphere_visible(&render.frustum, &light->position,
+		reach * PLASMA_LIGHTING_MAXIMUM_SCALE * lighting_glow_scale() + 2.0f);
 }
 
 /* port: how far a promoted light is from this view, for plasma_lighting_rank:
@@ -1346,6 +1349,9 @@ void lights_preprocess_scene(
 					   the authored datum still supplies flares and simulation queries. */
 					if (light->parent_light_index == NONE)
 						covenant_lighting_color(light->object_index, light->definition_index, &light_parameters.color);
+					/* port: a promoted light's color at Glow Intensity, this copy too */
+					plasma_lighting_color(scene_light_handle, light->object_index,
+						&light_parameters.color.red, &light_parameters.color.green, &light_parameters.color.blue);
 					match_assert(
 						"c:\\halo\\SOURCE\\objects\\object_lights.c",
 						0x1EE,

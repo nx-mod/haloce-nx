@@ -8,6 +8,8 @@
 void plasma_lighting_prepare(long light_index, long object_index, long definition_index);
 void plasma_lighting_rank(void);
 float plasma_lighting_radius(long light_index, long object_index, float radius);
+/* a promoted light's drawn color at Glow Intensity */
+void plasma_lighting_color(long light_index, long object_index, float *red, float *green, float *blue);
 int light_port_attachment_radius(long light_index, long object_index, float *radius, int restore);
 int plasma_lighting_vehicle_occlusion(long light_index);
 void plasma_lighting_frame_begin(void);

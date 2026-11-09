@@ -343,7 +343,8 @@ void covenant_emitter_lighting_update(void)
 			emitter->position.z += (sample.position.z - emitter->position.z) * blend;
 			sample.position = emitter->position;
 		}
-		emitter->radius = sample.radius;
+		/* (Glow Intensity: here, so that its bounds and cone masks agree) */
+		emitter->radius = sample.radius * lighting_glow_scale();
 		if (sample.kind == 3 || sample.kind == 4)
 		{
 			emitter->position = sample.position;
@@ -358,6 +359,7 @@ void covenant_emitter_lighting_update(void)
 		color.red = sample.color.red * emitter->strength * sample.view_gain;
 		color.green = sample.color.green * emitter->strength * sample.view_gain;
 		color.blue = sample.color.blue * emitter->strength * sample.view_gain;
+		lighting_glow_brighten(lighting_glow_scale(), &color.red, &color.green, &color.blue);
 		if (emitter->light == NONE)
 		{
 			definition = light_port_glow_definition_get();

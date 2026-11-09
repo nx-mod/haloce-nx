@@ -50,6 +50,7 @@ static real last_radius[128];
 static char const *intensity="default";
 int config_boolean(char const *name){return on;}
 char const *config_string(char const *name){return intensity;}
+static float lighting_glow_scale(void){return !strcmp(intensity,"light_show")?3.f:!strcmp(intensity,"2x")?2.f:!strcmp(intensity,"1.5x")?1.5f:1.f;}
 unsigned long config_changes(void){return changes;}
 static short network_shield_effects(void){return policy;}
 static int forced;

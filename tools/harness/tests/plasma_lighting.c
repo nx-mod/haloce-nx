@@ -108,6 +108,11 @@ int authored_emitter_lighting_enabled(void) { return 0; }
 static int emitter_category;
 int authored_emitter_lighting_profile(long o,long d,float *s) { *s = 1.5f; return emitter_category; }
 int authored_emitter_lighting_category_enabled(int c) { return enabled; }
+/* Glow Intensity (lighting_config.c) */
+static float glow_scale = 1.0f;
+float lighting_glow_scale(void) { return glow_scale; }
+void lighting_glow_brighten(float s, float *r, float *g, float *b)
+{ float p; *r *= s; *g *= s; *b *= s; p = *r > *g ? *r : *g; p = p > *b ? p : *b; if (p > 1.0f) { *r /= p; *g /= p; *b /= p; } }
 #include "under_test.inc"
 
 int main(int argc, char **argv)
@@ -148,6 +153,27 @@ int main(int argc, char **argv)
   }
   plasma_lighting_prepare(21,21, NONE);CHECK(plasma_lighting_count==0,"owned glow bypasses authored restore");
  }
+ else if (!strcmp(test, "intensity"))
+	{
+		/* Glow Intensity scales a promoted light's reach and brightens its color */
+		float red, green, blue;
+		tag_name = "weapons\\plasma rifle\\bolt"; enabled = 1; glow_scale = 2.0f;
+		plasma_lighting_prepare(1, 1, NONE);
+		CHECK(plasma_lighting_radius(1, 1, 1.0f) == 1.75f * 2.0f, "reach at Glow Intensity");
+		red = .1f; green = .3f; blue = .4f;
+		plasma_lighting_color(1, 1, &red, &green, &blue);
+		CHECK(red == .2f && green == .6f && blue == .8f, "a promoted light is brighter");
+		red = .1f; green = .3f; blue = .4f;
+		plasma_lighting_color(1, 2, &red, &green, &blue);
+		CHECK(red == .1f && green == .3f && blue == .4f, "another's light is not");
+		plasma_lighting_frame_end();
+		red = .1f; green = .3f; blue = .4f;
+		plasma_lighting_color(1, 1, &red, &green, &blue);
+		CHECK(red == .1f && green == .3f && blue == .4f, "nor a light no longer promoted");
+		glow_scale = 1.0f;
+		plasma_lighting_prepare(1, 1, NONE);
+		CHECK(plasma_lighting_radius(1, 1, 1.0f) == 1.75f, "1x is as made");
+	}
  else if (!strcmp(test, "radius"))
 	{
 		const char *names[] = {"weapons\\plasma rifle\\bolt", "weapons\\plasma pistol\\bolt",

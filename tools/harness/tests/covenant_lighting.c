@@ -60,6 +60,11 @@ static void light_delete(long l) { storage[l-100].active=0; deletes++; }
 static void light_disconnect_from_map(long l) { CHECK(storage[l-100].connected,"disconnect requires connected light"); storage[l-100].connected=0; disconnects++; }
 static void light_reconnect_to_map(long l) { CHECK(!storage[l-100].connected,"connect requires disconnected light"); storage[l-100].connected=1; }
 void plasma_occlusion_submit(long l,long r) { submits++; }
+/* Glow Intensity (lighting_config.c) */
+static float glow_scale = 1.0f;
+float lighting_glow_scale(void) { return glow_scale; }
+void lighting_glow_brighten(float s, float *r, float *g, float *b)
+{ float p; *r *= s; *g *= s; *b *= s; p = *r > *g ? *r : *g; p = p > *b ? p : *b; if (p > 1.0f) { *r /= p; *g /= p; *b /= p; } }
 #include "under_test.inc"
 static void color_checks(void)
 {

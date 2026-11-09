@@ -93,11 +93,9 @@ boolean shield_glow_enabled(
 	}
 	if (changes != config_changes())
 	{
-		char const *intensity = config_string("display.shield_glow_intensity");
-
 		changes = config_changes();
 		enabled = config_boolean("display.shield_glow") != 0;
-		shield_glow_scale = intensity && !strcmp(intensity, "light_show") ? 3.f : 1.f;
+		shield_glow_scale = lighting_glow_scale();
 	}
 	return enabled;
 }

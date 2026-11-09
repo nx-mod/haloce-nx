@@ -123,9 +123,10 @@ void plasma_lighting_prepare(long light_index, long object_index, long definitio
 	/* Wider soft falloff increases useful illumination without clipping colour.
 	   Pistol shots start with smaller authored radii than rifle bolts. */
 	plasma_lighting_attachments[plasma_lighting_count].radius_scale =
-		category ? authored_scale : covenant_scale ? covenant_scale :
+		(category ? authored_scale : covenant_scale ? covenant_scale :
 		!strcmp(name, "weapons\\plasma pistol\\bolt") ? 2.25f :
-		!strcmp(name, "weapons\\plasma rifle\\charged bolt") ? 2.75f : 1.75f;
+		!strcmp(name, "weapons\\plasma rifle\\charged bolt") ? 2.75f : 1.75f) *
+		lighting_glow_scale(); /* (Glow Intensity) */
 	plasma_lighting_attachments[plasma_lighting_count].full_scale = plasma_lighting_attachments[plasma_lighting_count].radius_scale;
 	plasma_lighting_attachments[plasma_lighting_count].category = category;
 	plasma_lighting_count++;
@@ -196,6 +197,24 @@ float plasma_lighting_radius(long light_index, long object_index, float radius)
 			authored_emitter_lighting_category_enabled(plasma_lighting_attachments[index].category))
 			return radius * plasma_lighting_attachments[index].radius_scale;
 	return radius;
+}
+
+/* port: a promoted light's drawn color at Glow Intensity (only this render
+   copy: its datum keeps the authored color) */
+void plasma_lighting_color(long light_index, long object_index, float *red, float *green, float *blue)
+{
+	int index;
+	float scale = lighting_glow_scale();
+	if (scale == 1.0f || (!lighting_config_boolean("display.plasma_lighting") && !authored_emitter_lighting_enabled()))
+		return;
+	for (index = 0; index < plasma_lighting_count; index++)
+		if (plasma_lighting_attachments[index].light_index == light_index &&
+			plasma_lighting_attachments[index].object_index == object_index &&
+			authored_emitter_lighting_category_enabled(plasma_lighting_attachments[index].category))
+		{
+			lighting_glow_brighten(scale, red, green, blue);
+			return;
+		}
 }
 
 /* port: a frame is drawn between this and plasma_lighting_frame_end, which

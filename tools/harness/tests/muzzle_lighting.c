@@ -58,6 +58,11 @@ static void light_delete(long i) { lights[i].active=0;deletes++; }
 static void light_disconnect_from_map(long i) { CHECK(TEST_FLAG(lights[i].flags,_point_light_connected_to_map_bit),"disconnect once");lights[i].flags&=~FLAG(_point_light_connected_to_map_bit);disconnects++; }
 static void light_reconnect_to_map(long i) { CHECK(!TEST_FLAG(lights[i].flags,_point_light_connected_to_map_bit),"reconnect once");lights[i].flags|=FLAG(_point_light_connected_to_map_bit); }
 void plasma_occlusion_submit(long l,long r) { submits++; }
+/* Glow Intensity (lighting_config.c) */
+static float glow_scale = 1.0f;
+float lighting_glow_scale(void) { return glow_scale; }
+void lighting_glow_brighten(float s, float *r, float *g, float *b)
+{ float p; *r *= s; *g *= s; *b *= s; p = *r > *g ? *r : *g; p = p > *b ? p : *b; if (p > 1.0f) { *r /= p; *g /= p; *b /= p; } }
 #include "under_test.inc"
 int main(int argc,char **argv)
 {
