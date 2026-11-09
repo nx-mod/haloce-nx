@@ -753,11 +753,17 @@ static const struct config_setting config_settings[] =
 		"The folder the game's maps are read from; empty for the maps folder in\n"
 		"the data folder. A relative path is under the data folder. Read once,\n"
 		"at the start. The disc's maps are only ever unpacked into the data\n"
-		"folder's maps, so a folder named here must hold them already." },
+		"folder's maps, so a folder named here must hold them already (on\n"
+		"Android, the launcher's \"Use another folder\" sets this and unpacks\n"
+		"them there)." },
 	{ "game.custom_maps.path", _config_string, "\"\"", "HALO_CUSTOM_MAPS_PATH", _environment_value, _platform_all,
 		"The folder Custom Edition maps are read from (and map sharing's\n"
 		"downloads go to); empty for the custom_maps folder in the data folder.\n"
 		"A relative path is under the data folder. Read once, at the start." },
+	{ "game.mods.path", _config_string, "\"\"", "HALO_MODS_PATH", _environment_value, _platform_all,
+		"The folder the mods are read from (and Android's IMPORT puts them in);\n"
+		"empty for the mods folder in the data folder. A relative path is under\n"
+		"the data folder." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"

@@ -3541,6 +3541,7 @@ int port_mods_save(void);
 void port_mods_revert(void);
 char const *port_mods_folder(long index);
 long port_mods_folders(void);
+char const *port_mods_root(void);
 int port_mods_delete(long index);
 /* (mods.c) */
 void mods_apply(void);
@@ -4095,7 +4096,7 @@ static boolean mods_import(void)
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 	char folder[1024];
 
-	snprintf(folder, sizeof(folder), "%s/mods", platform_data_root());
+	snprintf(folder, sizeof(folder), "%s", port_mods_root());
 	mods_screen.importing = TRUE;
 	mods_screen.import_folders = port_mods_folders();
 	mods_screen.import_looked = system_milliseconds();

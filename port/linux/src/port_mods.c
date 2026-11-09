@@ -1010,13 +1010,30 @@ static int mod_for_map(const struct port_mod *mod, const char *map_name)
 	return 0;
 }
 
+/* the mods folder: game.mods.path's (an absolute path, or one under the
+data root), else the data root's mods */
 static const char *mods_root(char *path, size_t size)
 {
-	snprintf(path, size, "%s/mods", platform_data_root());
+	const char *configured = config_string("game.mods.path");
+
+	if (!configured || !*configured)
+		snprintf(path, size, "%s/mods", platform_data_root());
+	/* (absolute: /..., a drive's C:\... or C:/..., the Switch's sdmc:/...) */
+	else if (configured[0] == '/' || configured[0] == '\\' || strstr(configured, ":/") || strstr(configured, ":\\"))
+		snprintf(path, size, "%s", configured);
+	else
+		snprintf(path, size, "%s/%s", platform_data_root(), configured);
 	return path;
 }
 
 /* ---------- public code */
+
+const char *port_mods_root(void)
+{
+	static char root[MAXIMUM_PATH_LENGTH];
+
+	return mods_root(root, sizeof(root));
+}
 
 long port_mods_scan(void)
 {

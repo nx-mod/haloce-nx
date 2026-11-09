@@ -295,12 +295,14 @@ void host_android_path(int which, char *buffer, uint32_t size)
 	snprintf(buffer, size, "%s", which ? save_root : data_root);
 }
 
-static int directory_has_maps(const char *root)
+/* whether a maps folder holds the game's maps (its ui.map, the launcher's
+sign too: LauncherActivity.haveData) */
+static int folder_has_maps(const char *folder)
 {
-	char path[600];
+	char path[1100];
 	struct stat information;
 
-	snprintf(path, sizeof(path), "%s/maps/ui.map", root);
+	snprintf(path, sizeof(path), "%s/ui.map", folder);
 	return stat(path, &information) == 0;
 }
 
@@ -544,6 +546,10 @@ struct host_settings
 	/* debug.image_base: the same for the guest image (its pointers are moved
 	as where the Java runtime holds its linked address) */
 	uint32_t image_base;
+	/* game.maps.path: the folder the game's maps are in, an absolute path or
+	one under the data folder (the launcher's folder choice, MapsFolder.java,
+	writes it); empty for the data folder's maps */
+	char maps_path[512];
 };
 
 static void config_read(const char *path, struct host_settings *settings)
@@ -577,6 +583,7 @@ static void config_read(const char *path, struct host_settings *settings)
 		toml_datum_t multisample = toml_seek(result.toptab, "debug.original_multisample");
 		toml_datum_t window = toml_seek(result.toptab, "debug.window_base");
 		toml_datum_t image = toml_seek(result.toptab, "debug.image_base");
+		toml_datum_t maps_path = toml_seek(result.toptab, "game.maps.path");
 
 		if (hz.type == TOML_INT64 && hz.u.int64 > 0)
 			settings->profile_hz = hz.u.int64 > 10000 ? 10000 : (int)hz.u.int64;
@@ -604,6 +611,8 @@ static void config_read(const char *path, struct host_settings *settings)
 			settings->window_base = (uint32_t)window.u.int64;
 		if (image.type == TOML_INT64 && image.u.int64 > 0 && image.u.int64 < 0x100000000LL)
 			settings->image_base = (uint32_t)image.u.int64;
+		if (maps_path.type == TOML_STRING)
+			snprintf(settings->maps_path, sizeof(settings->maps_path), "%s", maps_path.u.s);
 	}
 	toml_free(result);
 }
@@ -653,12 +662,6 @@ static void *game_main(void *unused)
 	/* readable by adb (the shell user), for managing saves */
 	mkdir(save_root, 0775);
 	share_save_tree(save_root);
-	if (!directory_has_maps(data_root))
-	{
-		host_fatal("The Halo game data was not found.\n\nCopy the PAL game data (build 01.01.14.2342), "
-			"the folder that contains maps, into\n%s\nor import it from the launcher screen.", data_root);
-	}
-
 	host_environment_set(&environment, "HOME", save_root);
 	host_environment_set(&environment, "HALO_DATA_ROOT", data_root);
 	host_environment_set(&environment, "HALO_SAVE_ROOT", save_root);
@@ -681,6 +684,29 @@ static void *game_main(void *unused)
 	config_read(path, &settings);
 	if (settings.halo_log)
 		data_log_begin(data_root);
+	/* the game's maps, where game.maps.path says (as port/linux/src/xbox_files.c
+	reads it) */
+	{
+		char maps[1024];
+
+		if (!settings.maps_path[0])
+			snprintf(maps, sizeof(maps), "%s/maps", data_root);
+		else if (settings.maps_path[0] == '/')
+			snprintf(maps, sizeof(maps), "%s", settings.maps_path);
+		else
+			snprintf(maps, sizeof(maps), "%s/%s", data_root, settings.maps_path);
+		if (!folder_has_maps(maps))
+		{
+			if (settings.maps_path[0])
+				host_fatal("The Halo game data was not found in %s, the folder config.toml's game.maps.path "
+					"names.\n\nIf the app is no longer allowed to read it, start the game again and choose the "
+					"folder on the launcher screen, or choose to use the app's storage.", maps);
+			host_fatal("The Halo game data was not found.\n\nCopy the PAL game data (build 01.01.14.2342), "
+				"the folder that contains maps, into\n%s\nor import it from the launcher screen.", data_root);
+		}
+		if (settings.maps_path[0])
+			host_logf(HOST_LOG_INFO, "game.maps.path: %s", maps);
+	}
 	/* (after the log begins, so that halo.log says what it did; once) */
 	open_data_tree(data_root);
 	if (settings.profile_run)
