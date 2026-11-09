@@ -138,6 +138,8 @@ void host_memory_log_regions(void);
 /* whether the guest's memory below 4 GB has to be code memory, svcMapMemory
  * mapping nowhere there (host_mman.c) */
 int host_mman_low_code_mode(void);
+/* the end of the range below 4 GB that guest memory can be mapped in */
+uint64_t host_mman_guest_limit(void);
 
 /* Whether this port has set [address, address+size) aside, for the image, a
  * pool or the window. host_mman's allocator asks this before handing an
