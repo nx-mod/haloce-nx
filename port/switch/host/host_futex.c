@@ -21,6 +21,10 @@ the lock to the highest waiter; musl uses them only on a kernel that
 advertises them, and the guest here does not, so it takes the plain
 condition-variable path. They answer ENOSYS rather than pretending.
 
+- FUTEX_REQUEUE and FUTEX_CMP_REQUEUE wake the waiters they would have moved
+onto the other word, rather than moving them: an early wake, which every
+waiter allows for.
+
 - FUTEX_WAIT_BITSET and FUTEX_WAKE_BITSET are treated as the plain forms: the
 bitset is ignored. That is exact for a single bitset used as "any", which is
 the usual case, and lossy if a caller ever waits on a subset, which musl does
@@ -232,16 +236,24 @@ long host_futex(uint32_t address, int operation, uint32_t value, uint64_t timeou
 		to run on the woken threads' words, which this port does not have;
 		report the wake it can do rather than failing outright */
 		return futex_wake(address, (int)value);
+	case FUTEX_CMP_REQUEUE:
+		if (GUEST_WORD(address) != value3)
+			return -EAGAIN;
+		/* fall through */
 	case FUTEX_REQUEUE:
 	{
-		/* move up to value waiters from one word to another, as the wake
-		half of a requeue; the futex that asked for this is only ever
-		woken by a requeue that could not be completed on Linux either */
-		int woken = futex_wake(address, (int)value);
+		/* Linux wakes value waiters and moves up to the count (in the timeout's
+		place) onto address2, to be woken by whoever next wakes that. There is
+		no moving a waiter here, so those are woken too: a futex waiter must
+		test its own condition again whenever it wakes, and musl's do.
+		musl's condition variable needs this. pthread_cond_broadcast wakes its
+		first waiter, and each waiter in turn hands on to the next with a
+		requeue of 0 woken and 1 moved, onto the mutex. Waking only the first
+		half, as this did, left every waiter after the first asleep: a
+		broadcast woke one thread. */
+		int moved = (int)(uint32_t)timeout_address;
 
-		if (woken)
-			futex_wake((uint32_t)address2, woken);
-		return woken;
+		return futex_wake(address, (int)value + (moved > 0 ? moved : 0));
 	}
 	case FUTEX_LOCK_PI:
 	case FUTEX_TRYLOCK_PI:

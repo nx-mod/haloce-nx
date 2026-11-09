@@ -172,10 +172,10 @@ int lighting_moving_lights_384(void)
 }
 
 /* port: the overlay's Fast Occlusion Math: light occlusion's field rebuilt with
-   reciprocal estimates for its divides and square roots, not the exact ones.
-   Off unless the overlay turns it on, for this run only, never saved: to see
-   how it looks before it is anything more (plasma_occlusion.c). */
-static int fast_occlusion_math;
+   reciprocal estimates for its divides and square roots, not the exact ones
+   (within a millionth of them: plasma_occlusion.c). On; the overlay can turn it
+   off for this run, to compare, never saved. */
+static int fast_occlusion_math = 1;
 int lighting_fast_occlusion_math(void)
 {
 	return fast_occlusion_math;
@@ -185,9 +185,10 @@ int lighting_fast_occlusion_math(void)
    between the game thread and helper threads (plasma_collision.c), the same
    depths either way; and Background Light Rays: a light that has depths to go
    on with traced by the helpers while the frame draws, collected at its end, so
-   its new depths are drawn a frame later. For this run, never saved. */
+   its new depths are drawn a frame later. Both on; the overlay can turn either
+   off for this run, to compare, never saved. */
 static int parallel_light_rays = 1;
-static int background_light_rays;
+static int background_light_rays = 1;
 int lighting_parallel_light_rays(void)
 {
 	return parallel_light_rays;

@@ -620,14 +620,21 @@ enum { TRACE_HELPERS = 2 };
 enum { TRACE_HELPERS = 3 };
 #endif
 enum { TRACE_HELPER_SPINS = 4000 };
+/* (each helper is woken on its own, with a signal: no broadcast, whose waking
+   of more than one waiter the Switch's host once got wrong, and woke one) */
+struct trace_helper
+{
+	pthread_mutex_t lock;
+	pthread_cond_t wake;
+	struct trace_batch *batch;
+};
 static struct
 {
 	int started, helpers;
-	pthread_mutex_t lock;
-	pthread_cond_t wake;
 	unsigned long published;
 	struct trace_task *tasks;
-} pool = { 0, 0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, NULL };
+	struct trace_helper helper[TRACE_HELPERS];
+} pool;
 
 /* a published task's octants, any; whether there were any */
 static int pool_help(struct trace_batch *batch)
@@ -646,19 +653,19 @@ static int pool_help(struct trace_batch *batch)
 
 static void *pool_helper(void *argument)
 {
-	struct trace_batch *batch = (struct trace_batch *)argument;
+	struct trace_helper *helper = (struct trace_helper *)argument;
 	unsigned long seen = 0;
 	for (;;)
 	{
 		int spins;
-		pthread_mutex_lock(&pool.lock);
-		while (pool.published == seen)
-			pthread_cond_wait(&pool.wake, &pool.lock);
-		seen = pool.published;
-		pthread_mutex_unlock(&pool.lock);
+		pthread_mutex_lock(&helper->lock);
+		while (__atomic_load_n(&pool.published, __ATOMIC_ACQUIRE) == seen)
+			pthread_cond_wait(&helper->wake, &helper->lock);
+		seen = __atomic_load_n(&pool.published, __ATOMIC_ACQUIRE);
+		pthread_mutex_unlock(&helper->lock);
 		for (spins = 0; spins < TRACE_HELPER_SPINS; spins++)
 		{
-			if (pool_help(batch))
+			if (pool_help(helper->batch))
 				spins = 0;
 			else
 				trace_relax();
@@ -680,18 +687,22 @@ static int pool_start(void)
 		pool.tasks[index].next = TRACE_CHUNKS;
 	for (index = 0; index < TRACE_HELPERS; index++)
 	{
-		struct trace_batch *batch = (struct trace_batch *)calloc(1, sizeof(struct trace_batch));
+		struct trace_helper *helper = &pool.helper[pool.helpers];
 		pthread_attr_t attributes;
 		pthread_t thread;
-		if (!batch)
+		helper->batch = (struct trace_batch *)calloc(1, sizeof(struct trace_batch));
+		if (!helper->batch)
 			break;
+		pthread_mutex_init(&helper->lock, NULL);
+		pthread_cond_init(&helper->wake, NULL);
 		pthread_attr_init(&attributes);
 		pthread_attr_setstacksize(&attributes, 256 * 1024);
 		pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
-		if (pthread_create(&thread, &attributes, pool_helper, batch))
+		if (pthread_create(&thread, &attributes, pool_helper, helper))
 		{
 			pthread_attr_destroy(&attributes);
-			free(batch);
+			free(helper->batch);
+			helper->batch = NULL;
 			break;
 		}
 		pthread_attr_destroy(&attributes);
@@ -705,7 +716,7 @@ static int pool_start(void)
 int plasma_collision_depths_start(unsigned long flags, real_point3d const *point,
 	real_vector3d const *vectors, int count, long ignore)
 {
-	int index;
+	int index, handle;
 	if (count <= 0 || count > PLASMA_COLLISION_RAYS || !pool_start())
 		return -1;
 	for (index = 0; index < TRACE_TASKS; index++)
@@ -713,6 +724,7 @@ int plasma_collision_depths_start(unsigned long flags, real_point3d const *point
 			break;
 	if (index == TRACE_TASKS)
 		return -1;
+	handle = index;
 	{
 		struct trace_task *task = &pool.tasks[index];
 		task->used = 1;
@@ -720,11 +732,14 @@ int plasma_collision_depths_start(unsigned long flags, real_point3d const *point
 		__atomic_store_n(&task->next, 0, __ATOMIC_RELEASE);
 		__atomic_store_n(&task->published, 1, __ATOMIC_RELEASE);
 	}
-	pthread_mutex_lock(&pool.lock);
-	pool.published++;
-	pthread_cond_broadcast(&pool.wake);
-	pthread_mutex_unlock(&pool.lock);
-	return index;
+	__atomic_fetch_add(&pool.published, 1, __ATOMIC_RELEASE);
+	for (index = 0; index < pool.helpers; index++)
+	{
+		pthread_mutex_lock(&pool.helper[index].lock);
+		pthread_cond_signal(&pool.helper[index].wake);
+		pthread_mutex_unlock(&pool.helper[index].lock);
+	}
+	return handle;
 }
 
 /* The light's depths, once all its octants are traced: the game thread takes
