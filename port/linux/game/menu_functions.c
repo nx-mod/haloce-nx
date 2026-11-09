@@ -9535,7 +9535,7 @@ unsigned char pc_menu_ingame_join_allowed(short controller)
 	if (controller < 0 || controller >= MAXIMUM_LOCAL_PLAYERS || !game ||
 		network_game_client_get_state(client, &state_data) != _client_state_ingame ||
 		!game_engine_running() || !game_engine_in_play() || game_engine_showing_postgame() ||
-		network_coop_active() || !input_has_gamepad(controller) ||
+		network_coop_active() || network_replay_playing() || !input_has_gamepad(controller) ||
 		local_player_get_player_index(controller) != NONE || lobby_local_player(controller) ||
 		players_port_local_player_count() >= MAXIMUM_LOCAL_PLAYERS)
 	{
