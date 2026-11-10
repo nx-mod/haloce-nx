@@ -1,5 +1,38 @@
 # Changelog
 
+## Build 141
+
+### Dynamic lighting
+
+- New LIGHTING setting at the top of Video Setup > Dynamic Lighting: STOCK, 1X, 1.5X, 2X or 3X. STOCK, the default, is the same lighting as the original Xbox: every added light is off and the other options are hidden, keeping their settings for when you pick a level again. 1X to 3X make every dynamic light (projectiles, muzzle flashes, weapon glow, Needler prongs, shield emitters, vehicle lights, world emitters and shield glow) reach that much farther and shine that much brighter, its color kept. Online, each player's own level applies, except Shield Glow, which is still the host's choice. If you already had dynamic lights on, you keep them at 1X. (thelinkin3000)
+- Big fights cost less with dynamic lighting on: a light's occlusion rays are shared between the game thread and helper threads, moving lights are traced while the frame draws, occlusion uses faster math, and the ammo counter's light, Covenant emitters and objects standing still take less work each frame. (thelinkin3000)
+- Switch: every light ray helper thread now runs; only one of them ever did. (thelinkin3000)
+
+### Menus
+
+- The menus no longer stall on the SD card. Select Map and Select Gametype load in the background and say LOADING until they're ready; opened again, they're there at once. (thelinkin3000)
+- The campaign menus no longer read the whole 20 MB savegame each time they open: it's checked once, in the background, while the main menu is up. The saved games' index, gametype files, mods and the main menu's mod textures are kept in memory instead of read again and again. (thelinkin3000)
+- The maps folders are scanned again only when what's in them changes, and mods are found once a run (or when the Mods menu changes them), not at every map load. (thelinkin3000)
+- Startup touches the card less: unchanged default gametypes aren't rewritten, and shader caches are read in larger blocks. (thelinkin3000)
+- Android: Video Setup's last rows no longer overlap the help at the bottom. The Vulkan Driver's help now says it takes effect the next time the game starts. (thelinkin3000)
+
+### Split screen
+
+- Join a multiplayer match in progress: a controller with no player presses START, picks a profile in the box that opens in its quarter of the screen, and gets its own view. A player who leaves loses their view, and the others fill the screen. (thelinkin3000)
+- ADD PLAYER shows each profile's Spartan in its color. Player 1's controller can join when another controller started the game, and choosing a profile no longer sends players 2-4 to the title screen. (thelinkin3000)
+- Switch: a controller's face buttons follow the console's layout only while that player's own menu is up. (thelinkin3000)
+- The join box no longer opens during a replay. (thelinkin3000)
+
+### Android
+
+- On first start, the launcher asks where the game data goes: the app's own storage, as before, or a folder you choose. A folder that already has the stock maps starts at once; otherwise the disc image is extracted into it. A new `game.mods.path` setting says where the mods folder is. (thelinkin3000)
+- Settings > Audio Setup > Sound Processing has a new REALTIME AUDIO switch, on by default. Turn it off for screen recordings: on phones with low latency audio they came out silent. (thelinkin3000)
+
+### Fixes
+
+- Switch: big maps such as SPV2's a50 load again. They failed with an out-of-memory error, with plenty of memory free. (thelinkin3000)
+- A projectile whose owner was deleted mid-flight (a body cleaned up, a respawned vehicle) no longer stops the game when it hits something. (thelinkin3000)
+
 ## Build 140: Dynamic lighting, and better Custom Edition maps!
 
 ### Dynamic lighting
