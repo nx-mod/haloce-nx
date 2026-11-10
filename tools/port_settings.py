@@ -117,11 +117,10 @@ SCREENS = {
         # Android's backend and Vulkan driver take places of their own:
         # platform_places packs each platform's rows)
         "same_place": ["display.window_size", "anti_aliasing_android"],
-        # lines of text among the rows, in a place no row of theirs uses:
-        # (text, platform, place), None the place after the platform's last
-        # row. Below Android's rows, wherever they end (place 6 was below
-        # them until Maximum Resolution and Extra Effects came)
-        "notes": [("The graphics backend and driver change when the game restarts.", "android", None)],
+        # ("notes": lines of text among the rows, (text, platform, place),
+        # None the place after the platform's last row. Android's restart
+        # note is gone: below its ten rows it fell on the help, so the
+        # backend's and the driver's helps say it)
         # (buttons of the bar's own, between DEFAULTS and OK: (key, words,
         # menu function, platform, x). Android's IMPORT DRIVER, the app's file
         # picker for a driver archive copied into freedreno_drivers:
@@ -152,7 +151,7 @@ SCREENS = {
             # name left there by hand is kept unless another is chosen:
             # port/android/host/host_vk_driver.c)
             ("VULKAN DRIVER:", "display.vk_driver", [("STOCK", "")],
-             "The phone's own driver, or a zip from the drivers\nfolder (Turnip's, or one IMPORT DRIVER adds).",
+             "The phone's own driver, or a zip IMPORT DRIVER\nadds. Takes effect the next time the game starts.",
              "android"),
             ("RESOLUTION SCALING:", "display.resolution_scaling", [("NATIVE", "native"), ("ORIGINAL", "original")],
              "Native draws at the resolution; Original draws\nthe Xbox's 640x480 and scales it up.", "desktop web"),
@@ -233,9 +232,14 @@ SCREENS = {
              "Stock picks models' detail by the Xbox's 480 lines;\nnative by this display's; highest, always the best.", None),
             ("SHIELD GLOW:", "display.shield_glow", ON_OFF,
              "Shields light their surroundings as they flare.\nOnline: the host's choice.", None),
-            ("GLOW INTENSITY:", "display.shield_glow_intensity",
-             [("1X", "default"), ("1.5X", "1.5x"), ("2X", "2x"), ("3X", "light_show")],
-             "How far and bright every dynamic light shines.\nOnline, Shield Glow's is the host's choice.", None),
+            # (Dynamic Lighting's first row: STOCK turns every added light off
+            # and hides the other rows, menu_functions.c's
+            # dynamic_lighting_rows_show; a help for each value, in turn)
+            ("LIGHTING:", "display.shield_glow_intensity",
+             [("STOCK", "stock"), ("1X", "default"), ("1.5X", "1.5x"), ("2X", "2x"), ("3X", "light_show")],
+             ["Same lighting as original XBOX.", "Enhanced lighting for glowing objects.",
+              "I don't even know why this setting's here.", "You know there's flashlights, right?",
+              "Look at mr. rave lover over here!"], None),
             # (the OpenGL renderer's alone, as texture filtering: the deko3d
             # and Vulkan ones draw the Xbox's range)
             ("HDR:", "display.hdr", ON_OFF,
@@ -508,7 +512,8 @@ _graphics = {"display.show_fps", "display.high_res_hud", "display.hud_button_sty
              "display.model_detail"}
 # (the visual modifiers: a screen of their own, Extra Effects)
 _shield_lighting = {"display.shield_glow", "display.shield_glow_intensity"}
-_shield_rows = [row for row in _video["rows"] if row[1] in _shield_lighting]
+_shield_rows = [row for row in _video["rows"] if row[1] == "display.shield_glow"]
+_intensity_rows = [row for row in _video["rows"] if row[1] == "display.shield_glow_intensity"]
 _extra_effects = {"display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping",
                   "display.hdr_paper_white", "display.hdr_peak_brightness"}
 # (each platform's rows packed: the Switch has none of the renderer's rows
@@ -563,7 +568,7 @@ _video["categories"] = [
 SCREENS["video_settings/dynamic_lighting"] = {
     "screen": "dynamic_lighting_settings_screen", "header": _video["header"], "spacing": 26,
     "help_top": 370, "help_height": 40,
-    "rows": [
+    "rows": _intensity_rows + [
         ("PROJECTILE LIGHTS:", "display.plasma_lighting", ON_OFF,
          "Plasma, grenades, rockets and flame streams cast\nsoft light on nearby surfaces and models.", None),
         ("MUZZLE FLASH LIGHTS:", "display.muzzle_lighting", ON_OFF,
@@ -1066,10 +1071,17 @@ def _setting_screen(folder: str, spec: dict) -> list:
                       [label for label, *_ in spec.get("categories", ())])
     if spec.get("words"):
         extra += _strings(f"{base}/words", spec["words"])
-    # (the help of the row whose label is string n is n + 1: the buttons' is 0)
+    # (the help of the row whose label is string n is n + 1: the buttons' is 0.
+    # A row whose help is a list has one for each value: its first in the
+    # row's place, the others last, in turn: menu_functions.c's
+    # settings_value_help, one such row a screen)
+    value_helps = [help_text for _, _, _, help_text, *_ in spec["rows"] if isinstance(help_text, list)]
+    assert len(value_helps) <= 1, f"{folder}: one row with a help for each value at most"
     extra += _strings(f"{base}/help_strings",
-                      [""] + [help_text.replace("\n", "\\n") for _, _, _, help_text, *_ in spec["rows"]] +
-                      [help_text.replace("\n", "\\n") for _, _, help_text, *_ in spec.get("categories", ())])
+                      [""] + [(help_text[0] if isinstance(help_text, list) else help_text).replace("\n", "\\n")
+                              for _, _, _, help_text, *_ in spec["rows"]] +
+                      [help_text.replace("\n", "\\n") for _, _, help_text, *_ in spec.get("categories", ())] +
+                      [text.replace("\n", "\\n") for helps in value_helps for text in helps[1:]])
     # (a note's place None: the one after its platform's last row)
     if spec.get("notes"):
         spec = dict(spec, notes=[(text, platform, places[platform] + 1 if place is None else place)

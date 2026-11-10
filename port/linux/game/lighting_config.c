@@ -8,6 +8,7 @@
 
 int config_boolean(const char *name);
 unsigned long config_changes(void);
+int lighting_stock(void);
 
 static struct
 {
@@ -147,9 +148,12 @@ int lighting_config_boolean(const char *name)
 	{
 		/* A concurrent settings change must cause another refresh, rather
 		   than label partially read preferences with the newer generation. */
+		int stock;
 		changes = config_changes();
+		/* (STOCK: every added light off, whatever its own toggle) */
+		stock = lighting_stock();
 		for (i = 0; i < sizeof(preferences) / sizeof(preferences[0]); i++)
-			preferences[i].value = platform_allows(preferences[i].name) && config_boolean(preferences[i].name);
+			preferences[i].value = !stock && platform_allows(preferences[i].name) && config_boolean(preferences[i].name);
 		ready = 1;
 	}
 	preference = preference_index(name);
@@ -157,29 +161,43 @@ int lighting_config_boolean(const char *name)
 	return config_boolean(name);
 }
 
-/* display.shield_glow_intensity, Video Setup's Glow Intensity: how far and how
-   bright every dynamic light is, 1, 1.5, 2 or 3 times ("light_show"). Each light
-   scales where its maker stores its radius, so that the radius it is drawn with,
-   its clusters and its occlusion and falloff masks all agree. In a network game
-   only Shield Glow follows the host's choice (shield_glow_enabled). */
-float lighting_glow_scale(void)
+/* display.shield_glow_intensity, Dynamic Lighting's LIGHTING: "stock" (the
+   default) turns every added light off, as the original Xbox drew the game;
+   the others are how far and how bright every dynamic light is, 1, 1.5, 2 or 3
+   times ("light_show"). Each light scales where its maker stores its radius, so
+   that the radius it is drawn with, its clusters and its occlusion and falloff
+   masks all agree. In a network game only Shield Glow follows the host's choice
+   (shield_glow_enabled). */
+static unsigned long intensity_changes;
+static int intensity_ready, intensity_stock = 1;
+static float intensity_scale = 1.0f;
+
+static void intensity_read(void)
 {
 	extern const char *config_string(const char *name);
-	static unsigned long changes;
-	static int ready;
-	static float scale = 1.0f;
-	if (!ready || changes != config_changes())
-	{
-		const char *intensity;
-		changes = config_changes();
-		intensity = config_string("display.shield_glow_intensity");
-		scale = !intensity ? 1.0f :
-			!strcmp(intensity, "light_show") ? 3.0f :
-			!strcmp(intensity, "2x") ? 2.0f :
-			!strcmp(intensity, "1.5x") ? 1.5f : 1.0f;
-		ready = 1;
-	}
-	return scale;
+	const char *intensity;
+	if (intensity_ready && intensity_changes == config_changes())
+		return;
+	intensity_changes = config_changes();
+	intensity = config_string("display.shield_glow_intensity");
+	intensity_stock = !intensity || !strcmp(intensity, "stock");
+	intensity_scale = !intensity ? 1.0f :
+		!strcmp(intensity, "light_show") ? 3.0f :
+		!strcmp(intensity, "2x") ? 2.0f :
+		!strcmp(intensity, "1.5x") ? 1.5f : 1.0f;
+	intensity_ready = 1;
+}
+
+float lighting_glow_scale(void)
+{
+	intensity_read();
+	return intensity_scale;
+}
+
+int lighting_stock(void)
+{
+	intensity_read();
+	return intensity_stock;
 }
 
 /* a light's color at the glow's intensity: brighter by its scale, as far as its

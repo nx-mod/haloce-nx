@@ -2271,6 +2271,34 @@ static boolean setting_default_show(struct widget_instance *spinner, struct pc_m
 	return TRUE;
 }
 
+/* a row with a help for each of its values (tools/port_settings.py, one a
+screen: Dynamic Lighting's LIGHTING): its first value's is in the row's place,
+`index`; the others' are the help list's last strings, in turn */
+static short settings_value_help(struct widget_instance *row, short index)
+{
+	static struct { char const *row, *spinner, *helps; } const rows[] = {
+		{ "op_shield_glow_intensity", "shield_glow_intensity_spinner",
+			"pc\\main_menu\\settings_select\\player_setup\\player_profile_edit\\video_settings\\dynamic_lighting\\help_strings" },
+	};
+	struct widget_instance *spinner;
+	struct pc_menu_setting *setting;
+	long helps;
+	short value;
+	unsigned int i;
+
+	for (i = 0; i < NUMBEROF(rows) && strcmp(row->name, rows[i].row); i++)
+		;
+	spinner = i < NUMBEROF(rows) ? named(row, rows[i].spinner, 0) : NULL;
+	if (!spinner)
+		return index;
+	setting = pc_menu_setting_get(spinner->definition_tag_index);
+	value = spinner->parameters.list.selected_index;
+	helps = tag_loaded('ustr', rows[i].helps);
+	if (!setting || value <= 0 || value >= setting->value_count || helps == NONE)
+		return index;
+	return (short)(unicode_string_list_definition_get(helps)->strings.count - (setting->value_count - 1) + (value - 1));
+}
+
 /* "port settings help": the line of the row chosen (by its label's string:
 the buttons' is the first) */
 static void settings_help(struct widget_instance *list)
@@ -2287,6 +2315,7 @@ static void settings_help(struct widget_instance *list)
 
 		if (label != NONE)
 			index = label + 1;
+		index = settings_value_help(row, index);
 	}
 	help->parameters.text_box.string_list_index = index;
 }
@@ -2675,6 +2704,27 @@ static void hdr_calibration_row_show(struct widget_instance *list)
 		list->focused_child = row->previous;
 		list->parameters.list.selected_index = index;
 	}
+}
+
+/* Dynamic Lighting's LIGHTING (tools/port_settings.py): at STOCK, every added
+light is off, so the other rows are hidden; they follow the spinner as it is,
+Defaults included. The list passes over hidden rows */
+static void dynamic_lighting_rows_show(struct widget_instance *list)
+{
+	struct widget_instance *spinner = named(list, "shield_glow_intensity_spinner", 0);
+	struct pc_menu_setting *setting = spinner ? pc_menu_setting_get(spinner->definition_tag_index) : NULL;
+	struct widget_instance *row = spinner ? spinner->parent : NULL;
+	struct widget_instance *child;
+	short index;
+	boolean shown;
+
+	if (!setting || !row)
+		return;
+	index = spinner->parameters.list.selected_index;
+	shown = !(index >= 0 && index < setting->value_count && !strcmp(setting->values[index], "stock"));
+	for (child = list->child; child; child = child->next)
+		if (child != row && !strncmp(child->name, "op_", 3))
+			child->visible = shown;
 }
 
 /* "op_dynamic_lighting": not in an image without the feature (the GL ones) */
@@ -11555,6 +11605,7 @@ void pc_menu_game_data_function_invoke(
 		discord_account_show(widget);
 		hdr_calibration_row_show(widget);
 		dynamic_lighting_row_show(widget);
+		dynamic_lighting_rows_show(widget);
 		settings_help(widget);
 	}
 	else if (!strcmp(name, "port hdr calibration"))

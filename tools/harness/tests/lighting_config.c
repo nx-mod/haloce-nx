@@ -73,6 +73,14 @@ int main(int argc,char **argv)
   CHECK(r==1.0f&&g>.49f&&g<.51f&&b>.24f&&b<.26f,"past full, its brightest channel is full, its hue kept");
   r=.3f;g=.6f;b=.9f;lighting_glow_brighten(1.0f,&r,&g,&b);
   CHECK(r==.3f&&g==.6f&&b==.9f,"1x changes nothing");
+  /* LIGHTING at STOCK: every added light off, whatever its toggle; at 1x and up, the toggles' */
+  enabled=1;intensity="stock";generation++;
+  CHECK(lighting_stock()&&lighting_glow_scale()==1.0f,"STOCK is 1x, and stock");
+  CHECK(!lighting_config_boolean("display.plasma_lighting")&&!lighting_config_boolean("display.shield_glow"),"STOCK turns every light off");
+  intensity=NULL;generation++;
+  CHECK(lighting_stock()&&!lighting_config_boolean("display.vehicle_lighting"),"no setting is STOCK");
+  intensity="default";generation++;
+  CHECK(!lighting_stock()&&lighting_config_boolean("display.plasma_lighting"),"1x lets the toggles say");
   return 0;
  }
  if(argc>1&&!strcmp(argv[1],"moving"))

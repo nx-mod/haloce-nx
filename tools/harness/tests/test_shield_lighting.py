@@ -34,11 +34,14 @@ def test_menu_ownership_and_generated_layout():
     spec = port_settings.SCREENS['video_settings/dynamic_lighting']
     rows = spec['rows']
     assert len(rows) == 11
-    assert [row[1] for row in rows[2:7]] == [
+    # (the intensity first: STOCK hides the rows below it)
+    assert rows[0][1] == 'display.shield_glow_intensity'
+    assert [value for _, value in rows[0][2]] == ['stock', 'default', '1.5x', '2x', 'light_show']
+    assert isinstance(rows[0][3], list) and len(rows[0][3]) == len(rows[0][2])
+    assert [row[1] for row in rows[3:8]] == [
         'lighting.weapon_glow', 'display.plasma_prong_lighting', 'lighting.shield_emitters',
         'display.vehicle_lighting', 'display.world_lighting']
-    assert rows[-3][1] == 'display.shield_glow'
-    assert rows[-2][1] == 'display.shield_glow_intensity'
+    assert rows[-2][1] == 'display.shield_glow'
     # (the phone's lights a frame, last, so that the others' rows stay put)
     assert rows[-1][1] == 'display.occlusion_lights' and rows[-1][4] == 'android'
     extra = {row[1] for row in port_settings.SCREENS['video_settings/extra_effects']['rows']}

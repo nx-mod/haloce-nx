@@ -728,8 +728,10 @@ static const struct config_setting config_settings[] =
 		"does, in the shield's own color. In a network game, the host's\n"
 		"network.shield_effects decides, unless it is \"players\" (each\n"
 		"player's own) or the game is co-op." },
-	{ "display.shield_glow_intensity", _config_string, "\"default\"", "HALO_SHIELD_GLOW_INTENSITY", _environment_value, _platform_all,
-		"How far every dynamic light reaches, and how bright it is: \"default\"\n"
+	{ "display.shield_glow_intensity", _config_string, "\"stock\"", "HALO_SHIELD_GLOW_INTENSITY", _environment_value, _platform_all,
+		"Dynamic Lighting's LIGHTING: \"stock\" turns every added light off, as\n"
+		"the original Xbox drew the game, whatever their own settings. Else how\n"
+		"far every dynamic light reaches, and how bright it is: \"default\"\n"
 		"(as made), \"1.5x\", \"2x\" or \"light_show\" (three times: as far, and\n"
 		"at full strength from a third of its brightness). In a network game,\n"
 		"the shield glow's is the host's network.shield_effects, unless it is\n"
@@ -2627,7 +2629,7 @@ static const struct
 	{ "display.player_names", { "all", "allies", "enemies", "none", NULL }, NULL },
 	{ "display.scoreboard_team_layout", { "teams", "score", NULL }, NULL },
 	{ "display.chat_style", { "colors", "white", NULL }, NULL },
-	{ "display.shield_glow_intensity", { "default", "1.5x", "2x", "light_show", NULL }, NULL },
+	{ "display.shield_glow_intensity", { "stock", "default", "1.5x", "2x", "light_show", NULL }, NULL },
 	{ "display.shield_color", { "default", "white", "black", "red", "blue", "gray", "yellow", "green", "pink",
 		"purple", "cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon", NULL }, NULL },
 	{ "audio.resampler", { "sinc", "linear", NULL }, NULL },

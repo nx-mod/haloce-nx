@@ -94,7 +94,8 @@ boolean shield_glow_enabled(
 	if (changes != config_changes())
 	{
 		changes = config_changes();
-		enabled = config_boolean("display.shield_glow") != 0;
+		/* (LIGHTING at STOCK: no added light, the shield's glow too) */
+		enabled = config_boolean("display.shield_glow") != 0 && !lighting_stock();
 		shield_glow_scale = lighting_glow_scale();
 	}
 	return enabled;

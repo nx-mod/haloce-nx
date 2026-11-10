@@ -50,6 +50,7 @@ static real last_radius[128];
 static char const *intensity="default";
 int config_boolean(char const *name){return on;}
 char const *config_string(char const *name){return intensity;}
+static int lighting_stock(void){return !strcmp(intensity,"stock");}
 static float lighting_glow_scale(void){return !strcmp(intensity,"light_show")?3.f:!strcmp(intensity,"2x")?2.f:!strcmp(intensity,"1.5x")?1.5f:1.f;}
 unsigned long config_changes(void){return changes;}
 static short network_shield_effects(void){return policy;}
@@ -120,5 +121,9 @@ int main(void)
  forced=1;CHECK(!shield_glow_enabled());shield_glow_update();for(i=0;i<8;i++)CHECK(shield_glows[i].unit_index==NONE);
  forced=0;CHECK(shield_glow_enabled());shield_glow_update();CHECK(shield_glow_find(11));
  policy=_shield_effects_stock;on=1;changes++;shield_glow_frame_end();CHECK(!shield_glow_enabled()&&!shield_glow_find(11));
+ /* LIGHTING at STOCK: one's own glow off, whatever its toggle; a host's GLOW still lights it */
+ policy=NONE;intensity="stock";changes++;CHECK(!shield_glow_enabled());
+ policy=_shield_effects_glow;CHECK(shield_glow_enabled());
+ policy=NONE;intensity="default";changes++;CHECK(shield_glow_enabled());
  shield_glow_reset();CHECK(resets>0);return 0;
 }
