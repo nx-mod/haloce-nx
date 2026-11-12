@@ -44,6 +44,10 @@ PORT_DIR = Path("port/switch")
 ANDROID_PORT_DIR = Path("port/android")
 LINUX_DIR = Path("port/linux")
 BUILD = Path("build/switch")
+# nx-mod fork identity: the nacp version and the main menu's news label
+# (source/interface/ui_widget_game_data_input_functions.c). One source of truth.
+NX_REPOSITORY = "nx-mod/haloce-nx"
+NX_VERSION = "1.6.0-nx"
 THIRD_PARTY = Path("build/android/third_party")
 TOML_DIR = Path("port/third_party/tomlc17")
 KCP_DIR = Path("port/third_party/kcp")
@@ -229,7 +233,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # whatever the runner happens to be called.
     nacp_title = "Halo: Combat Evolved"
     nacp_author = "thelinkin3000, nx-mod"
-    nacp_version = "1.6.0-nx"
+    nacp_version = NX_VERSION
     # The icon does not go in the NACP: it is an asset, embedded by elf2nro
     # below. A 256x256 JPEG, made from the same logo as the Android icon
     # (tools/slipstream_icon.py),
@@ -525,6 +529,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         # the headers of the port's own game units (port/linux/game), for the
         # game sources that call them
         f"-iquote {Path(config['game_sources'])}",
+        # nx-mod: the main menu's news label (space-free so it needs no shell quoting)
+        f'-DHALO_NEWS_REPOSITORY=\\"{NX_REPOSITORY}\\"', f'-DHALO_NEWS_VERSION=\\"{NX_VERSION}\\"',
         game_defines_and_includes(config), *libc_includes, f"-idirafter {XDK_INCLUDE}",
     ])
     objects: List[Path] = []

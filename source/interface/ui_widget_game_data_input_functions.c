@@ -2031,10 +2031,15 @@ static void set_textbox_to_build_number(
 		long number = 0;
 
 		main_build_identity(&number, flavor, sizeof(flavor), repository, sizeof(repository), version, sizeof(version));
+#if defined(HALO_NEWS_REPOSITORY) && defined(HALO_NEWS_VERSION)
+		/* nx-mod fork: name our repository and version on the main menu's news line */
+		snprintf(text, sizeof(text), "%s v%s", HALO_NEWS_REPOSITORY, HALO_NEWS_VERSION);
+#else
 		if (number > 0)
 			snprintf(text, sizeof(text), "SlipstreamCE - v%ld", number);
 		else
 			snprintf(text, sizeof(text), "SlipstreamCE - dev");
+#endif
 		ascii_to_wide(
 			text,
 			build_number_string,
