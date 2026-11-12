@@ -578,6 +578,7 @@ int host_sdl_gl_swap_window(uint32_t window)
 
 	/* (the datagrams the game held this frame go: host_net.c) */
 	host_net_frame_end();
+	host_sd_activity_frame(); /* (with the profiler on: host_syscall.c) */
 	if (!object)
 		return 0;
 	if ((void *)object == (void *)&standin_window)

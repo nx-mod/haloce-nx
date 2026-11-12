@@ -35,5 +35,8 @@ freed once the stream has been handed to the host, which reads it then. A
 great deal of it waiting hands the stream over. Call after the command is
 written: it may do that. */
 void dk_stream_free_after_handover(void *buffer, unsigned long size);
+/* a buffer of size bytes for a command to name, maybe one the GPU is done with:
+   hand it to dk_stream_free_after_handover with the same size */
+void *dk_stream_buffer(unsigned long size);
 
 #endif

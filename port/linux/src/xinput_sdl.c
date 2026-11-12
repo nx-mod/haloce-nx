@@ -159,6 +159,66 @@ static float mouse_sensitivity(void)
 	return sensitivity;
 }
 
+/* the game's own dead zone of each stick, of 32767 (source/input/input_xbox.c) */
+#define STICK_DEAD_RANGE 9000
+/* the most a stick's dead zone setting takes, in percent */
+#define STICK_DEAD_ZONE_MAXIMUM 50
+
+/* the deflection a stick reads as none, of 32767, for the game's sticks
+(stick 0 the left, 1 the right): input.left_stick_dead_zone and
+input.right_stick_dead_zone as a percentage, else the game's own */
+short halo_stick_dead_range(short stick)
+{
+	static const char *const settings[2] = { "input.left_stick_dead_zone", "input.right_stick_dead_zone" };
+	static short ranges[2] = { STICK_DEAD_RANGE, STICK_DEAD_RANGE };
+	static unsigned long read_at = (unsigned long)-1;
+	int index;
+
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		for (index = 0; index < 2; index++)
+		{
+			long percent = config_integer(settings[index]);
+
+			ranges[index] = percent < 0 || percent > STICK_DEAD_ZONE_MAXIMUM
+				? STICK_DEAD_RANGE : (short)(percent * 32767 / 100);
+		}
+	}
+	return ranges[stick ? 1 : 0];
+}
+
+/* the right stick's turn up and down, in degrees a second, of each setting
+of input.stick_vertical_sensitivity (1 to 10): Look Sensitivity's left and
+right range, 40 to 260, in even steps; 0 is the game's, half of left and
+right's (player_ui.c) */
+#define STICK_PITCH_RATE_SLOWEST 40.0f
+#define STICK_PITCH_RATE_FASTEST 260.0f
+#define STICK_PITCH_RATE_STEPS 10
+
+float halo_stick_pitch_rate(short gamepad_index, float pitch_rate)
+{
+	static struct
+	{
+		unsigned long read_at;
+		float rate;
+	} players[PORT_COUNT];
+	int player = gamepad_index >= 0 && gamepad_index < PORT_COUNT ? gamepad_index : 0;
+
+	if (players[player].read_at != config_changes() + 1)
+	{
+		double setting = config_player_real(player, "input.stick_vertical_sensitivity");
+		long step = (long)(setting + 0.5);
+
+		/* (read_at 0 is never read: config_changes() + 1) */
+		players[player].read_at = config_changes() + 1;
+		players[player].rate = step < 1 || step > STICK_PITCH_RATE_STEPS ? 0.0f :
+			STICK_PITCH_RATE_SLOWEST + (STICK_PITCH_RATE_FASTEST - STICK_PITCH_RATE_SLOWEST) *
+			(float)(step - 1) / (STICK_PITCH_RATE_STEPS - 1);
+	}
+	return players[player].rate > 0.0f ? players[player].rate : pitch_rate;
+}
+
 /* radians of yaw and pitch for the mouse motion since the last call; the
 game adds these to the facing change of the player on gamepad 0 */
 int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
@@ -1515,29 +1575,32 @@ static BOOL menu_buttons_swapped(BOOL menus)
 
 /* the bottom and right face buttons held when the menus' swap of them starts or ends count as up until let go of:
 the right button that chose the level is not the game's B, a melee, at its first frame (as keys_held_over_switch) */
-static void face_buttons_held_over_swap(SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
+static void face_buttons_held_over_swap(int port, SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
 {
-	static int swapped = -1;
-	static BOOL held_south, held_east;
+	/* (each port's: a split screen player's menu swaps theirs alone) */
+	static int swapped[PORT_COUNT] = { -1, -1, -1, -1 };
+	static BOOL held_south[PORT_COUNT], held_east[PORT_COUNT];
 	BOOL south = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
 	BOOL east = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
 
-	if (swapped != (int)swap)
+	if (port < 0 || port >= PORT_COUNT)
+		return;
+	if (swapped[port] != (int)swap)
 	{
-		if (swapped >= 0)
+		if (swapped[port] >= 0)
 		{
-			held_south = south;
-			held_east = east;
+			held_south[port] = south;
+			held_east[port] = east;
 		}
-		swapped = (int)swap;
+		swapped[port] = (int)swap;
 	}
 	if (!south)
-		held_south = FALSE;
+		held_south[port] = FALSE;
 	if (!east)
-		held_east = FALSE;
-	if (held_south)
+		held_east[port] = FALSE;
+	if (held_south[port])
 		held_back[SDL_GAMEPAD_BUTTON_SOUTH] = TRUE;
-	if (held_east)
+	if (held_east[port])
 		held_back[SDL_GAMEPAD_BUTTON_EAST] = TRUE;
 }
 
@@ -1899,6 +1962,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		struct platform_input_state input;
 		unsigned long held;
 		BOOL console_active;
+		short aiming_deflection;
 
 		platform_input_read(&input, TRUE);
 		menus_up = input.menus;
@@ -1944,7 +2008,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			for (index = 0; index < INPUT_GAMEPAD_END - INPUT_GAMEPAD; index++)
 				held_back[index] = !replay &&
 					(gamepad_bound_to_talk[index] || (!input.menus && gamepad_bound_in_game[index]));
-			face_buttons_held_over_swap(gamepad, swap, held_back);
+			face_buttons_held_over_swap(0, gamepad, swap, held_back);
 			sdl_gamepad_state(gamepad, &state->Gamepad, held_back, scoreboard_picking_port == 0, swap);
 		}
 		test_input_gamepad(&state->Gamepad);
@@ -1952,8 +2016,12 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
 		touch_input_controls(&state->Gamepad, input.menus);
 #endif
-		if (abs(state->Gamepad.sThumbRX) > STICK_AIMING_DEFLECTION ||
-			abs(state->Gamepad.sThumbRY) > STICK_AIMING_DEFLECTION)
+		/* (a right stick dead zone set below it aims from that) */
+		aiming_deflection = halo_stick_dead_range(1);
+		if (aiming_deflection > STICK_AIMING_DEFLECTION)
+			aiming_deflection = STICK_AIMING_DEFLECTION;
+		if (abs(state->Gamepad.sThumbRX) > aiming_deflection ||
+			abs(state->Gamepad.sThumbRY) > aiming_deflection)
 		{
 			pthread_mutex_lock(&mouse_lock);
 			stick_aimed_ms = SDL_GetTicks();
@@ -1962,8 +2030,17 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	}
 	else if (port_gamepad(gamepads, count, port))
 	{
-		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad, NULL, scoreboard_picking_port == port,
-			menu_buttons_swapped(menus_up));
+		/* (its own player's menu, in a game: a split screen player's pause
+		menu, not player 1's, swaps its face buttons: ui_widget.c's
+		halo_ui_controller_menu_up) */
+		extern unsigned char halo_ui_controller_menu_up(short controller_index);
+		SDL_Gamepad *gamepad = port_gamepad(gamepads, count, port);
+		BOOL swap = menu_buttons_swapped(halo_ui_controller_menu_up((short)port) != 0);
+		BOOL held_back[INPUT_GAMEPAD_END - INPUT_GAMEPAD];
+
+		memset(held_back, 0, sizeof(held_back));
+		face_buttons_held_over_swap(port, gamepad, swap, held_back);
+		sdl_gamepad_state(gamepad, &state->Gamepad, held_back, scoreboard_picking_port == port, swap);
 	}
 	/* (the text chat's on-screen keyboard reads each controller's, and
 	takes its owner's while it is up) */

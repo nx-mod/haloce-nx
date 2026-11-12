@@ -39,7 +39,7 @@ final class TouchLayout {
     /** the saved grid */
     private static final float GRID_WIDTH = 960;
     private static final float GRID_HEIGHT = 540;
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
     private static final int MAX_FILE_LENGTH = 65536;
 
     /** each kind's default place on the grid, and its radius */
@@ -98,6 +98,8 @@ final class TouchLayout {
     int menuFingers = 3;
     /** a finger that holds a button also aims when it swipes */
     boolean buttonsAim = true;
+    /** the controls show during cutscenes (cinematics) too, where the game otherwise hides them (version 5) */
+    boolean cinematics = false;
     /** where the Options button is, in logical units; NaN until it is dragged (TouchControls then places it) */
     private float optionsX = Float.NaN;
     private float optionsY = Float.NaN;
@@ -284,6 +286,7 @@ final class TouchLayout {
         values.setProperty("floating-stick", Boolean.toString(floatingStick));
         values.setProperty("menu-fingers", Integer.toString(menuFingers));
         values.setProperty("buttons-aim", Boolean.toString(buttonsAim));
+        values.setProperty("cinematics", Boolean.toString(cinematics));
         if (optionsMoved()) {
             values.setProperty("options.x", Float.toString(optionsX * GRID_WIDTH / width));
             values.setProperty("options.y", Float.toString(optionsY * GRID_HEIGHT / height));
@@ -350,6 +353,8 @@ final class TouchLayout {
                     layout.optionsY = optionsY;
                 }
             }
+            if (version >= 5)
+                layout.cinematics = readBoolean(values, "cinematics");
             for (int i = 0; i < count; i++)
                 layout.controls.add(readControl(values, i, version));
             return new Configuration(layout, sensitivity);

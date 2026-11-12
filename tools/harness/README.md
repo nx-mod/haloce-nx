@@ -3,10 +3,12 @@
 The engine's real functions, taken from the sources and compiled against a small fake world: no game assets, SDK or
 graphics, so a fix can carry a test that CI runs.
 
-    python -m pytest -q tools/harness
+    python -m pytest -q -n auto tools/harness
 
 They need `clang` (or `CC`) and a 32-bit C runtime (`lib32-glibc`, `gcc-multilib`), as the Linux build does. pytest
-finds every `tests/test_*.py`, so a new test needs no change to CI.
+finds every `tests/test_*.py`, so a new test needs no change to CI. `-n auto` (pytest-xdist: `python-pytest-xdist`,
+`python3-pytest-xdist`) runs them on every core, about 1 minute 40 seconds on 16 rather than 9 one at a time: each
+case builds in a folder of its own, so a test must not depend on another having run. Without the plugin, leave it out.
 
 ## A test
 

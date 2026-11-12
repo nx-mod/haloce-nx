@@ -60,7 +60,9 @@ opened again opens only the maps that are new or have changed since.
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "map_share.h"
+#include "../src/posix.h" /* port: custom_edition_maps_names_fingerprint */
 
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -150,6 +152,9 @@ struct custom_edition_map
 struct custom_edition_maps_globals
 {
 	boolean looked_for;
+	/* the maps folders' names when they were last scanned
+	(custom_edition_maps_look_again_if_changed) */
+	uint64_t names_fingerprint;
 	short map_count;
 	struct custom_edition_map maps[CUSTOM_EDITION_MAPS_MAXIMUM];
 	/* campaign maps, kept out of the level list */
@@ -456,6 +461,7 @@ name, as the loader finds a map, it was looked for twice, a campaign's
 then a multiplayer map's, each search a lookup in the folder and the
 file's opening). */
 static void custom_edition_map_add(
+	struct custom_edition_maps_globals *globals,
 	char const *root,
 	char const *directory,
 	char const *category,
@@ -465,7 +471,6 @@ static void custom_edition_map_add(
 	uint64_t time,
 	short descriptions)
 {
-	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
 	struct custom_edition_map *map;
 	char path[MAXIMUM_FILENAME_LENGTH + 1];
 	boolean campaign;
@@ -547,8 +552,10 @@ static void custom_edition_map_add(
 	custom_edition_map_description_read(map, descriptions);
 	/* (named for its hash by a build of before: its name given back,
 	map_share_files.c; custom_maps' own files alone, not a subfolder's) */
-	if (!category[0])
+	if (!category[0] && globals == &custom_edition_maps_globals)
 		map_share_map_found(root, name);
+	/* (port: a scan on its thread has this done on the game's, as its maps
+	are taken: custom_edition_maps_scan_poll) */
 
 	return;
 }
@@ -572,6 +579,7 @@ directory_create_or_delete_contents). A listing here at the same time
 takes that one's place, and the thread then deletes the files of this
 folder: the maps. */
 static void custom_edition_maps_scan_files(
+	struct custom_edition_maps_globals *globals,
 	char const *root,
 	char const *directory,
 	char const *category)
@@ -670,10 +678,15 @@ static void custom_edition_maps_scan_files(
 					found |= DESCRIPTION_BASE_NAME;
 			}
 		}
-		custom_edition_map_add(root, directory, category, file->name, file->extension, file->size, file->time, found);
+		custom_edition_map_add(globals, root, directory, category, file->name, file->extension, file->size, file->time,
+			found);
 	}
-	free(descriptions);
-	free(files);
+	/* (none for a folder with no files, as custom_maps with only sets of
+	maps in folders: free is debug_free, which halts on NULL) */
+	if (descriptions)
+		free(descriptions);
+	if (files)
+		free(files);
 
 	return;
 }
@@ -681,13 +694,14 @@ static void custom_edition_maps_scan_files(
 /* `root`, then one level of its subfolders. A folder inside a folder is
 not listed. */
 static void custom_edition_maps_scan_root(
+	struct custom_edition_maps_globals *globals,
 	char const *root)
 {
 	char pattern[MAXIMUM_FILENAME_LENGTH + 1];
 	WIN32_FIND_DATAA data;
 	HANDLE find;
 
-	custom_edition_maps_scan_files(root, root, "");
+	custom_edition_maps_scan_files(globals, root, root, "");
 	if (csstrlen(root) + 3 > MAXIMUM_FILENAME_LENGTH)
 		return;
 	csprintf(pattern, "%s*.*", root);
@@ -712,7 +726,7 @@ static void custom_edition_maps_scan_root(
 			continue;
 		}
 		csprintf(directory, "%s%s\\", root, name);
-		custom_edition_maps_scan_files(root, directory, name);
+		custom_edition_maps_scan_files(globals, root, directory, name);
 	} while (FindNextFileA(find, &data));
 	CloseHandle(find);
 
@@ -766,16 +780,93 @@ static void custom_edition_maps_tell_versions_apart(
 	}
 }
 
-static void custom_edition_maps_look_for(
+/* port: the names in a maps folder, and with `inside` in its folders (one
+level of them, as the scan reads them), as one number: what a list opening
+asks to tell whether the scan it would make again would find anything new.
+A listing's names alone, no stat of each (the scan's FindNextFileA gives
+every file's size and time, a stat each: some 75 for a map list's opening on
+the Switch, with a few maps), and a name that is a map's or a picture's or a
+description's is not tried as a folder. A map replaced by one of its name,
+and nothing else changed, is not told: the list's own deletes, imports and
+downloads have it look again anyway. */
+static uint64_t custom_edition_maps_names_fingerprint_in(
+	char const *folder,
+	boolean inside,
+	uint64_t fingerprint)
+{
+	static char const *const file_extensions[] = { ".map", ".txt", ".bmp", ".png", ".jpg", ".part" };
+	char name[256];
+	void *directory = posix_directory_open(folder);
+
+	/* (a folder that cannot be listed counts, apart from an empty one) */
+	fingerprint = fingerprint * 1099511628211ULL + (directory ? 1 : 2);
+	while (directory && posix_directory_next(directory, name, sizeof(name)))
+	{
+		size_t length = strlen(name);
+		short index;
+		boolean file = FALSE;
+
+		fingerprint = (fingerprint ^ name_hash(name, NULL)) * 1099511628211ULL;
+		if (!inside || !strcmp(name, ".") || !strcmp(name, ".."))
+			continue;
+		for (index = 0; index < NUMBEROF(file_extensions) && !file; index++)
+		{
+			size_t extension = strlen(file_extensions[index]);
+
+			file = length > extension && !csstrcasecmp(name + length - extension, file_extensions[index]);
+		}
+		if (!file)
+		{
+			char path[1024];
+			void *inner;
+
+			snprintf(path, sizeof(path), "%s/%s", folder, name);
+			if ((inner = posix_directory_open(path)) != NULL)
+			{
+				posix_directory_close(inner);
+				fingerprint = custom_edition_maps_names_fingerprint_in(path, FALSE, fingerprint);
+			}
+		}
+	}
+	if (directory)
+		posix_directory_close(directory);
+	return fingerprint;
+}
+
+void platform_translate_path(char const *xbox_path, char *host_path, unsigned long host_path_size);
+
+static uint64_t custom_edition_maps_names_fingerprint(
 	void)
 {
-	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
+	char folder[1024];
+	uint64_t fingerprint = 14695981039346656037ULL;
+
+	platform_translate_path(CUSTOM_EDITION_MAP_DIRECTORY, folder, sizeof(folder));
+	fingerprint = custom_edition_maps_names_fingerprint_in(folder, TRUE, fingerprint);
+	if (custom_edition_install_present())
+	{
+		platform_translate_path(CUSTOM_EDITION_INSTALL_MAP_DIRECTORY, folder, sizeof(folder));
+		fingerprint = custom_edition_maps_names_fingerprint_in(folder, TRUE, fingerprint);
+	}
+	return fingerprint;
+}
+
+/* the maps folders scanned into `globals`: the menus' own, or (port) a
+scan's on its thread (custom_edition_maps_scan_start), whose maps have no
+pictures to let go of */
+static void custom_edition_maps_look_for_into(
+	struct custom_edition_maps_globals *globals)
+{
 	char const *folders[] = { CUSTOM_EDITION_MAP_DIRECTORY, CUSTOM_EDITION_INSTALL_MAP_DIRECTORY };
 	short folder_index;
 	unsigned long started = GetTickCount();
 
-	custom_edition_maps_forget();
+	if (globals == &custom_edition_maps_globals)
+		custom_edition_maps_forget();
+	globals->map_count = 0;
+	globals->campaign_count = 0;
 	globals->looked_for = TRUE;
+	globals->names_fingerprint = custom_edition_maps_names_fingerprint(); /* port */
 	if (!halo_custom_edition_tag_cache())
 	{
 		return;
@@ -787,7 +878,7 @@ static void custom_edition_maps_look_for(
 		/* (the install's only when there is one) */
 		if (folder_index && !custom_edition_install_present())
 			continue;
-		custom_edition_maps_scan_root(folders[folder_index]);
+		custom_edition_maps_scan_root(globals, folders[folder_index]);
 	}
 	qsort(globals->maps, globals->map_count, sizeof(globals->maps[0]), custom_edition_map_compare);
 	qsort(globals->campaigns, globals->campaign_count, sizeof(globals->campaigns[0]), custom_edition_map_compare);
@@ -795,6 +886,139 @@ static void custom_edition_maps_look_for(
 	custom_edition_maps_tell_versions_apart(globals->campaigns, globals->campaign_count);
 	error(_error_silent, "custom edition: %d multiplayer maps for the level list, %d campaign maps (%lu ms)",
 		globals->map_count, globals->campaign_count, GetTickCount() - started);
+
+	return;
+}
+
+static void custom_edition_maps_look_for(
+	void)
+{
+	custom_edition_maps_look_for_into(&custom_edition_maps_globals);
+
+	return;
+}
+
+/* ---------- the scan on a thread of its own (port)
+
+A map list's opening: the maps folders looked at, and scanned again if their
+names have changed, on a thread of the scan's own, the list saying LOADING
+till it is done (menu_functions.c's map_list_initialize): the first of a run
+read every map's header, a call to the card each, and held the list's first
+frame. The scan fills a copy of the globals; the game's thread takes its
+maps (custom_edition_maps_scan_poll). Whatever asks for the maps while it
+runs (custom_edition_maps_level_list) waits for it, so only one scan runs at
+a time (the identity cache is the scan's). */
+
+enum
+{
+	_maps_scan_idle,
+	_maps_scan_running,
+	_maps_scan_done,
+};
+
+static struct
+{
+	pthread_t thread;
+	int state;
+	/* the globals' as the scan began, and whether it found them changed */
+	boolean looked_for;
+	uint64_t names_fingerprint;
+	boolean changed;
+	/* a scan whose maps are not to be taken (the folders changed by the
+	game meanwhile: custom_edition_maps_look_again) */
+	boolean discard;
+	struct custom_edition_maps_globals *globals;
+} maps_scan;
+
+static void *custom_edition_maps_scan_main(
+	void *unused)
+{
+	(void)unused;
+	/* (the folders' names alone first: the scan only if they changed) */
+	if (maps_scan.looked_for && custom_edition_maps_names_fingerprint() == maps_scan.names_fingerprint)
+		maps_scan.changed = FALSE;
+	else
+	{
+		custom_edition_maps_look_for_into(maps_scan.globals);
+		maps_scan.changed = TRUE;
+	}
+	__atomic_store_n(&maps_scan.state, _maps_scan_done, __ATOMIC_RELEASE);
+
+	return NULL;
+}
+
+void custom_edition_maps_scan_start(
+	void)
+{
+	if (__atomic_load_n(&maps_scan.state, __ATOMIC_ACQUIRE) != _maps_scan_idle || !halo_custom_edition_tag_cache())
+		return;
+	if (!maps_scan.globals)
+	{
+		maps_scan.globals = malloc(sizeof(*maps_scan.globals));
+		if (!maps_scan.globals)
+			return;
+	}
+	maps_scan.looked_for = custom_edition_maps_globals.looked_for;
+	maps_scan.names_fingerprint = custom_edition_maps_globals.names_fingerprint;
+	maps_scan.discard = FALSE;
+	maps_scan.state = _maps_scan_running;
+	if (pthread_create(&maps_scan.thread, NULL, custom_edition_maps_scan_main, NULL) != 0)
+	{
+		maps_scan.state = _maps_scan_idle;
+		custom_edition_maps_look_again_if_changed();
+	}
+
+	return;
+}
+
+boolean custom_edition_maps_scan_poll(
+	void)
+{
+	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
+	struct custom_edition_maps_globals const *scanned = maps_scan.globals;
+	short index;
+
+	if (__atomic_load_n(&maps_scan.state, __ATOMIC_ACQUIRE) == _maps_scan_idle)
+		return TRUE;
+	if (__atomic_load_n(&maps_scan.state, __ATOMIC_ACQUIRE) == _maps_scan_running)
+		return FALSE;
+	pthread_join(maps_scan.thread, NULL);
+	maps_scan.state = _maps_scan_idle;
+	if (maps_scan.discard || !maps_scan.changed)
+		return TRUE;
+	/* (its maps taken: the found ones alone, not the whole of the copy) */
+	custom_edition_maps_forget();
+	globals->map_count = scanned->map_count;
+	globals->campaign_count = scanned->campaign_count;
+	csmemcpy(globals->maps, scanned->maps, scanned->map_count * sizeof(scanned->maps[0]));
+	csmemcpy(globals->campaigns, scanned->campaigns, scanned->campaign_count * sizeof(scanned->campaigns[0]));
+	globals->names_fingerprint = scanned->names_fingerprint;
+	globals->looked_for = TRUE;
+	/* (as the scan does on the game's thread: a network game's map's file
+	found again, and custom_maps' own maps named for their hash given their
+	names back, map_share_files.c) */
+	custom_edition_map_paths_forget();
+	for (index = 0; index < globals->map_count; index++)
+	{
+		if (!globals->maps[index].category[0])
+			map_share_map_found(globals->maps[index].folder, globals->maps[index].name);
+	}
+	for (index = 0; index < globals->campaign_count; index++)
+	{
+		if (!globals->campaigns[index].category[0])
+			map_share_map_found(globals->campaigns[index].folder, globals->campaigns[index].name);
+	}
+
+	return TRUE;
+}
+
+/* (waits for a scan running, and takes its maps) */
+static void custom_edition_maps_scan_finish(
+	void)
+{
+	if (__atomic_load_n(&maps_scan.state, __ATOMIC_ACQUIRE) == _maps_scan_running)
+		pthread_join(maps_scan.thread, NULL), maps_scan.state = _maps_scan_done;
+	custom_edition_maps_scan_poll();
 
 	return;
 }
@@ -932,6 +1156,8 @@ char **custom_edition_maps_level_list(
 	{
 		globals->levels[level_index] = xbox_levels[level_index];
 	}
+	/* (port: a scan on its thread waited for, and its maps taken) */
+	custom_edition_maps_scan_finish();
 	/* (the menus ask for the list every tick, so the folders are scanned
 	once, and again when a map list opens: custom_edition_maps_look_again) */
 	if (!globals->looked_for)
@@ -950,9 +1176,31 @@ char **custom_edition_maps_level_list(
 void custom_edition_maps_look_again(
 	void)
 {
+	/* (port: a scan on its thread began before what changed the folders) */
+	if (maps_scan.state != _maps_scan_idle)
+		maps_scan.discard = TRUE;
 	custom_edition_maps_globals.looked_for = FALSE;
 	/* (a network game's map's file, found again) */
 	custom_edition_map_paths_forget();
+
+	return;
+}
+
+/* port: as custom_edition_maps_look_again, but only if the maps folders'
+names have changed since they were scanned: a map list's opening, which
+otherwise read every file's size and time again */
+void custom_edition_maps_look_again_if_changed(
+	void)
+{
+	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
+
+	custom_edition_maps_scan_finish(); /* (one scan at a time) */
+	if (globals->looked_for && halo_custom_edition_tag_cache() &&
+		custom_edition_maps_names_fingerprint() == globals->names_fingerprint)
+	{
+		return;
+	}
+	custom_edition_maps_look_again();
 
 	return;
 }
@@ -1106,6 +1354,97 @@ boolean custom_edition_maps_stock(
 	struct custom_edition_map *map = custom_edition_map_get(display_index);
 
 	return map && stock_map_index(map->name) != NONE;
+}
+
+/* a folder (its game path, ending in \) and all in it, as deep as it goes */
+static void custom_edition_maps_delete_tree(
+	char const *folder)
+{
+	char pattern[MAXIMUM_FILENAME_LENGTH + 4];
+	WIN32_FIND_DATAA data;
+	HANDLE find;
+
+	if (csstrlen(folder) + 1 >= (long)sizeof(pattern))
+	{
+		return;
+	}
+	csprintf(pattern, "%s*", folder);
+	find = FindFirstFileA(pattern, &data);
+	if (find != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			char child[MAXIMUM_FILENAME_LENGTH * 2];
+			boolean directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+			/* (a path that does not fit is left) */
+			if (!strcmp(data.cFileName, ".") || !strcmp(data.cFileName, "..") ||
+				snprintf(child, sizeof(child), "%s%s%s", folder, data.cFileName, directory ? "\\" : "") >=
+				(int)sizeof(child))
+			{
+				continue;
+			}
+			if (directory)
+			{
+				custom_edition_maps_delete_tree(child);
+			}
+			else
+			{
+				DeleteFileA(child);
+			}
+		} while (FindNextFileA(find, &data));
+		CloseHandle(find);
+	}
+	RemoveDirectoryA(folder);
+
+	return;
+}
+
+boolean custom_edition_maps_delete(
+	short display_index,
+	boolean whole_folder)
+{
+	static char const *const beside[] = { ".map", DESCRIPTION_EXTENSION, PICTURE_EXTENSION };
+	struct custom_edition_map *map = custom_edition_map_get(display_index);
+	char path[MAXIMUM_FILENAME_LENGTH + 1];
+	short index;
+
+	if (!map)
+	{
+		return FALSE;
+	}
+	if (whole_folder)
+	{
+		/* (only a set's own folder: never the maps folder itself) */
+		if (!map->category[0] || csstrlen(map->folder) + csstrlen(map->category) + 1 >= (long)sizeof(path))
+		{
+			return FALSE;
+		}
+		csprintf(path, "%s%s\\", map->folder, map->category);
+		custom_edition_maps_delete_tree(path);
+		return GetFileAttributesA(path) == (DWORD)-1;
+	}
+	for (index = NUMBEROF(beside) - 1; index >= 0; index--)
+	{
+		if (custom_edition_map_beside(map, beside[index], path, sizeof(path)))
+		{
+			DeleteFileA(path);
+		}
+	}
+	if (!custom_edition_map_beside(map, ".map", path, sizeof(path)) ||
+		GetFileAttributesA(path) != (DWORD)-1)
+	{
+		return FALSE;
+	}
+	/* (a set's folder left with nothing in it goes too: RemoveDirectoryA
+	takes only an empty one) */
+	if (map->category[0] && csstrlen(map->folder) + csstrlen(map->category) < (long)sizeof(path))
+	{
+		csprintf(path, "%s%s", map->folder, map->category);
+		RemoveDirectoryA(path);
+	}
+
+	return TRUE;
 }
 
 wchar_t *custom_edition_maps_name(

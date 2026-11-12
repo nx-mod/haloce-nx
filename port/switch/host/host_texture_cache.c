@@ -130,13 +130,23 @@ static struct cache_entry *entry_find(uint64_t key)
 	return NULL;
 }
 
-/* (under the lock) everything let go, and the budget for what comes now */
-static void cache_empty(void)
+/* (port: see host_texture_cache_clear) */
+#define KEEP_BIT (1ull << 62)
+#define CUSTOM_EDITION_BIT (1ull << 63)
+
+/* (under the lock) everything let go (with `keep_marked`, all but the textures
+marked to be kept), and the budget for what comes now */
+static void cache_empty(int keep_marked)
 {
 	uint64_t free_bytes, budget;
+	struct cache_entry *entry, *newer;
 
-	while (oldest)
-		entry_unlink(oldest);
+	for (entry = oldest; entry; entry = newer)
+	{
+		newer = entry->newer;
+		if (!keep_marked || (entry->key & (KEEP_BIT | CUSTOM_EDITION_BIT)) != KEEP_BIT)
+			entry_unlink(entry);
+	}
 	free_bytes = heap_free();
 	budget = CACHE_BUDGET;
 	if (hits || misses || cache_puts)
@@ -152,12 +162,19 @@ static void cache_empty(void)
 
 static void prefetch_stop(void);
 
+/* (port: the guest's mark on a texture kept when its map goes, mod_bitmaps.c's
+HOST_TEXTURE_CACHE_KEEP: the main menu's mod bitmaps, kept for the next
+return to it, which read every one from the card again. Bit 63 is a Custom
+Edition map's texture's, never one of them.) */
 void host_texture_cache_clear(void)
 {
 	/* (what is being read ahead is the map's that goes) */
 	prefetch_stop();
 	pthread_mutex_lock(&cache_lock);
-	cache_empty();
+	cache_empty(1);
+	if (cache_entries)
+		host_logf(HOST_LOG_INFO, "texture cache (host): kept the main menu's %lu mod textures, %.1f MB",
+			cache_entries, (double)cache_bytes / 1048576.0);
 	pthread_mutex_unlock(&cache_lock);
 }
 
@@ -193,7 +210,7 @@ static int cache_put(uint64_t key, const void *buffer, uint32_t size)
 		return 0;
 	pthread_mutex_lock(&cache_lock);
 	if (!cache_budget)
-		cache_empty();
+		cache_empty(0);
 	entry = entry_find(key);
 	if (entry)
 		entry_unlink(entry);

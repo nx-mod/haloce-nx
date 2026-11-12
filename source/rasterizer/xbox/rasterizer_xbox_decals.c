@@ -309,6 +309,31 @@ static short decal_batch_count = 0;
 
 static void rasterizer_decals_draw_batch(void);
 
+/* port: with debug.gpu_stats, the log says every 300 frames how many decals,
+batches and vertices a frame drew, all its layers' */
+static struct
+{
+	long decals, batches, vertices, frames;
+} decal_statistics;
+
+static void rasterizer_decals_statistics(
+	void)
+{
+	extern int config_boolean(const char *name);
+	extern void platform_log(const char *format, ...);
+
+	if (local_layer != _decal_layer_secondary)
+		return;
+	if (++decal_statistics.frames < 300)
+		return;
+	if (config_boolean("debug.gpu_stats"))
+		platform_log("decals: %.1f a frame, in %.1f batches, %.0f vertices",
+			(double)decal_statistics.decals / decal_statistics.frames,
+			(double)decal_statistics.batches / decal_statistics.frames,
+			(double)decal_statistics.vertices / decal_statistics.frames);
+	memset(&decal_statistics, 0, sizeof(decal_statistics));
+}
+
 /* port: the order the decals of a cluster are drawn in. Where it makes no
 difference (a run of decals whose blend functions commute: they do not
 write depth, and multiplying, adding, the least or the most of the
@@ -364,12 +389,15 @@ static void rasterizer_decals_sort_run(
 	return;
 }
 
-/* the cluster's decals of the layer in the order they are drawn, into
-decal_draw_order; their count */
-static long rasterizer_decals_draw_order(
+/* port: how many of the layer's decals are in decal_draw_order so far */
+static long decal_layer_count = 0;
+
+/* port: a cluster's decals put after the layer's others (rasterizer_decals_sort
+puts them in order at the layer's end) */
+static void rasterizer_decals_gather(
 	short cluster_index)
 {
-	long count = 0, first, decal_index;
+	long count = decal_layer_count, decal_index;
 
 	for (decal_index = decal_get_first_decal_index(cluster_index, local_layer);
 		decal_index != NONE && count < MAXIMUM_DECALS_PER_MAP;
@@ -388,6 +416,19 @@ static long rasterizer_decals_draw_order(
 			0xFFFFFFFF;
 		count++;
 	}
+	decal_layer_count = count;
+}
+
+/* port: the layer's decals in order: each run of them whose blend functions
+commute goes by its blend function and bitmap, across the clusters too, as
+nothing is drawn between one cluster's decals and the next's; the others keep
+their place, so that a decal whose order matters is drawn as it was */
+static long rasterizer_decals_sort(
+	void)
+{
+	long count = decal_layer_count, first;
+
+	decal_layer_count = 0;
 	for (first = 0; first < count; )
 	{
 		long last = first;
@@ -616,6 +657,7 @@ void _rasterizer_decals_begin(
 	}
 
 	local_layer = layer;
+	decal_layer_count = 0; /* port: (rasterizer_decals_gather) */
 	if (rasterizer_debug_options.drawing_mode != _rasterizer_drawing_mode_normal)
 		return;
 	if (!rasterizer_debug_options.draw_environment_decals)
@@ -746,9 +788,6 @@ void _rasterizer_decals_begin(
 void _rasterizer_decals_draw(
 	short cluster_index)
 {
-	long decal_index;
-	long decal_count, decal_order_index; /* port: (rasterizer_decals_draw_order) */
-
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_decals.c",
 		408,
@@ -758,8 +797,22 @@ void _rasterizer_decals_draw(
 	if (!rasterizer_debug_options.draw_environment_decals)
 		return;
 
-	/* port: in the order rasterizer_decals_draw_order gives */
-	decal_count = rasterizer_decals_draw_order(cluster_index);
+	/* port: drawn at the layer's end, all its clusters' together
+	(rasterizer_decals_draw_gathered) */
+	rasterizer_decals_gather(cluster_index);
+
+	return;
+}
+
+/* port: the layer's decals, in the order rasterizer_decals_sort gives */
+static void rasterizer_decals_draw_gathered(
+	void)
+{
+	long decal_index;
+	long decal_count, decal_order_index;
+
+	decal_count = rasterizer_decals_sort();
+	decal_statistics.decals += decal_count;
 	for (decal_order_index = 0; decal_order_index < decal_count; decal_order_index++)
 	{
 		struct decal_datum *decal = DECAL_GET(decal_index = decal_draw_order[decal_order_index]);
@@ -891,38 +944,62 @@ void _rasterizer_decals_draw(
 		}
 
 	}
-	/* port: (the batch goes on into the next cluster's decals:
-	_rasterizer_decals_end draws it) */
 
 	return;
 }
 
-/* port: draws the decals batched (decal_batch) */
+/* port: draws the decals batched (decal_batch): their vertices packed as
+registers 0 (the position), 4 (the texture coordinates) and 9 (the decal's
+color), in one call (D3DDevice_DrawVerticesImmediate) rather than three calls a
+vertex. A batch longer than the buffer goes in more than one, at a quad's end
+(the buffer holds a whole number of quads, and a decal's are whole quads). */
+#define DECAL_IMMEDIATE_VERTICES 4096
+#define DECAL_IMMEDIATE_MASK ((1UL << 0) | (1UL << 4) | (1UL << 9))
+static float decal_immediate_vertices[DECAL_IMMEDIATE_VERTICES][12];
+
 static void rasterizer_decals_draw_batch(
 	void)
 {
 	short batch_index;
+	long count = 0;
 
 	if (!decal_batch_count)
 		return;
-	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_QUADLIST);
+	decal_statistics.batches++;
 	for (batch_index = 0; batch_index < decal_batch_count; batch_index++)
 	{
 		byte const *color = decal_batch[batch_index].color;
+		real red = color[0] / 255.0f, green = color[1] / 255.0f, blue = color[2] / 255.0f, alpha = color[3] / 255.0f;
 		short vertex_index;
 
+		decal_statistics.vertices += decal_batch[batch_index].vertex_count;
 		for (vertex_index = 0; vertex_index < decal_batch[batch_index].vertex_count; vertex_index++)
 		{
 			struct decal_vertex const *vertex = &decal_batch[batch_index].vertices[vertex_index];
+			float *out;
 
-			IDirect3DDevice8_SetVertexData4ub(global_d3d_device, 9, color[0], color[1], color[2], color[3]);
-			IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4,
-				(real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f, (real)(short)(vertex->texcoord >> 16) / 32767.0f);
-			IDirect3DDevice8_SetVertexData4f(global_d3d_device, 0,
-				vertex->position.x, vertex->position.y, vertex->position.z, 1.0f);
+			if (count == DECAL_IMMEDIATE_VERTICES)
+			{
+				D3DDevice_DrawVerticesImmediate(D3DPT_QUADLIST, DECAL_IMMEDIATE_MASK, decal_immediate_vertices[0], count);
+				count = 0;
+			}
+			out = decal_immediate_vertices[count++];
+			out[0] = vertex->position.x;
+			out[1] = vertex->position.y;
+			out[2] = vertex->position.z;
+			out[3] = 1.0f;
+			out[4] = (real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f;
+			out[5] = (real)(short)(vertex->texcoord >> 16) / 32767.0f;
+			out[6] = 0.0f;
+			out[7] = 1.0f;
+			out[8] = red;
+			out[9] = green;
+			out[10] = blue;
+			out[11] = alpha;
 		}
 	}
-	IDirect3DDevice8_End(global_d3d_device);
+	if (count)
+		D3DDevice_DrawVerticesImmediate(D3DPT_QUADLIST, DECAL_IMMEDIATE_MASK, decal_immediate_vertices[0], count);
 	decal_batch_count = 0;
 
 	return;
@@ -931,7 +1008,9 @@ static void rasterizer_decals_draw_batch(
 void _rasterizer_decals_end(
 	void)
 {
+	rasterizer_decals_draw_gathered(); /* port: (rasterizer_decals_gather) */
 	rasterizer_decals_draw_batch(); /* port: (decal_batch) */
+	rasterizer_decals_statistics();
 	if (local_layer == _decal_layer_alpha_tested)
 		rasterizer_set_stencil_mode(RASTERIZER_STENCIL_MODE_REJECT);
 

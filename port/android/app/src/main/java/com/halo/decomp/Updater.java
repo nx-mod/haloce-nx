@@ -46,8 +46,8 @@ import java.util.zip.ZipInputStream;
  * the latest release when it starts, on a thread of its own, and if it is
  * newer asks the player whether to update:
  *
- * - Yes: the release's app (halo-android-release.zip or -debug.zip) is
- *   downloaded and handed to Android's package installer, which replaces the
+ * - Yes: the release's app (slipstreamce-android-release.zip or -debug.zip; the old
+ *   package's are the bridge: Migration.java) is downloaded and handed to Android's package installer, which replaces the
  *   game (closing it) and offers to open the new version.
  * - No: nothing, until the next start.
  * - Do not ask again: after the player confirms it, update.auto = false is
@@ -60,8 +60,8 @@ import java.util.zip.ZipInputStream;
  * LauncherActivity (driverDownload): see there.
  */
 final class Updater {
-    private static final String REPOSITORY = "thelinkin3000/halo-ce-universal";
-    private static final String USER_AGENT = "halo-ce-universal-updater";
+    private static final String REPOSITORY = "thelinkin3000/SlipstreamCE";
+    private static final String USER_AGENT = "slipstreamce-updater";
     private static final int TIMEOUT_MILLISECONDS = 20000;
     /** the most a download (a release's zip, about 35 MB) or the app in it may be */
     private static final long MAXIMUM_UPDATE_SIZE = 256L * 1024 * 1024;
@@ -466,8 +466,8 @@ final class Updater {
         if (activity.isFinishing())
             return;
         new AlertDialog.Builder(activity)
-            .setTitle("Halo: new version")
-            .setMessage("A new version of Halo was detected (build " + latest + "; this is build "
+            .setTitle("SlipstreamCE: new version")
+            .setMessage("A new version of SlipstreamCE was detected (build " + latest + "; this is build "
                 + BuildConfig.HALO_BUILD_NUMBER + ").\n\nDo you want to update? The game will close and start "
                 + "the new version.")
             .setCancelable(false)
@@ -479,7 +479,7 @@ final class Updater {
 
     private static void confirmNever(Activity activity) {
         new AlertDialog.Builder(activity)
-            .setTitle("Halo: new version")
+            .setTitle("SlipstreamCE: new version")
             .setMessage("Stop asking about new versions?\n\nTo ask again, set auto = true in the [update] section "
                 + "of config.toml.")
             .setCancelable(false)
@@ -495,9 +495,31 @@ final class Updater {
 
     /* ---------- updating */
 
+    /** The bridge's way on: the latest release's new app, downloaded and handed to the installer. */
+    static void downloadNewApp(Activity activity, Runnable failed) {
+        new Thread(() -> {
+            int latest = latestRelease();
+
+            if (activity.isFinishing())
+                return;
+            activity.runOnUiThread(() -> {
+                if (latest > 0)
+                    update(activity, latest);
+                else
+                    failed.run();
+            });
+        }, "new app check").start();
+    }
+
     private static void update(Activity activity, int latest) {
-        String asset = "halo-android-" + (BuildConfig.DEBUG ? "debug" : "release") + ".zip";
+        String asset = "slipstreamce-android-" + (BuildConfig.DEBUG ? "debug" : "release") + ".zip";
         File directory = new File(activity.getCacheDir(), UpdateProvider.DIRECTORY);
+        // (a bridge whose player said no at the installer has it already, and is not to download it at each start)
+        File kept = new File(directory, "build-" + latest);
+        if (BuildConfig.HALO_BRIDGE && kept.exists() && new File(directory, UpdateProvider.APK).length() > 0) {
+            install(activity);
+            return;
+        }
         LinearLayout layout = new LinearLayout(activity);
         TextView status = new TextView(activity);
         ProgressBar bar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
@@ -511,7 +533,7 @@ final class Updater {
         layout.addView(status);
         layout.addView(bar);
         AlertDialog progress = new AlertDialog.Builder(activity)
-            .setTitle("Halo: new version")
+            .setTitle("SlipstreamCE: new version")
             .setView(layout)
             .setCancelable(false)
             .show();
@@ -530,6 +552,7 @@ final class Updater {
                     }));
                 extractApk(zip, apk);
                 zip.delete();
+                kept.createNewFile();
                 activity.runOnUiThread(() -> {
                     progress.dismiss();
                     install(activity);
@@ -539,7 +562,7 @@ final class Updater {
                 activity.runOnUiThread(() -> {
                     progress.dismiss();
                     new AlertDialog.Builder(activity)
-                        .setTitle("Halo: new version")
+                        .setTitle("SlipstreamCE: new version")
                         .setMessage("The update failed:\n\n" + e.getMessage())
                         .setPositiveButton("OK", null)
                         .show();

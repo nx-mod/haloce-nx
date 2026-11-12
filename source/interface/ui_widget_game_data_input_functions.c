@@ -2024,8 +2024,19 @@ static void set_textbox_to_build_number(
 
 	if (!build_number_string[0])
 	{
+		/* port: this build's name and number, for the Xbox's "01.01.14.2342" (a local build has no number) */
+		void main_build_identity(long *number, char *flavor, size_t flavor_size, char *repository,
+			size_t repository_size, char *version, size_t version_size);
+		char flavor[32], repository[64], version[96], text[64];
+		long number = 0;
+
+		main_build_identity(&number, flavor, sizeof(flavor), repository, sizeof(repository), version, sizeof(version));
+		if (number > 0)
+			snprintf(text, sizeof(text), "SlipstreamCE - v%ld", number);
+		else
+			snprintf(text, sizeof(text), "SlipstreamCE - dev");
 		ascii_to_wide(
-			"01.01.14.2342",
+			text,
 			build_number_string,
 			sizeof(build_number_string));
 	}
@@ -2271,9 +2282,10 @@ static void player_profile_edit_select_menu_update_extended_description(
 		description_child->parameters.text_box.string_list_index = index;
 		/* port: Gameplay is the row before About (tools/port_settings.py's
 		PROFILE_ROWS). The picture's frames are one for each of the nine
-		rows the PC version had, then the controller layouts, so Gameplay
-		shows About's picture, and About, the row after it, its own */
-		picture_index = child && child->name && !strcmp(child->name, "gameplay_profile_item") ? 8 :
+		rows the PC version had, About's last, and then Gameplay's: About,
+		the row after Gameplay, shows its own, and Credits, the last, About's */
+		picture_index = child && child->name && !strcmp(child->name, "gameplay_profile_item") ? 9 :
+			child && child->name && !strcmp(child->name, "credits_item") ? 8 :
 			index > 8 ? index - 1 : index;
 		description_child->next->animation.current_frame_index = picture_index;
 	}

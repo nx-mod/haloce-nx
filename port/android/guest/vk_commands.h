@@ -51,6 +51,7 @@ enum
 	VK_COMMAND_HUD_IMAGE,
 	VK_COMMAND_STATIC_FREE,
 	VK_COMMAND_DATA_PATCH,
+	VK_COMMAND_PLASMA_OCCLUSION,
 };
 
 /* a surface's kind, as the host makes its image */
@@ -336,8 +337,21 @@ struct vk_command_draw
 	struct vk_data_ref index_data;
 	int32_t vertex_offset;
 	uint32_t count;
-	/* (the visibility tests are VK_COMMAND_VISIBILITY_*: the host knows a draw is in one from them) */
-	uint32_t reserved;
+	/* (the visibility tests are VK_COMMAND_VISIBILITY_*: the host knows a draw is in one from them)
+	1: its shaders are a model variant with occlusion (XGPU_PLASMA_MODEL_OCCLUSION), which reads the images
+	VK_COMMAND_PLASMA_OCCLUSION named last; 0 for every other draw */
+	uint32_t plasma_occlusion;
+};
+
+/* ---------- the dynamic lighting's visibility fields
+
+The images the model variants with occlusion read (VK_PLASMA_SET), until they change. Sent only for such a draw, so that
+nothing else's stream or binding changes. */
+
+struct vk_command_plasma_occlusion
+{
+	struct vk_command_header header;
+	uint32_t images[2];
 };
 
 /* Vulkan's formats, the numbers the vertex input uses */
@@ -371,6 +385,8 @@ struct vk_command_visibility_end
 	struct vk_command_header header;
 	uint32_t index;
 	float area;
+	/* the test's number at its slot (the low 32 bits), which host_vk_visibility gives with its count */
+	uint32_t test;
 };
 
 /* ---------- the mip composite (phase 6, step 5)
@@ -409,6 +425,9 @@ enum
 	VK_IMAGE_FORMAT_BC1, /* BC1 to BC3 as the Xbox keeps them */
 	VK_IMAGE_FORMAT_BC2,
 	VK_IMAGE_FORMAT_BC3,
+	/* ASTC 4x4 (16 bytes a block of 4x4 texels): DXT1 with its bits moved, where the device samples ASTC and not BC
+	(host_vk_astc_supported; dxt1_astc.h) */
+	VK_IMAGE_FORMAT_ASTC_4X4,
 };
 
 /* makes image id (the same description again keeps the image it has; another replaces it), its texels undefined until the

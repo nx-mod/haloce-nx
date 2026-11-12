@@ -78,7 +78,7 @@ final class XisoExtractor {
     private static final int MAXIMUM_VISITS = 4096;
     private static final int MAXIMUM_ENTRIES = 256;
     private static final int COPY_CHUNK = 1024 * 1024;
-    private static final String PARTIAL_DIRECTORY = "maps.partial";
+    private static final String PARTIAL_SUFFIX = ".partial";
     /** the loading screen's picture (source/interface/progress_bar.c), out of default.xbe; the executable is a few MB */
     private static final int LOADING_WIDTH = 320;
     private static final int LOADING_HEIGHT = 240;
@@ -114,8 +114,11 @@ final class XisoExtractor {
     private XisoExtractor() {
     }
 
-    /** Copies the image's maps folder to destination/maps. */
-    static void extractMaps(FileChannel image, File destination, Progress progress) throws IOException {
+    /**
+     * Copies the image's maps folder into mapsFolder (the data folder's maps, or game.maps.path's: MapsFolder.maps),
+     * through a folder beside it named like it, with .partial after.
+     */
+    static void extractMaps(FileChannel image, File mapsFolder, Progress progress) throws IOException {
         long imageSize = image.size();
         long partition = -1;
         long rootSector = 0, rootSize = 0;
@@ -199,7 +202,7 @@ final class XisoExtractor {
         }
 
         // the copy, to maps.partial
-        File partial = new File(destination, PARTIAL_DIRECTORY);
+        File partial = new File(mapsFolder.getAbsoluteFile().getParentFile(), mapsFolder.getName() + PARTIAL_SUFFIX);
         if (partial.isDirectory()) {
             File[] leftovers = partial.listFiles();
             if (leftovers != null) {
@@ -220,7 +223,6 @@ final class XisoExtractor {
             files.add(new Entry(LOADING_PICTURE, 0, 0));
 
         // then into maps, ui.map (the app's sign that the data is there) last
-        File mapsFolder = new File(destination, "maps");
         if (!mapsFolder.isDirectory() && !mapsFolder.mkdirs() && !mapsFolder.isDirectory())
             throw new ExtractException("Could not create " + mapsFolder.getPath() + ".");
         List<Entry> order = new ArrayList<>(files);

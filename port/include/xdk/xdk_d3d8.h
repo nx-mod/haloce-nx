@@ -161,6 +161,14 @@ surface; the game's textures are 0x40001 (rasterizer_xbox.c). */
 #define D3DCOMMON_TYPE_TEXTURE 0x00040000
 #define D3DCOMMON_TYPE_SURFACE 0x00050000
 #define D3DCOMMON_D3DCREATED 0x01000000
+/* port, the Switch's: a buffer drawn from memory someone else keeps (a mod
+model's block, mod_models.c), so Data is not freed with it; a vertex buffer's
+Data a plain heap address, not the window's; and a buffer outside the window
+that the host copies once, on its first draw, and has copied (d3d8_dk.c) */
+#define D3DCOMMON_BORROWED 0x02000000
+#define D3DCOMMON_HEAP_VERTICES 0x04000000
+#define D3DCOMMON_HOST_COPY_WANTED 0x08000000
+#define D3DCOMMON_HOST_COPIED 0x10000000
 #define D3DPALETTE_COMMON_PALETTESIZE_SHIFT 30
 
 /* a texture's Format word: the NV2A's texture format register
@@ -812,6 +820,13 @@ D3DINLINE HRESULT __stdcall IDirect3DDevice8_End(D3DDevice *device)
 	D3DDevice_End();
 	return S_OK;
 }
+
+/* port: one call for Begin, a run of vertices and End, as SetVertexData4f would
+give them: each vertex is the registers of mask in ascending order, four floats
+each (register 0 among them: it completes a vertex), and the registers keep the
+last vertex's values after. The game's immediate draws of many vertices (the
+decals) spend more on three calls a vertex than on drawing them. */
+void __stdcall D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count);
 
 D3DINLINE HRESULT __stdcall IDirect3DDevice8_SetVertexData2f(D3DDevice *device, INT reg, float a, float b)
 {

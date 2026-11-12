@@ -527,18 +527,17 @@ void build_sprite(
 								transformed_origin.y;
 							point.z = (basis.forward.k*x + basis.left.k*y)*scale +
 								transformed_origin.z;
-							if (point.x<bounding_rectangle.x0)
-								bounding_rectangle.x0 = point.x;
-							if (point.x>bounding_rectangle.x1)
-								bounding_rectangle.x1 = point.x;
-							if (point.y<bounding_rectangle.y0)
-								bounding_rectangle.y0 = point.y;
-							if (point.y>bounding_rectangle.y1)
-								bounding_rectangle.y1 = point.y;
-							if (point.z<bounding_rectangle.z0)
-								bounding_rectangle.z0 = point.z;
-							if (point.z>bounding_rectangle.z1)
-								bounding_rectangle.z1 = point.z;
+							/* port: the same bounds without a branch each way, which the
+							compiler made stores and reloads of the rectangle on the
+							stack, each waiting on the compare before it (a fifth of
+							this function's time on the Switch): fminf and fmaxf pick
+							the same values, short of a NaN */
+							bounding_rectangle.x0 = fminf(point.x, bounding_rectangle.x0);
+							bounding_rectangle.x1 = fmaxf(point.x, bounding_rectangle.x1);
+							bounding_rectangle.y0 = fminf(point.y, bounding_rectangle.y0);
+							bounding_rectangle.y1 = fmaxf(point.y, bounding_rectangle.y1);
+							bounding_rectangle.z0 = fminf(point.z, bounding_rectangle.z0);
+							bounding_rectangle.z1 = fmaxf(point.z, bounding_rectangle.z1);
 							sprite_vertex->point = point;
 							sprite_vertex->texture_coordinates.x = u;
 							sprite_vertex->texture_coordinates.y = v;

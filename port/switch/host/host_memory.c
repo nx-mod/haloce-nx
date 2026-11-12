@@ -521,14 +521,14 @@ whole run of free space, so walking upwards from a starting address gives
 the gaps without needing a file to be open. That matters here, because
 this runs before anything else in the port has.
 */
-static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
+static uint64_t find_gap_below(uint64_t size, uint64_t minimum, uint64_t alignment, uint64_t limit)
 {
 	uint64_t address;
 
 	if (alignment > 1)
 		minimum = round_up(minimum) & ~(alignment - 1);
 	address = minimum < LOW_START ? LOW_START : minimum;
-	while (address + size <= LOW_LIMIT)
+	while (address + size <= limit)
 	{
 		MemoryInfo information = { 0 };
 		u32 page_info = 0;
@@ -545,7 +545,7 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 
 			if (alignment > 1)
 				start = (start + alignment - 1) & ~(u64)(alignment - 1);
-			while (start + size <= information.addr + information.size)
+			while (start + size <= information.addr + information.size && start + size <= limit)
 			{
 				uint64_t move;
 
@@ -579,6 +579,11 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 		address = round_up(information.addr + information.size);
 	}
 	return 0;
+}
+
+static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
+{
+	return find_gap_below(size, minimum, alignment, LOW_LIMIT);
 }
 
 /* reports whatever already occupies part of a range, so a refusal to use it
@@ -656,12 +661,16 @@ static struct pool *pool_new(uint64_t pages)
 
 		for (attempt = 0; attempt < 64; attempt++)
 		{
-			uint64_t address = find_gap(size, minimum, 1);
+			/* (only where the guest's memory can really be mapped: one
+			a50.map load's second pool went to a1011000, past the stack
+			region's end at 80000000, and every mapping in it was refused,
+			with hundreds of megabytes free in the region below) */
+			uint64_t address = find_gap_below(size, minimum, 1, host_mman_guest_limit());
 
 			if (!address && minimum != LOW_START)
 			{
 				minimum = LOW_START;
-				address = find_gap(size, minimum, 1);
+				address = find_gap_below(size, minimum, 1, host_mman_guest_limit());
 			}
 			if (!address)
 				break;
@@ -884,12 +893,9 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	the game state (game.c's "!game_globals->active"). */
 	/* (its hold stands for it from here: libnx keeps both reservations) */
 	custom_edition_hold_base = custom_edition_hold_end = 0;
-	if (reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE, 0) != 0)
-	{
-		host_logf(HOST_LOG_WARN, "Custom Edition's tag cache range %08x-%08x is taken: its maps cannot run",
-			(unsigned)HALO_GUEST_CUSTOM_EDITION_BASE, (unsigned)HALO_GUEST_CUSTOM_EDITION_END);
-		log_conflicts(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE);
-	}
+	/* (where it is taken the guest puts the tag cache elsewhere, and says so:
+	port/linux/src/xbox_memory.c) */
+	(void)reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE, 0);
 
 	/* The window, as large as the console will give: each size is tried
 	 * where the game and its data expect it, then at the address this build

@@ -291,10 +291,19 @@ DELETE (pressed twice), IMPORT and EXPORT (Android) and BACK. A recording shorte
   the right one up, from still to full in a quarter of a second, so a tap
   of the Switch's ZL or ZR, which are buttons, is a small step; it slides
   along the level's walls, its scenery and its doors rather than flying
-  through them, `playback_free_camera_move`). It is a tripod: chosen, it is
-  placed where the view behind the player would be, and tracks them, its
-  aim turning after them a little behind (0.15 seconds), at their upper
-  body (`playback_free_camera_track`); the left stick and the triggers move
+  through them, `playback_free_camera_move`, and moved back out of what a
+  corner brings it nearer than that, `playback_free_camera_clear`). It is a
+  tripod: chosen, it is placed behind the player, as the view behind them
+  would be, kept clear of what is around it, higher by up to 2 units where
+  the ground around them (half of 8 directions) stands over a unit above
+  their feet, under open sky; where that leaves under half of the distance
+  or no sight of them, it is the first that does not of a crane over them and
+  either side of them, or whichever comes nearest
+  (`playback_free_camera_place`). It tracks them on a critically damped
+  spring (`playback_spring`), its aim a little behind (0.15 seconds), at their upper
+  body, with the room ahead of where they aim: on a third-line of the
+  screen as they aim across its view (`playback_free_camera_framing`,
+  0.4 seconds behind that); the left stick and the triggers move
   it and it goes on tracking, the right stick takes the aim and it stops,
   and R3 starts it again from where it is, or stops it, holding its aim.
   It tracks the next player A or X chooses, aims at where the player died
@@ -303,13 +312,42 @@ DELETE (pressed twice), IMPORT and EXPORT (Android) and BACK. A recording shorte
   units, so they stay the size they were (down to 8 degrees of view);
   once moved it eases back to the usual view, and does not zoom again until
   it is chosen again (`playback_free_camera_zoom`). And a cinematic camera:
-  the free camera with no controls (its sticks, R3, L3 and swipes not
-  heard, and no camera bar above the buttons'), placed and tracking and
+  the free camera with only two controls (the left stick's up and down set
+  the distance it follows at, up nearer, at behind's zoom's rate, from 50% to
+  100% of a maximum, starting at 75%; L3 or D-pad Down places it again; its
+  other sticks, R3 and swipes not heard), placed and tracking and
   zooming as it is when chosen; whenever the level, its scenery or its
-  doors hide the player from it for 0.2 seconds, it is placed behind them
-  again, as L3 places the free camera, and tracks them from there
-  (`playback_cinematic_sight`); hidden from it in the half second after
-  they spawn, it is placed behind them at once. The top line says CINEMATIC. Through the eyes, the aim
+  doors hide the player from it (their middle and 0.2 units either side, so
+  a post does not) for 0.2 seconds, once the shot has lasted a second, it
+  is placed again, as L3 places the free camera, and tracks them from there
+  (`playback_cinematic_sight`; the time hidden starts over only after 0.15
+  seconds in sight); hidden from it in the half second after they spawn, it
+  is placed at once. When someone who is off the screen hurts the player
+  (`network_replay_playback_damage`: damage events have whose it is, so old
+  replays do this too), its aim goes between them with the view widened, to
+  90 degrees at most, or as near as that lets it with the player at its edge
+  (`playback_cinematic_threat`); for 1.25 seconds of the game after the
+  last hit, or until they are on the screen as it would be without this, the
+  player aims within 30 degrees of them, or is out of their sight. It
+  is a tripod, turning, framing and zooming and not moving, while the player
+  is still, slow, or has not gone half the distance it was placed at from where
+  it last stood (`playback_cinematic_move`, in the game's time, so not while
+  paused). Once they go on at a unit a second, their speed smoothed over 0.4
+  seconds from how their focus moves (so a client's corrections do not shake
+  it), or go further than 3.5 of that distance, or the left stick is pushed, it
+  follows them: it goes with them as fast as they go from it, eased up to that
+  over half a second, and a spring makes up the difference from the distance it
+  follows at (4.08 units on foot, 8.17 in a vehicle, at 75%), out as well as in
+  where there is room. When they have been under half a unit a second for 0.75
+  seconds and it has come to rest, it is a tripod again. As it follows, one
+  moving across its view or turning for 0.75
+  seconds swings it round them on an arc, to 45 degrees either side of behind where
+  they aim on the side it is on (`playback_cinematic_orbit`, not during a threat).
+  Where it would lose sight of them coming in it comes only as far as it can see them
+  from, or if that is under half of the way the arc stops. A
+  player moved further and faster than a vehicle goes (a teleporter, a spawn, a
+  jump in the replay) has it placed anew. The top
+  line says CINEMATIC. Through the eyes, the aim
   turns smoothly between the facings the replay has of the player (all
   of them indexed as it loads, `playback_index_facings`: the host's
   relayed input and a client's own input's records), the aim the

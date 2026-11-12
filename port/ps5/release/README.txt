@@ -1,4 +1,4 @@
-Halo: Combat Evolved for the PS5 (PPSA99500)
+SlipstreamCE, Halo: Combat Evolved for the PS5 (PPSA99500)
 
 What the console needs: system software 13.60 or lower, jailbroken (the
 Relapse exploit, or another kernel exploit, then kstuff); ShadowMountPlus
@@ -10,7 +10,7 @@ image (.iso or .xiso).
 Installing, over FTP from your computer:
 1. Copy the PPSA99500 folder from this zip into /data/homebrew.
 2. Make the folder /data/halo and copy the disc image into it.
-3. Start Halo: Combat Evolved from the home screen.
+3. Start SlipstreamCE from the home screen.
 
 The first start takes the maps out of the disc image (about 1.8 GB, under
 a minute); notifications show how far it has got, then the game starts.
@@ -26,5 +26,5 @@ again. To stop it, put update.auto = false in config.toml. To update by
 hand, copy a newer release's PPSA99500 folder over the old one.
 
 Everything else (what it does, the network, building it):
-https://github.com/thelinkin3000/halo-ce-universal/blob/main/port/ps5/README.md
+https://github.com/thelinkin3000/SlipstreamCE/blob/main/port/ps5/README.md
 The licences are in COPYING and licenses/; NOTICE.txt says where the source is.

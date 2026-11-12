@@ -33,13 +33,13 @@ developing are at its end.
 ## Installing from the release
 
 1. Download `halo-ps5-release.zip` from the repository's latest release
-   (https://github.com/thelinkin3000/halo-ce-universal/releases/latest)
+   (https://github.com/thelinkin3000/SlipstreamCE/releases/latest)
    and unzip it on your computer.
 2. Over FTP, copy its `PPSA99500` folder into `/data/homebrew` on the
    console.
 3. Make the folder `/data/halo` and copy the game's disc image (`.iso` or
    `.xiso`) into it.
-4. Start Halo: Combat Evolved from the home screen.
+4. Start SlipstreamCE from the home screen.
 
 `README.txt` in the zip says the same in a few lines. The zip also holds
 `COPYING` and `licenses/`, the licences of what the title is built from;
@@ -72,7 +72,7 @@ folder holds:
 A release's build looks for a newer release on GitHub each time it starts,
 about ten seconds in, while you play. When there is one it downloads it
 (about 50 MB) and installs it in the title's folder, with notifications
-("Halo: downloading build N", every quarter of the way, then "Halo: build N
+("SlipstreamCE: downloading build N", every quarter of the way, then "SlipstreamCE: build N
 is installed: close the game and start it again to use it"). The game goes
 on as it was until you close it; the next start is the new build. If the
 download or the install does not finish, a notification says why and
@@ -85,7 +85,7 @@ over the old one (with the game closed).
 The game's settings are in its menus (Settings), as the PS5's: Video Setup's
 MAXIMUM RESOLUTION, Gamepads' GYRO AIM and the rest (below, "The menus"),
 and in `/data/halo/config.toml`, which you can edit over FTP with the game
-closed (`port/linux/README.md` describes every setting). Two defaults are a
+closed (`docs/settings.md` describes every setting). Two defaults are a
 computer's rather than a console's: voice chat's push-to-talk is the `V`
 key (`controls.push_to_talk`: set it to `"Gamepad LB"`, say, to talk with the
 pad), and the frame rate is not capped (`display.max_fps = 0`; the display's

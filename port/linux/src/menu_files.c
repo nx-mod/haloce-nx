@@ -22,6 +22,7 @@ high-res HUD's are (hud_hires.c).
 #include "menu_files.h"
 #include "platform.h"
 #include "port_config.h"
+#include "posix.h"
 #include "xgpu.h"
 
 #include "expat.h"
@@ -49,6 +50,10 @@ struct menu_file
 static struct menu_file *files;
 static long file_count;
 static char folder[1024];
+/* whether the menus folder is there at all (files_gather): port: where it is
+not, none of its files is looked for. Each embedded file's was, a failed
+open each, some 95 of them at every start on the Switch's card. */
+static int folder_present;
 
 static long file_find(const char *path)
 {
@@ -147,14 +152,20 @@ static void files_gather(void)
 
 	config_folder(folder, sizeof(folder));
 	snprintf(folder + strlen(folder), sizeof(folder) - strlen(folder), "menus");
+	{
+		struct posix_file_information information;
+
+		folder_present = posix_stat(folder, &information) == 0 && (information.flags & _posix_file_is_directory);
+	}
 	for (index = 0; index < menu_files_embedded_count; index++)
 	{
 		const struct menu_file_embedded *embedded = &menu_files_embedded[index];
 		unsigned long size = 0;
-		unsigned char *data;
+		unsigned char *data = NULL;
 
 		snprintf(path, sizeof(path), "%s/%s", folder, embedded->path);
-		data = file_read(path, &size);
+		if (folder_present)
+			data = file_read(path, &size);
 		if (data)
 		{
 			platform_log("menus: %s replaces the built-in one", path);
@@ -236,6 +247,8 @@ static const unsigned char *file_data(const char *path, unsigned long *size)
 		char full[1200];
 		unsigned char *data;
 
+		if (!folder_present)
+			return NULL;
 		snprintf(full, sizeof(full), "%s/%s", folder, path);
 		data = file_read(full, size);
 		if (!data)
@@ -584,7 +597,7 @@ static void read_strings(struct reader *reader, const XML_Char **attributes)
 {
 	struct halo_menus *menus = &reader->menus;
 	struct halo_menu_strings strings;
-	struct attribute table[] = { { "name", &strings.name }, { "map", &strings.map } };
+	struct attribute table[] = { { "name", &strings.name } };
 
 	memset(&strings, 0, sizeof(strings));
 	strings.first = menus->string_count;
@@ -601,16 +614,11 @@ static void read_string(struct reader *reader, const XML_Char **attributes, long
 {
 	struct halo_menus *menus = &reader->menus;
 	const char *text = NULL;
-	long map = HALO_MENU_NONE, map_given = 0;
-	struct attribute table[] = { { "text", &text }, { "map", NULL, &map, &map_given } };
+	struct attribute table[] = { { "text", &text } };
 
 	read_attributes(reader, "string", attributes, table, sizeof(table) / sizeof(*table));
 	if (!reader->failed && !text)
 		reader_error(reader, "a <string> needs text");
-	if (!reader->failed && map_given && (map < 0 || !menus->string_lists[owner].map))
-		reader_error(reader, "a <string>'s map= is an index in its <strings>' map list");
-	GROW(reader, menus->string_maps, menus->string_count);
-	menus->string_maps[menus->string_count] = map_given ? map : HALO_MENU_NONE;
 	GROW(reader, menus->strings, menus->string_count);
 	menus->strings[menus->string_count++] = text ? text : "";
 	menus->string_lists[owner].count++;

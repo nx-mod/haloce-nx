@@ -38,6 +38,7 @@ Register values are clamped to [-1, 1] between stages, as on the hardware.
 #include "xgpu.h"
 #include "port_config.h"
 #include "vk_shaders.h"
+#include "plasma_model_shader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -371,6 +372,21 @@ static void texture_stage(struct xgpu_text *text, const struct nv2a_pixel_shader
 		xgpu_text_append(text, "\tt%d = ", stage);
 		sample(text, key, stage, coordinates);
 		xgpu_text_append(text, ";\n");
+		/* (a Custom Edition meter drawn from a sheet other art shares: its fill order in alpha, its shape in red, as
+		nv2a_psh.c reads them) */
+		if (stage == 0 && key->ce_meter_channels)
+			xgpu_text_append(text, "\tt0 = t0.aaar;\n");
+		/* (a high-res meter's segments: their thresholds, in red, read from the texel itself, unfiltered, so that no
+		threshold is averaged with its neighbour's; 0 marks a continuous meter: nv2a_psh.c) */
+		if (stage == 0 && key->point_threshold && key->sampler_type[stage] == _xgpu_sampler_2d)
+		{
+			xgpu_text_append(text,
+				"\t{\n\t\tvec2 uv = (%s).xy * texture_scale[0].xy;\n"
+				"\t\tivec2 size = textureSize(tex0, 0);\n"
+				"\t\tivec2 pixel = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1);\n"
+				"\t\tfloat threshold = texelFetch(tex0, pixel, 0).r;\n"
+				"\t\tif (threshold > 0.0) t0.rb = vec2(threshold);\n\t}\n", coordinates);
+		}
 		break;
 	case _mode_cubemap:
 		snprintf(coordinates, sizeof(coordinates), "xT%d", stage);
@@ -519,10 +535,12 @@ nv2a_psh.c's model_lighting, as the OpenGL renderer computes it (its comment say
 programs make for each vertex, made for each pixel from the normal and world position the vertex shader hands on
 (VK_LOCATION_WORLD_*) and the constants in the pixel parameters' model_lights. */
 
-static void model_lighting(struct xgpu_text *text, BOOL point_lights)
+static void model_lighting(struct xgpu_text *text, BOOL point_lights, unsigned int plasma)
 {
 	int light;
 
+	if (point_lights && plasma)
+		plasma_model_emit_pixel(text, plasma);
 	xgpu_text_append(text, "layout(location = %d) in vec4 xWorldNormal;\n", VK_LOCATION_WORLD_NORMAL);
 	if (point_lights)
 		xgpu_text_append(text, "layout(location = %d) in vec3 xWorldPosition;\n", VK_LOCATION_WORLD_POSITION);
@@ -543,12 +561,19 @@ static void model_lighting(struct xgpu_text *text, BOOL point_lights)
 			"\t{\n"
 			"\t\tvec3 to_light = model_lights[%d].xyz - xWorldPosition;\n"
 			"\t\tfloat distance_squared = dot(to_light, to_light);\n"
-			"\t\tvec3 l = to_light * inversesqrt(max(distance_squared, 1.0e-12));\n"
-			"\t\tlight += max(1.0 - distance_squared * model_lights[%d].w, 0.0) * clamp(dot(l, n), 0.0, 1.0) *\n"
+			"\t\tvec3 l = to_light * inversesqrt(max(distance_squared, 1.0e-12));\n", first);
+		if (plasma)
+			xgpu_text_append(text,
+				"\t\tlight += plasma_model_falloff(max(1.0 - distance_squared * model_lights[%d].w, 0.0), "
+				"plasma_model_parameters[%d], %d, xWorldPosition) * clamp(dot(l, n), 0.0, 1.0) *\n", first, light, light);
+		else
+			xgpu_text_append(text,
+				"\t\tlight += max(1.0 - distance_squared * model_lights[%d].w, 0.0) * clamp(dot(l, n), 0.0, 1.0) *\n", first);
+		xgpu_text_append(text,
 			"\t\t\tclamp(dot(l, -model_lights[%d].xyz) * model_lights[%d].w + model_lights[%d].w, 0.0, 1.0) *\n"
 			"\t\t\tmodel_lights[%d].xyz;\n"
 			"\t}\n",
-			first, first, first + 1, first + 1, first + 2, first + 2);
+			first + 1, first + 1, first + 2, first + 2);
 	}
 	xgpu_text_append(text, "\treturn clamp(light, 0.0, 1.0);\n}\n");
 }
@@ -587,7 +612,17 @@ char *nv2a_vk_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 	if (key->per_pixel_lighting)
 		xgpu_text_append(&text, "\tlayout(offset = %d) vec4 model_lights[%d];\n", VK_PIXEL_PARAMETERS_MODEL_LIGHTS,
 			XGPU_MODEL_LIGHT_COUNT);
+	if (key->plasma_model)
+		xgpu_text_append(&text,
+			"\tlayout(offset = %d) vec4 plasma_model_parameters;\n"
+			"\tlayout(offset = %d) vec4 plasma_occ_transform[2];\n",
+			VK_PIXEL_PARAMETERS_PLASMA_MODEL, VK_PIXEL_PARAMETERS_PLASMA_OCC_TRANSFORM);
 	xgpu_text_append(&text, "};\n");
+	if (key->plasma_model & XGPU_PLASMA_MODEL_OCCLUSION)
+		xgpu_text_append(&text,
+			"layout(set = %d, binding = %d) uniform sampler3D plasma_occ_texture0;\n"
+			"layout(set = %d, binding = %d) uniform sampler3D plasma_occ_texture1;\n",
+			VK_PLASMA_SET, VK_PLASMA_BINDING_TEXTURE0, VK_PLASMA_SET, VK_PLASMA_BINDING_TEXTURE1);
 	xgpu_text_append(&text,
 		"layout(location = %d) in vec4 xD0;\n"
 		"layout(location = %d) in vec4 xD1;\n"
@@ -606,7 +641,7 @@ char *nv2a_vk_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		xgpu_text_append(&text, "layout(set = %d, binding = %d) uniform %s tex%d;\n", VK_SHADER_SET,
 			VK_BINDING_TEXTURE0 + stage, sampler_declaration(key->sampler_type[stage]), stage);
 	if (key->per_pixel_lighting)
-		model_lighting(&text, key->per_pixel_lighting == 2);
+		model_lighting(&text, key->per_pixel_lighting == 2, key->plasma_model);
 	xgpu_text_append(&text,
 		"float signed_byte(float x)\n"
 		"{\n"

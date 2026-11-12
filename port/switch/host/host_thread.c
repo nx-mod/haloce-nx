@@ -237,12 +237,21 @@ static void *reaper(void *unused)
 	return NULL;
 }
 
+/* whether this thread is the game's (host_on_game_thread) */
+static __thread int on_game_thread;
+
+int host_on_game_thread(void)
+{
+	return on_game_thread;
+}
+
 static void *thread_main(void *context)
 {
 	struct thread_start start = *(struct thread_start *)context;
 	struct finished_thread *finished;
 
 	free(context);
+	on_game_thread = start.is_game;
 	place_thread(start.is_game);
 	host_debug_thread_started(start.is_game);
 	/* on the stack below 4 GB the port mapped, and back (guest_stack.S) */

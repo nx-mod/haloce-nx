@@ -42,7 +42,6 @@ menu gets FRIENDLY FIRE too.
 #include "rasterizer/xbox/rasterizer_xbox_hardware_bitmaps.h"
 
 #include "halo_menus.h"
-#include "custom_edition_cache.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -372,6 +371,7 @@ static char const *const port_function_names[] =
 	"port join4 open", "port join4 back", "port join4 done", "port join4 playing", "port join4 opener",
 	"port join4 select", "port join4 join", "port join4 choosing", "port join4 leave", "port join4 ready",
 	"port join4 unready",
+	"port ingame join open", "port ingame join previous", "port ingame join next", "port ingame join select",
 	"port lobby player list initialize", "port lobby player choose",
 	"port lobby preview add", "port lobby preview leave",
 	/* (the gametype editor's: the Xbox's walk their rows by place, which the
@@ -400,11 +400,14 @@ static char const *const port_function_names[] =
 	"port mods save", "port mods accept", "port mods delete", "port mods import",
 	/* (Video Setup's IMPORT DRIVER, Android's: menu_functions.c) */
 	"port vk driver import",
-	/* (the map lists' IMPORT, Android's: menu_functions.c) */
-	"port map import",
+	/* (the map lists' IMPORT, Android's, and DELETE: menu_functions.c) */
+	"port map import", "port map delete",
 	/* (the main menu's news: menu_functions.c) */
 	"port news init", "port news close", "port news up", "port news down", "port news page up",
 	"port news page down",
+	/* (the settings' Credits: menu_functions.c) */
+	"port credits init", "port credits close", "port credits up", "port credits down", "port credits page up",
+	"port credits page down",
 	/* (the main menu's Theater: menu_functions.c) */
 	"port theater record", "port theater export", "port theater import", "port theater watch",
 	"port theater delete",
@@ -427,7 +430,7 @@ static char const *const port_game_data_input_names[] =
 	"mp map list update", "gt select list update", "gt edit list update", "load game list update",
 	"direct ip connect update", "network settings update",
 	"port settings help", "color picker update", "3wide player profile list update", "port lobby update",
-	"port lobby preview update", "port join4 update",
+	"port lobby preview update", "port join4 update", "port ingame join update",
 	/* (the gametype editor's: the Xbox's stops the game on the buttons'
 	row; the Xbox's read only player_ui's gametype, not Server Setup's) */
 	"game settings lists text update", "get edit game settings name", "mp edit profile set rule text",
@@ -445,6 +448,8 @@ static char const *const port_game_data_input_names[] =
 	"port playlist edit desc",
 	/* (the main menu's news) */
 	"port news update",
+	/* (the settings' Credits) */
+	"port credits update",
 	/* (the main menu's Theater) */
 	"port theater update",
 	/* (Gamepad Setup's BUTTON LAYOUT, and the profile settings' picture of
@@ -493,8 +498,6 @@ static struct
 	boolean game_map;
 	/* a single-player campaign's map's, whose screens pause the game */
 	boolean campaign;
-	/* the strings taken from the Custom Edition's loc.map */
-	long map_strings;
 	/* a network co-op game's map's: its pause menu gets FRIENDLY FIRE too */
 	boolean coop;
 	/* the profile settings are the campaign pause menu's SETTINGS
@@ -754,11 +757,8 @@ static void parse_bounds(char const *text, rectangle2d *bounds, char const *file
 	}
 }
 
-/* a 'ustr' of the strings; each with an index in the list `map` (the
-Custom Edition's in its language, or NULL) given by maps is its string
-there */
-static void *string_list_build(char const *const *strings, long const *maps, long count,
-	struct custom_edition_string_list const *map)
+/* a 'ustr' of the strings */
+static void *string_list_build(char const *const *strings, long count)
 {
 	struct string_list *list = allocate(sizeof(struct string_list));
 	struct string_list_entry *entries = allocate(count * sizeof(struct string_list_entry));
@@ -774,18 +774,6 @@ static void *string_list_build(char const *const *strings, long const *maps, lon
 		unsigned short *characters;
 		long written;
 
-		if (map && maps[index] != HALO_MENU_NONE && maps[index] < map->count)
-		{
-			length = map->lengths[maps[index]];
-			characters = allocate(length * sizeof(unsigned short));
-			if (!characters)
-				return list;
-			memcpy(characters, map->strings[maps[index]], length * sizeof(unsigned short));
-			entries[index].string.size = length * (long)sizeof(unsigned short);
-			entries[index].string.address = characters;
-			build.map_strings++;
-			continue;
-		}
 		characters = allocate((length * 2 + 2) * sizeof(unsigned short));
 		if (!characters)
 			return list;
@@ -1612,7 +1600,7 @@ static void *pause_button(struct cache_file_tag_instance *instances, struct ui_w
 	texts[0] = text;
 	texts[1] = other_text;
 	instance_set(instances, UNICODE_STRING_LIST_TAG, text_tag, name, " text",
-		string_list_build(texts, NULL, other_text ? 2 : 1, NULL));
+		string_list_build(texts, other_text ? 2 : 1));
 	reference_set(&button->text_label_string_list, UNICODE_STRING_LIST_TAG, text_tag);
 	button->string_list_index = 0;
 	button->game_data_inputs.count = 0;
@@ -2130,6 +2118,81 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 		platform_log("menus: the pause menu has SETTINGS%s", host ? " and END GAME" : "");
 }
 
+/* ---------- the in-game join box's button key
+
+The box a controller joining the game in progress opens
+(menu_functions.c's ingame_join, tools/port_settings.py's _ingame_join)
+shows the pause screens' own key (B=CANCEL A=SELECT, the console's own
+letters) in its footer band, in the place of its words, which are left
+for a map whose pause screens have none. */
+
+#define INGAME_JOIN_BOX "pc\\main_menu\\multiplayer_type_select\\lobby\\ingame_join_box"
+#define INGAME_JOIN_HINT "pc\\main_menu\\multiplayer_type_select\\lobby\\ingame_join_hint"
+
+static void ingame_join_key_patch(void)
+{
+	long collection = tag_loaded('Soul', MULTIPLAYER_COLLECTION);
+	long quit_function = ui_function_named("mp game player quit");
+	long box_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, INGAME_JOIN_BOX);
+	long hint_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, INGAME_JOIN_HINT);
+	long key_tag = NONE, screen, child;
+	struct tag_block const *screens;
+	struct ui_widget_definition *box;
+	struct ui_widget_child_reference *children;
+
+	if (collection == NONE || quit_function == NONE || box_tag == NONE || hint_tag == NONE)
+		return;
+	screens = tag_get('Soul', collection);
+	for (screen = 0; screen < screens->count && key_tag == NONE; screen++)
+	{
+		long screen_tag = ((struct tag_reference const *)TAG_BLOCK_ADDRESS_AT(screens))[screen].index;
+		struct ui_widget_definition const *definition;
+		struct ui_widget_child_reference const *screen_children;
+		long list_child, box_child = NONE, key;
+
+		if (screen_tag == NONE)
+			continue;
+		definition = tag_get(UI_WIDGET_DEFINITION_TAG, screen_tag);
+		screen_children = definition->child_widgets.address;
+		if ((list_child = pause_list_child(definition, quit_function)) == NONE)
+			continue;
+		for (child = 0; child < definition->child_widgets.count; child++)
+		{
+			if (child != list_child && screen_children[child].widget_tag.index != NONE &&
+				pause_box_stock(tag_get(UI_WIDGET_DEFINITION_TAG, screen_children[child].widget_tag.index)))
+			{
+				box_child = child;
+			}
+		}
+		if (box_child == NONE)
+			box_child = pause_box_child(definition, list_child);
+		key = pause_key_child(definition, list_child, box_child);
+		if (key != NONE)
+			key_tag = screen_children[key].widget_tag.index;
+	}
+	if (key_tag == NONE)
+		return;
+	box = tag_get(UI_WIDGET_DEFINITION_TAG, box_tag);
+	children = box->child_widgets.address;
+	for (child = 0; child < box->child_widgets.count; child++)
+	{
+		struct ui_widget_definition const *key;
+		short width, height;
+
+		if (children[child].widget_tag.index != hint_tag)
+			continue;
+		key = tag_get(UI_WIDGET_DEFINITION_TAG, key_tag);
+		width = (short)(key->bounds.x1 - key->bounds.x0);
+		height = (short)(key->bounds.y1 - key->bounds.y0);
+		reference_set(&children[child].widget_tag, UI_WIDGET_DEFINITION_TAG, key_tag);
+		/* (in the middle of the footer band, as the pause box's: pause_box_fit) */
+		children[child].horizontal_offset = (short)((box->bounds.x1 - box->bounds.x0 - width) / 2 - key->bounds.x0);
+		children[child].vertical_offset = (short)(box->bounds.y1 - box->bounds.y0 - PAUSE_BOX_FOOTER +
+			(PAUSE_BOX_FOOTER - height) / 2 - key->bounds.y0);
+		platform_log("menus: the in-game join box has the pause screens' key (%s)", tag_get_name(key_tag));
+	}
+}
+
 /* ---------- the campaign's pause menu
 
 Its list gets the same SETTINGS (pause_list_patch) before REVERT TO SAVED, a
@@ -2148,13 +2211,14 @@ the profile itself. */
 
 /* Change Name's keyboard and Change Color's pictures are ui.map's, Network
 Setup is for others' games (shown in co-op: its pages, pause_network_patch),
-and About is nothing to it */
+and About and Credits are nothing to it */
 static char const *const pause_settings_hidden_items[] =
 {
 	"main_menu/settings_select/player_setup/player_profile_edit/name_profile_item",
 	PAUSE_NETWORK_ITEM,
 	"main_menu/settings_select/player_setup/player_profile_edit/color_profile_item",
 	"main_menu/settings_select/player_setup/player_profile_edit/about_item",
+	"main_menu/settings_select/player_setup/player_profile_edit/credits_item",
 };
 
 #if defined(HALO_SWITCH) || defined(HALO_PS5)
@@ -2523,30 +2587,12 @@ static boolean menus_pc_chosen(void)
 	return FALSE;
 }
 
-/* whether the PC menus' text is the language of the maps' Custom Edition
-(display.menu_language), else English */
-static boolean menus_language_maps(void)
-{
-	static boolean said;
-	char const *value = config_string("display.menu_language");
-
-	if (!csstrcasecmp(value, "maps"))
-		return TRUE;
-	if (csstrcasecmp(value, "english") && !said)
-	{
-		platform_log("menus: display.menu_language \"%s\" is not \"maps\" or \"english\": English", value);
-		said = TRUE;
-	}
-	return FALSE;
-}
-
 void menu_tags_loaded(
 	char const *map_name)
 {
 	struct halo_menus const *menus;
 	struct cache_file_tag_instance *instances;
 	long widget_count, own_lists = 0, total, index;
-	boolean locale;
 
 	boolean game_map = strcmp(map_name, "ui") != 0;
 	boolean campaign = game_map && full_screen_campaign_map();
@@ -2609,24 +2655,14 @@ void menu_tags_loaded(
 		instance_set(instances, BITMAP_GROUP_TAG, build.bitmap_tags[index], menus->bitmaps[index].name, "",
 			bitmap_build(&menus->bitmaps[index], build.bitmap_tags[index]));
 	}
-	/* (the PC version's strings in the language of the Custom Edition the
-	maps come from, its loc.map's, unless English is chosen) */
-	locale = menus_language_maps() && custom_edition_locale_open();
+	/* (the menus' own text, in English: never a map's loc.map, whose
+	language is whichever edition it came from) */
 	for (index = 0; index < menus->string_list_count && !build.failed; index++)
 	{
 		struct halo_menu_strings const *list = &menus->string_lists[index];
-		struct custom_edition_string_list *map = locale && list->map ? custom_edition_locale_strings(list->map) : NULL;
 
 		instance_set(instances, UNICODE_STRING_LIST_TAG, build.strings_tags[index], list->name, "",
-			string_list_build(menus->strings + list->first, menus->string_maps + list->first, list->count, map));
-		if (map)
-			free(map);
-	}
-	if (locale)
-	{
-		custom_edition_locale_close();
-		if (!game_map)
-			platform_log("menus: %ld strings from the Custom Edition's loc.map", build.map_strings);
+			string_list_build(menus->strings + list->first, list->count));
 	}
 	for (index = 0; index < widget_count && !build.failed; index++)
 	{
@@ -2635,7 +2671,7 @@ void menu_tags_loaded(
 		if (widget->text)
 		{
 			instance_set(instances, UNICODE_STRING_LIST_TAG, build.text_tags[index], widget->name, " text",
-				string_list_build(&widget->text, NULL, 1, NULL));
+				string_list_build(&widget->text, 1));
 		}
 		if (widget->strings)
 		{
@@ -2643,7 +2679,7 @@ void menu_tags_loaded(
 			long count = spinner_split(widget, FALSE, pieces);
 
 			instance_set(instances, UNICODE_STRING_LIST_TAG, build.spinner_tags[index], widget->name, " strings",
-				string_list_build(pieces, NULL, count, NULL));
+				string_list_build(pieces, count));
 		}
 		instance_set(instances, UI_WIDGET_DEFINITION_TAG, build.widget_tags[index], widget->name, "", NULL);
 	}
@@ -2664,6 +2700,7 @@ void menu_tags_loaded(
 	if (game_map)
 	{
 		pause_patch(instances);
+		ingame_join_key_patch();
 		if (campaign)
 			pause_campaign_patch(instances);
 		pause_network_patch();

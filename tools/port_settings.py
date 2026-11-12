@@ -45,8 +45,8 @@ QUIT_ITEM_PLACE = main_menu_item_place("quit_game")
 # the Theater (port/linux/REPLAY.md): the replays a host records, its rows
 # (_theater)
 THEATER = "main_menu/theater"
-# the profile settings' rows, in order: the PC version's nine and Gameplay,
-# second to last, all in the nine's room (78 to About's top, 342) so the
+# the profile settings' rows, in order: the PC version's nine, Gameplay before
+# About and Credits after it, all in the nine's room (78 to About's top, 342) so the
 # last one's 32-unit highlight stays beside the description panel. Each is
 # moved from its tag's top (the second number; Gameplay's is ours) by its
 # list's child offset (tools/ce_menus.py's CHILD_OFFSETS)
@@ -54,7 +54,7 @@ PROFILE_ROWS = [("name_profile_item", 78), ("controller_setup_profile_item", 111
                 ("gamepads_profile_item", 144), ("mouse_settings_profile_item", 177),
                 ("audio_settings_profile_item", 210), ("video_settings_profile_item", 243),
                 ("network_settings_profile_item", 277), ("color_profile_item", 277),
-                ("gameplay_profile_item", None), ("about_item", 310)]
+                ("gameplay_profile_item", None), ("about_item", 310), ("credits_item", None)]
 PROFILE_ROWS_TOP = 78
 PROFILE_ROWS_LAST_TOP = 342
 
@@ -117,11 +117,10 @@ SCREENS = {
         # Android's backend and Vulkan driver take places of their own:
         # platform_places packs each platform's rows)
         "same_place": ["display.window_size", "anti_aliasing_android"],
-        # lines of text among the rows, in a place no row of theirs uses:
-        # (text, platform, place), None the place after the platform's last
-        # row. Below Android's rows, wherever they end (place 6 was below
-        # them until Maximum Resolution and Extra Effects came)
-        "notes": [("The graphics backend and driver change when the game restarts.", "android", None)],
+        # ("notes": lines of text among the rows, (text, platform, place),
+        # None the place after the platform's last row. Android's restart
+        # note is gone: below its ten rows it fell on the help, so the
+        # backend's and the driver's helps say it)
         # (buttons of the bar's own, between DEFAULTS and OK: (key, words,
         # menu function, platform, x). Android's IMPORT DRIVER, the app's file
         # picker for a driver archive copied into freedreno_drivers:
@@ -152,7 +151,7 @@ SCREENS = {
             # name left there by hand is kept unless another is chosen:
             # port/android/host/host_vk_driver.c)
             ("VULKAN DRIVER:", "display.vk_driver", [("STOCK", "")],
-             "The phone's own driver, or a zip from the drivers\nfolder (Turnip's, or one IMPORT DRIVER adds).",
+             "The phone's own driver, or a zip IMPORT DRIVER\nadds. Takes effect the next time the game starts.",
              "android"),
             ("RESOLUTION SCALING:", "display.resolution_scaling", [("NATIVE", "native"), ("ORIGINAL", "original")],
              "Native draws at the resolution; Original draws\nthe Xbox's 640x480 and scales it up.", "desktop web"),
@@ -233,8 +232,14 @@ SCREENS = {
              "Stock picks models' detail by the Xbox's 480 lines;\nnative by this display's; highest, always the best.", None),
             ("SHIELD GLOW:", "display.shield_glow", ON_OFF,
              "Shields light their surroundings as they flare.\nOnline: the host's choice.", None),
-            ("GLOW INTENSITY:", "display.shield_glow_intensity", [("DEFAULT", "default"), ("LIGHT SHOW", "light_show")],
-             "Light Show: three times as far, at full from a\nthird of the flare. Online: the host's choice.", None),
+            # (Dynamic Lighting's first row: STOCK turns every added light off
+            # and hides the other rows, menu_functions.c's
+            # dynamic_lighting_rows_show; a help for each value, in turn)
+            ("LIGHTING:", "display.shield_glow_intensity",
+             [("STOCK", "stock"), ("1X", "default"), ("1.5X", "1.5x"), ("2X", "2x"), ("3X", "light_show")],
+             ["Same lighting as original XBOX.", "Enhanced lighting for glowing objects.",
+              "I don't even know why this setting's here.", "You know there's flashlights, right?",
+              "Look at mr. rave lover over here!"], None),
             # (the OpenGL renderer's alone, as texture filtering: the deko3d
             # and Vulkan ones draw the Xbox's range)
             ("HDR:", "display.hdr", ON_OFF,
@@ -336,10 +341,17 @@ SCREENS = {
     "gamepad_setup": {
         "screen": "gamepad_setup_screen",
         "header": ("header_profile_controller_setting", f"{PE}/controller_edit/header_profile_controller_setting"),
-        "spacing": 30,
+        # (27: ten rows, the last clear of the help at 350)
+        "spacing": 27,
         "rows": [
             ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 11)],
-             "How fast the right stick turns the view.", None),
+             "How fast the right stick turns the view left\nand right.", None),
+            # (the profile's own settings.toml's, as Gyro Aim's: SAME is the
+            # game's, half of Look Sensitivity's; 1 to 10 are 40 to 260
+            # degrees a second, xinput_sdl.c's halo_stick_pitch_rate)
+            ("VERTICAL SENSITIVITY:", "input.stick_vertical_sensitivity",
+             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 11)],
+             "How fast the right stick turns the view up\nand down. SAME: half of Look Sensitivity's.", None),
             ("INVERT LOOK:", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("INVERT FLIGHT:", "profile.flight_inversion", YES_NO,
              "Flying vehicles pitch as aircraft do: pushing up\nflies down.", None),
@@ -470,6 +482,27 @@ SCREENS["gamepad_setup/layout"]["screen_children"] = [
     f'<child widget="{LAYOUT}/{controller}/overlay" platform="{spec["platform"]}"/>'
     for controller, spec in CONTROLLERS.items()]
 
+# the controller's sticks' dead zones (port/linux/src/xinput_sdl.c's
+# halo_stick_dead_range): config.toml's, for every profile, a screen of their
+# own (a category, as Video Setup's), after the controller's screen's others
+# (the game's own, about 27%, first, then 0% to 50% in steps of 5)
+DEAD_ZONES = [("DEFAULT", "-1")] + [(f"{percent}%", str(percent)) for percent in range(0, 51, 5)]
+# (after Gyro Aim, which every platform here shows; the touch screen's sticks
+# have none: xinput_sdl.c)
+SCREENS["gamepad_setup"]["categories"] = SCREENS["gamepad_setup"].get("categories", []) + [
+    ("STICK DEAD ZONES:", "gamepad_setup/dead_zones",
+     "How far each stick moves before it does\nanything."),
+]
+SCREENS["gamepad_setup/dead_zones"] = {
+    "screen": "dead_zone_settings_screen", "header": SCREENS["gamepad_setup"]["header"], "spacing": 30,
+    "rows": [
+        ("LEFT STICK:", "input.left_stick_dead_zone", DEAD_ZONES,
+         "How far the left stick moves before you move.\nDefault: the game's own, 27%.", None),
+        ("RIGHT STICK:", "input.right_stick_dead_zone", DEAD_ZONES,
+         "How far the right stick moves before the view\nturns. Default: the game's own, 27%.", None),
+    ],
+}
+
 # Video Setup's categories open ordinary settings screens. Each has the same
 # pending edits, Defaults, OK and Cancel as the other settings screens.
 _video = SCREENS["video_settings"]
@@ -478,8 +511,10 @@ _graphics = {"display.show_fps", "display.high_res_hud", "display.hud_button_sty
              "display.anisotropic_filtering", "display.shadow_resolution", "display.per_pixel_lighting",
              "display.model_detail"}
 # (the visual modifiers: a screen of their own, Extra Effects)
-_extra_effects = {"display.shield_glow", "display.shield_glow_intensity",
-                  "display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping",
+_shield_lighting = {"display.shield_glow", "display.shield_glow_intensity"}
+_shield_rows = [row for row in _video["rows"] if row[1] == "display.shield_glow"]
+_intensity_rows = [row for row in _video["rows"] if row[1] == "display.shield_glow_intensity"]
+_extra_effects = {"display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping",
                   "display.hdr_paper_white", "display.hdr_peak_brightness"}
 # (each platform's rows packed: the Switch has none of the renderer's rows
 # between the text and the model detail, which left it gaps; the two
@@ -514,16 +549,49 @@ SCREENS["video_settings/hdr_calibration"] = {
          "How bright white is (the menus, the HUD, the\ngrey bars), in nits. Choose what looks right.", None),
     ],
 }
-_video["rows"] = [row for row in _video["rows"] if row[1] not in _graphics | _extra_effects]
+_video["rows"] = [row for row in _video["rows"] if row[1] not in _graphics | _extra_effects | _shield_lighting]
 _video["categories"] = [
     ("GRAPHICS:", "video_settings/graphics", "The HUD, text, anti-aliasing, shadows,\nlighting and HDR."),
     ("FOV AND VIEWMODELS:", "video_settings/fov_viewmodels",
      "The field of view and the first-person\nweapon. Their defaults keep the stock view."),
     ("PERFORMANCE:", "video_settings/performance",
      "How fast the console runs the game: a steadier\nframe rate, or a cooler console.", "switch"),
+    # (hidden in an image without the feature, the GL ones:
+    # menu_functions.c's dynamic_lighting_row_show)
+    ("DYNAMIC LIGHTING:", "video_settings/dynamic_lighting",
+     "Added light from projectiles, weapons and\nenergy shields. Added lights default to off."),
+    # (with the shield glow's rows moved, the Switch and the PS5 have none of
+    # its rows left: the overshield and HDR are the OpenGL renderer's)
     ("EXTRA EFFECTS:", "video_settings/extra_effects",
-     "Visual modifiers the stock game does not\nhave, such as the shield glow."),
+     "Visual modifiers the stock game does not\nhave, such as HDR and overshields.", "desktop android web"),
 ]
+SCREENS["video_settings/dynamic_lighting"] = {
+    "screen": "dynamic_lighting_settings_screen", "header": _video["header"], "spacing": 26,
+    "help_top": 370, "help_height": 40,
+    "rows": _intensity_rows + [
+        ("PROJECTILE LIGHTS:", "display.plasma_lighting", ON_OFF,
+         "Plasma, grenades, rockets and flame streams cast\nsoft light on nearby surfaces and models.", None),
+        ("MUZZLE FLASH LIGHTS:", "display.muzzle_lighting", ON_OFF,
+         "Weapon flashes light nearby surfaces, including\nWarthog and Scorpion guns. Stock effects remain.", None),
+        ("WEAPON GLOW:", "lighting.weapon_glow", ON_OFF,
+         "Swords, plasma charge, fuel rods, Needler and AR\nscreens cast light on nearby surfaces.", None),
+        ("PLASMA PRONG LIGHTING:", "display.plasma_prong_lighting", ON_OFF,
+         "Short, soft spill from plasma-weapon prongs.", None),
+        ("SHIELD EMITTERS:", "lighting.shield_emitters", ON_OFF,
+         "Jackal and stationary shields cast light\non nearby surfaces.", None),
+        ("VEHICLE LIGHTS:", "display.vehicle_lighting", ON_OFF,
+         "Engine glow and directional headlights illuminate\nvehicles and nearby surfaces.", None),
+        ("WORLD EMITTERS:", "display.world_lighting", ON_OFF,
+         "Visible powerups and teleporters cast soft light.\nStock effects and gameplay remain unchanged.", None),
+        ("LIGHT OCCLUSION:", "display.plasma_occlusion", ON_OFF,
+         "Block added light behind walls and vehicles.\nOff traces no rays, so light can pass through them.", None),
+    ] + _shield_rows + [
+        # (the phone's: lighting_config.c's lighting_budget. Last, so that
+        # the other platforms' rows are where they were)
+        ("OCCLUDED LIGHTS:", "display.occlusion_lights", [("8", "8"), ("6", "6"), ("4", "4")],
+         "How many lights trace occlusion a frame. Fewer\nare faster on a slower phone.", "android"),
+    ],
+}
 # the Switch's clocks (port/switch/host/host_sdl2.c)
 SCREENS["video_settings/performance"] = {
     "screen": "performance_settings_screen", "header": _video["header"], "spacing": 30,
@@ -563,6 +631,10 @@ SCREENS["audio_settings/sound_processing"] = {
         ("RESAMPLER:", "audio.resampler", [("SINC", "sinc"), ("LINEAR", "linear")],
          "How sounds are converted to the output's rate:\nsinc is clean; linear is brighter, with aliasing.",
          None),
+        # (AAudio's low latency path, which screen recorders cannot hear on a phone where it
+        # goes straight to the hardware: dsound_sdl.c's audio_realtime_read)
+        ("REALTIME AUDIO:", "audio.realtime", ON_OFF,
+         "Uses realtime audio to reduce latency.\nMay affect screen recordings.", "android"),
     ],
 }
 _audio["rows"] = [row for row in _audio["rows"] if row[1] not in _processing]
@@ -651,7 +723,7 @@ SCREENS["network_setup/server_browser"] = {
         # menu_functions.c's setting_value_index, and writes it again only if another is chosen)
         ("SORT BY:", "network.browser_sort",
          [("DEDICATED FIRST", "servers"), ("PLAYERS", "players"), ("NAME", "name"), ("MAP", "map"),
-          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked")],
+          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked"), ("PING", "ping")],
          "The list's order. Its column titles sort it too;\nchoosing one again reverses it.", None),
         ("MASTER SERVERS:", "network.masters_file", None,
          "The master servers (masters.txt) that answered\nwhen the Server Browser last asked.", None,
@@ -806,7 +878,12 @@ STRING_OVERRIDES = {
         "Internet play, updates and the\\nmultiplayer HUD.\\n\\nProfile:",
         "Change the current profile's\\nfree-for-all multiplayer color.\\n\\nProfile:",
         "How players and the AI fall:\\nthe animation, or a ragdoll.\\n\\nProfile:",
-        "Halo: Combat Evolved, the Xbox\\ngame, on this computer.\\n\\nProfile:",
+        # (a string for each platform: ce_menus.py's strings_xml)
+        {"switch": "SlipstreamCE, a fork of OpenCE.\\nHalo: Combat Evolved on your\\nSwitch\\nProfile:",
+         "ps5": "SlipstreamCE, a fork of OpenCE.\\nHalo: Combat Evolved on your\\nPS5\\nProfile:",
+         "android": "SlipstreamCE, a fork of OpenCE.\\nHalo: Combat Evolved on your\\nAndroid Device\\nProfile:",
+         "desktop web": "SlipstreamCE, a fork of OpenCE.\\nHalo: Combat Evolved on your\\nComputer\\nProfile:"},
+        "The people behind the game, and\\nthe licenses of what it uses.\\n\\nProfile:",
     ],
 }
 
@@ -994,10 +1071,17 @@ def _setting_screen(folder: str, spec: dict) -> list:
                       [label for label, *_ in spec.get("categories", ())])
     if spec.get("words"):
         extra += _strings(f"{base}/words", spec["words"])
-    # (the help of the row whose label is string n is n + 1: the buttons' is 0)
+    # (the help of the row whose label is string n is n + 1: the buttons' is 0.
+    # A row whose help is a list has one for each value: its first in the
+    # row's place, the others last, in turn: menu_functions.c's
+    # settings_value_help, one such row a screen)
+    value_helps = [help_text for _, _, _, help_text, *_ in spec["rows"] if isinstance(help_text, list)]
+    assert len(value_helps) <= 1, f"{folder}: one row with a help for each value at most"
     extra += _strings(f"{base}/help_strings",
-                      [""] + [help_text.replace("\n", "\\n") for _, _, _, help_text, *_ in spec["rows"]] +
-                      [help_text.replace("\n", "\\n") for _, _, help_text, *_ in spec.get("categories", ())])
+                      [""] + [(help_text[0] if isinstance(help_text, list) else help_text).replace("\n", "\\n")
+                              for _, _, _, help_text, *_ in spec["rows"]] +
+                      [help_text.replace("\n", "\\n") for _, _, help_text, *_ in spec.get("categories", ())] +
+                      [text.replace("\n", "\\n") for helps in value_helps for text in helps[1:]])
     # (a note's place None: the one after its platform's last row)
     if spec.get("notes"):
         spec = dict(spec, notes=[(text, platform, places[platform] + 1 if place is None else place)
@@ -1376,7 +1460,7 @@ STRING_OVERRIDES.update({
         "All the weapons on the map are only effective at\\nshort ranges.",
         "There are no weapons on the map that were made in\\nCovenant sweat shops.",
         "Only weapons made by the Covenant will appear\\nin the map.",
-        "The flamethrower and fuel rod gun will not appear\\nin the map.",
+        "The map will contain whatever weapons the designers\\nplaced on it.",
         "Only the most devastating and dangerous of weapons\\nwill appear in the map.",
         "The map's weapons, without any grenades.",
         "You will start the game with the weapon set that the \\nmap designers custom tailored for it.",
@@ -1393,24 +1477,6 @@ STRING_OVERRIDES.update({
         "SHORT RANGE", "HUMAN", "COVENANT", "CLASSIC", "HEAVY WEAPONS", "NO GRENADES"],
 })
 
-# which of STRING_OVERRIDES' strings say what one of the PC version's own
-# says: its index in the PC version's list, or None (the port's own). A map
-# in another language than English has those in its language (map=,
-# menu_tags.c's map_strings); the inserted strings (STRING_INSERTS) are the
-# port's own, the rest of their lists the PC version's
-OVERRIDE_ORIGINALS = {
-    f"{PE}/profile_edit_descriptions": [0, None, None, None, None, None, None, 7, None],
-    f"{MT}/multiplayer_options": [0, 1, 2, 3, None, 5, None, None],
-    f"{MT}/multiplayer_option_descriptions": [0, 1, None, None, 4, None, 5],
-    "main_menu/gametype_select/var_gametype_banks": [0, None, 2],
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/item_options_labels": [0, 1, 2, 3, 4] + [None] * 4,
-    # (the first's note that infinite grenades work only with 4 players or
-    # fewer is left out: not so here)
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/cap_item_options":
-        [None] + list(range(1, 15)) + [None, 15, 16] + [None] * 24,
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/var_weapon_set": list(range(13)) + [None],
-}
-
 # the map lists' first row: SINGLEPLAYER, MULTIPLAYER, CUSTOM SINGLEPLAYER or
 # CUSTOM MULTIPLAYER maps (_map_kind)
 MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
@@ -1419,6 +1485,13 @@ MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
 # maps in .zip files, into custom_maps (menu_functions.c's map_import_start,
 # HaloActivity.importMaps)
 MAP_IMPORT = "main_menu/new_select/button_map_import"
+# the map lists' DELETE (Android's, left of IMPORT; the west face button on the
+# list too, which the other platforms pass over): the custom map or the folder
+# of maps chosen, at a second press (menu_functions.c's map_delete_press),
+# which MAP_DELETE_STATUS asks for in the place of the map's words, and says
+# what was deleted
+MAP_DELETE = "main_menu/new_select/button_map_delete"
+MAP_DELETE_STATUS = "main_menu/new_select/map_delete_status"
 
 # the main menu's news: the latest release's notes (tools/embed_assets.py's
 # news_text) in a window the main menu's X opens (WIDGET_PATCHES), its lines
@@ -1429,6 +1502,13 @@ NEWS_ROWS = 12
 # its widget's corner: the panel is its texels 49 to 556 across and 104 to
 # 349 down), placed in the middle of the screen
 NEWS_PANEL = (17, 14)
+# the settings' Credits: the news's window (its panel, rows and buttons), the
+# text narrower, on the left, and the logo on the right (tools/slipstream_icon.py's
+# CREDITS_PICTURE, its artwork CREDITS_LOGO units across in the middle of its
+# 256), both filled and scrolled by menu_functions.c ("port credits ...")
+CREDITS = f"{PE}/credits"
+CREDITS_LINE_WIDTH = 310
+CREDITS_LOGO = 160
 
 
 # changes to the PC version's widgets (by our names): attributes set, all
@@ -1506,11 +1586,14 @@ WIDGET_PATCHES = {
         # a PS5 - opens the news, the latest release's notes: _news_screen;
         # on the main menu alone)
         "handlers": ['<on event="down"/>', f'<on event="x" open="{NEWS}/news_screen"/>']},
+    # (the build number in the menus' blue, on the right edge the hint and the renderer's line share)
+    "main_menu/build_number": {"set": {"width": 180, "color": "#FF2896FF", "align": "right"}},
     # (and the hint that X opens it, over the build number: a tap or a click
     # on it presses X, its picture a key's icon to the pointer, x_butn_news)
     "main_menu/main_menu": {"insert_before": {"main_menu/build_number": [
-        f'<child widget="{NEWS}/x_butn_news" x="450" y="380"/>',
-        f'<child widget="{NEWS}/news_hint" x="450" y="380"/>']}},
+        # (left-aligned, as a line with a button's picture cannot be otherwise, and placed so that it ends on that edge)
+        f'<child widget="{NEWS}/x_butn_news" x="572" y="380"/>',
+        f'<child widget="{NEWS}/news_hint" x="572" y="380"/>']}},
     f"{PLAYER_EDIT}/player_options_menu": {"insert_before": {
         f"{PLAYER_EDIT}/player_button_bar": [
             f'<child widget="{PLAYER_EDIT}/op_aim_assist" x="54" y="289"/>',
@@ -1533,6 +1616,7 @@ WIDGET_PATCHES = {
     # places, PROFILE_ROWS)
     f"{PE}/profile_edit_select_list": {"insert_before": {
         f"{PE}/about_item": [f'<child widget="{PE}/gameplay_profile_item"/>'],
+        f"{PE}/profile_edit_button_bar": [f'<child widget="{PE}/credits_item"/>'],
     }},
     # (straight to their screens: no "checking for updates" dialog, which
     # asked the PC version's servers)
@@ -1566,13 +1650,24 @@ WIDGET_PATCHES = {
         f'<on event="custom_activation" run="mp level select" open="{MT}/connected/gametype_select_screen_wrapper"/>',
         '<on event="b" run="port map list back"/>',
         '<on event="back" run="port map list back"/>',
+        # (the west face button: DELETE's, MAP_DELETE)
+        '<on event="x" run="port map delete"/>',
     ]},
-    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER}},
-    # (their IMPORT, Android's: MAP_IMPORT)
+    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER},
+                                                           "handlers": [
+        '<on event="created" run="initialize sp level list solo"/>',
+        '<on event="deleted" run="dispose sp level list"/>',
+        '<on event="custom_activation" run="solo level set map" open="main_menu/difficulty_select/difficulty_select_list_screen"/>',
+        '<on event="x" run="port map delete"/>',
+    ]},
+    # (their DELETE and IMPORT, Android's: MAP_DELETE, MAP_IMPORT)
     f"{MT}/mp_map_select/mp_map_select_button_bar": {"insert_before": {
-        f"{MT}/mp_map_select/mp_map_select_button_ok": [f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
+        f"{MT}/mp_map_select/mp_map_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
+            f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     "main_menu/solo_level_select/solo_level_select_button_bar": {"insert_before": {
         "main_menu/solo_level_select/solo_level_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
             f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     # (each description shows the other kind's maps too: a campaign level's
     # picture, name and words on the Map screen, a multiplayer map's on New
@@ -1581,11 +1676,14 @@ WIDGET_PATCHES = {
         '<child widget="main_menu/solo_level_select/replay_level_right_name"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_pic"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_data"/>',
+        # (DELETE's question and what it did, in the words' place: MAP_DELETE_STATUS)
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     "main_menu/solo_level_select/replay_level_right_item": {"children": [
         f'<child widget="{MT}/mp_map_select/mp_map_right_name"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_pic"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_data"/>',
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     f"{MT}/join_game/header_join_game": {"children": [
         f'<child widget="{MT}/join_game/header_server_browser"/>',
@@ -1738,6 +1836,10 @@ PAUSE_BOX_BUTTONS = [3, 4]
 PAUSE_BOX_EXTRA_HEIGHTS = [195, 225]
 
 
+# the in-game join box's width (the pause box's: menu_tags.c's PAUSE_BOX_WIDTH)
+INGAME_JOIN_WIDTH = 226
+
+
 def pause_box_height(buttons: int) -> int:
     return 159 + (buttons - 2) * 35
 
@@ -1866,6 +1968,8 @@ BROWSER_WORDS = [
     "The host refused: your Discord account is in the game",
     "The host blocks VPNs: link Discord with its master (Settings > Network Setup)",
     "The host refused: too many players from your address",
+    # (the line while Refresh's pings come in)
+    "Refreshing...",
 ]
 
 
@@ -2457,6 +2561,53 @@ def _lobby() -> list:
                          [f'<on event="a" run="{run}"{opened}/>', f'<on event="start" run="{run}"{opened}/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _join4(base)
+    lines += _ingame_join(base)
+    return lines
+
+
+def _ingame_join(base: str) -> list:
+    """joining a network game in progress: a controller with no player
+    presses START in the game, and this box of its own (in its quarter of
+    the screen: menu_functions.c's ingame_join_open) shows a profile, left
+    and right choosing another; A joins with it, B goes back to watching.
+    It looks as the pause menu does (the port's box, the key in its footer
+    band, the controller's own button icons), but of the port's own widgets
+    alone: a multiplayer map has none of ui.map's"""
+    height = pause_box_height(3)
+    lines = _widget(f"{base}/ingame_join_screen", [("width", 640), ("height", 480)],
+                    ['<on event="created" run="port ingame join open"/>',
+                     '<on event="a" run="port ingame join select" close="current"/>',
+                     '<on event="start" run="port ingame join select" close="current"/>',
+                     '<on event="b" close="current"/>', '<on event="back" close="current"/>',
+                     '<on event="left" run="port ingame join previous"/>',
+                     '<on event="right" run="port ingame join next"/>',
+                     '<data input="port ingame join update"/>',
+                     f'<child widget="{base}/ingame_join_box"/>'])
+    # (the box: the pause box's three pieces, its 3-button frame; the strip
+    # tiles across)
+    lines += _widget(f"{base}/ingame_join_box", [("width", INGAME_JOIN_WIDTH), ("height", height)],
+                     [f'<child widget="{base}/ingame_join_box_left" x="0" y="0"/>',
+                      f'<child widget="{base}/ingame_join_box_center" x="16" y="0"/>',
+                      f'<child widget="{base}/ingame_join_box_right" x="{INGAME_JOIN_WIDTH - 16}" y="0"/>',
+                      f'<child widget="{base}/ingame_join_title" x="0" y="34"/>',
+                      f'<child widget="{base}/ingame_join_name" x="0" y="82"/>',
+                      f'<child widget="{base}/ingame_join_hint" x="0" y="{height - 26}"/>'])
+    for piece, width in (("left", 16), ("center", INGAME_JOIN_WIDTH - 32), ("right", 16)):
+        lines += _widget(f"{base}/ingame_join_box_{piece}", [("width", width), ("height", height),
+                                                            ("bitmap", f"pause/joinbox_{piece}")], [])
+    lines += _widget(f"{base}/ingame_join_title", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 30),
+                                                   ("font", "ui\\large_ui"), ("color", "#FFFFFFFF"),
+                                                   ("align", "center"), ("text_flags", "no_focus_test")], [])
+    lines += _widget(f"{base}/ingame_join_name", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 30),
+                                                  ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                                                  ("align", "center"), ("text_flags", "no_focus_test")], [])
+    # (the key: menu_tags.c puts the pause screens' own in its place, B=CANCEL
+    # A=SELECT; these words are for a map whose pause screens have none)
+    lines += _widget(f"{base}/ingame_join_hint", [("type", "text"), ("width", INGAME_JOIN_WIDTH), ("height", 24),
+                                                  ("text", "B=CANCEL    A=JOIN"),
+                                                  ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                                                  ("align", "center"), ("text_y", 3),
+                                                  ("text_flags", "no_focus_test")], [])
     return lines
 
 
@@ -2522,16 +2673,16 @@ def _join4(base: str) -> list:
     lines += _widget(f"{base}/join4_qtr_ready",
                      [("width", 254), ("height", 164), ("bitmap", f"{xbox}4way_profile_border")],
                      ['<on event="created" run="port join4 ready"/>',
-                      '<on event="a" run="port join4 done" back="true"/>',
-                      '<on event="start" run="port join4 done" back="true"/>',
+                      '<on event="a" run="port join4 done"/>',
+                      '<on event="start" run="port join4 done"/>',
                       f'<on event="b" run="port join4 unready" replace="{base}/join4_qtr_select"/>',
                       '<on event="back"/>',
                       *selected])
     # (a player in the game already)
     lines += _widget(f"{base}/join4_qtr_playing",
                      [("width", 254), ("height", 164), ("bitmap", f"{xbox}4way_profile_border")],
-                     ['<on event="a" run="port join4 done" back="true"/>',
-                      '<on event="start" run="port join4 done" back="true"/>',
+                     ['<on event="a" run="port join4 done"/>',
+                      '<on event="start" run="port join4 done"/>',
                       '<on event="b"/>', '<on event="back"/>',
                       *selected])
     lines += _widget(f"{base}/join4_hint", [("type", "text"), ("width", 345), ("height", 24),
@@ -2728,6 +2879,16 @@ def _map_kind() -> list:
     lines += _strings("main_menu/new_select/var_map_kinds",
                       ["SINGLEPLAYER", "MULTIPLAYER", "CUSTOM SINGLEPLAYER", "CUSTOM MULTIPLAYER"])
     lines += _text_button(MAP_IMPORT, "IMPORT", ['<on event="a" run="port map import"/>'])
+    # (DELETE alone: the west button's picture beside it does not fit the
+    # button; the button is the list's X anyway)
+    lines += _text_button(MAP_DELETE, "DELETE", ['<on event="a" run="port map delete"/>',
+                                               '<on event="start" run="port map delete"/>'])
+    # (where the map's words are, mp_map_right_data's place and font: hidden
+    # but while DELETE asks or has just deleted)
+    lines += _widget(MAP_DELETE_STATUS,
+                     [("type", "text"), ("controller", 1), ("left", 417), ("top", 258), ("width", 146),
+                      ("height", 136), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                      ("text_flags", "no_focus_test")], [])
     return lines
 
 
@@ -2790,9 +2951,58 @@ def _news_screen() -> list:
     # ui_mouse_key_button; nothing of it drawn, the hint's own picture is)
     lines += _widget(f"{base}/x_butn_news", [("width", 16), ("height", 20)], [])
     lines += _widget(f"{base}/b_butn_news_back", [("width", 16), ("height", 20)], [])
-    lines += _widget(f"{base}/news_hint", [("type", "text"), ("controller", 1), ("width", 150), ("height", 20),
+    lines += _widget(f"{base}/news_hint", [("type", "text"), ("controller", 1), ("width", 60), ("height", 20),
                                           ("text", "%x-button NEWS"), ("font", "ui\\small_ui"),
                                           ("color", "#FFCCCCCC"), ("text_flags", "no_focus_test")], [])
+    return lines
+
+
+def _credits_screen() -> list:
+    """Settings' Credits row, after About, and its screen: the news window's
+    panel, with port/assets/credits.txt scrolled in NEWS_ROWS lines on the
+    left and the logo on the right. Up and down scroll a line, left and right
+    a page, B or Back close it"""
+    base = CREDITS
+    left, top = NEWS_PANEL[0] + 49, NEWS_PANEL[1] + 104
+    text_left = left + 16
+    # (the logo in the middle of what the text leaves of the panel, and of the
+    # rows' height; its picture's margin is transparent)
+    logo_x = round((text_left + CREDITS_LINE_WIDTH + left + 507) / 2) - 128
+    logo_y = top + 12 + round(18 * NEWS_ROWS / 2) - 128
+    close = ['<on event="b" run="port credits close"/>', '<on event="back" run="port credits close"/>']
+    scroll = [f'<on event="{event}" run="port credits up"/>' for event in ("up", "stick_up", "right_stick_up")]
+    scroll += [f'<on event="{event}" run="port credits down"/>' for event in ("down", "stick_down", "right_stick_down")]
+    scroll += ['<on event="left" run="port credits page up"/>', '<on event="right" run="port credits page down"/>']
+    lines = _widget(f"{PE}/credits_item", [("type", "text"), ("left", 51), ("top", profile_row_top("credits_item")),
+                                           ("width", 232), ("height", 32), ("bitmap", "bitmaps/list_item_bkd"),
+                                           ("text", "CREDITS"), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                                           ("text_x", 13), ("text_y", 5)],
+                    [f'<on event="a" open="{base}/credits_screen"/>',
+                     f'<on event="start" open="{base}/credits_screen"/>',
+                     '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _widget(f"{base}/credits_screen", [("width", 640), ("height", 480), ("bitmap", "bitmaps/gradient_big")],
+                     ['<data input="port credits update"/>', '<on event="created" run="port credits init"/>', *close,
+                      *scroll, f'<child widget="{NEWS}/news_panel" x="{NEWS_PANEL[0]}" y="{NEWS_PANEL[1]}"/>',
+                      f'<child widget="{base}/credits_title" x="{left}" y="{top - 34}"/>',
+                      f'<child widget="{base}/credits_logo" x="{logo_x}" y="{logo_y}"/>',
+                      *[f'<child widget="{base}/credits_line" x="{text_left}" y="{top + 12 + 18 * row}"/>'
+                        for row in range(NEWS_ROWS)],
+                      # (the news's buttons, in its places: _news_screen)
+                      f'<child widget="{base}/dpad_up_butn_credits" x="{left + 164}" y="{top + 253 + 7}"/>',
+                      f'<child widget="{NEWS}/news_scroll_text" x="{left + 198}" y="{top + 253}"/>',
+                      f'<child widget="{base}/dpad_down_butn_credits" x="{left + 254}" y="{top + 253 + 7}"/>',
+                      f'<child widget="{base}/b_butn_credits_back" x="{left + 300}" y="{top + 253}"/>',
+                      f'<child widget="{NEWS}/news_back_text" x="{left + 300}" y="{top + 253}"/>'])
+    lines += _widget(f"{base}/credits_title", [("type", "text"), ("controller", 1), ("width", 507), ("height", 30),
+                                              ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/credits_logo", [("width", 256), ("height", 256), ("bitmap", f"{base}/credits_logo")], [])
+    lines += _widget(f"{base}/credits_line", [("type", "text"), ("controller", 1), ("width", CREDITS_LINE_WIDTH),
+                                             ("height", 18), ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"),
+                                             ("text_flags", "no_focus_test")], [])
+    for name in ("up", "down"):
+        lines += _widget(f"{base}/dpad_{name}_butn_credits", [("width", 16), ("height", 16),
+                                                              ("bitmap", f"bitmaps/arrow_sm_{name}")], [])
+    lines += _widget(f"{base}/b_butn_credits_back", [("width", 16), ("height", 20)], [])
     return lines
 
 
@@ -2833,6 +3043,8 @@ def multiplayer_files() -> dict:
         PROFILE.replace("/", ".") + ".port.xml": head + _hint_widgets(PROFILE, PROFILE_HINTS) + ["</menus>", ""],
         # (and the main menu's news)
         NEWS.replace("/", ".") + ".xml": head + _news_screen() + ["</menus>", ""],
+        # (and the settings' Credits)
+        CREDITS.replace("/", ".") + ".xml": head + _credits_screen() + ["</menus>", ""],
         "main_menu/settings_select/multiplayer_setup/item_options_edit".replace("/", ".") + ".port.xml": head + _item_options_extras() + ["</menus>", ""],
         PLAYER_EDIT.replace("/", ".") + ".port.xml": head + _player_options_extras() + ["</menus>", ""],
         TEAMPLAY_EDIT.replace("/", ".") + ".port.xml": head + _teamplay_options_extras() + ["</menus>", ""],
@@ -3142,8 +3354,10 @@ def _theater() -> list:
                      ['<on event="a" run="port theater record"/>', '<on event="start" run="port theater record"/>',
                       '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _strings(f"{base}/record_strings", ["RECORD: OFF", "RECORD: ON"])
-    lines += _text_button(f"{base}/button_delete", "%x-button DELETE", ['<on event="a" run="port theater delete"/>',
-                                                                      '<on event="start" run="port theater delete"/>'])
+    # (DELETE alone, as the map lists': the west button's picture beside it
+    # does not fit the button; theater_delete_hint, the consoles', has room)
+    lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port theater delete"/>',
+                                                             '<on event="start" run="port theater delete"/>'])
     # (its words a string list's, as button_record's: "port theater update"
     # chooses OFF or ON)
     lines += _widget(f"{base}/theater_record_hint", [("type", "text"), ("controller", 1), ("width", 150),

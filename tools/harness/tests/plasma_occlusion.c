@@ -1,0 +1,1275 @@
+#define D3DLOCK_NOOVERWRITE 0x20 /* (xdk_d3d8.h) */
+#include "harness.h"
+#include <math.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define PIN(a,b,c) MIN(MAX(a,b),c)
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+typedef struct
+{
+	unsigned long pixels[4096];
+} IDirect3DVolumeTexture8;
+typedef IDirect3DVolumeTexture8 D3DResource;
+typedef struct
+{
+	void *pBits;
+} D3DLOCKED_BOX;
+enum
+{
+	D3DFMT_A8R8G8B8,
+	D3DPOOL_MANAGED,
+	_collision_test_structure_bit,
+	_collision_test_front_facing_surfaces_bit,
+	_collision_test_back_facing_surfaces_bit,
+	_collision_test_objects_bit,
+	_collision_test_objects_scenery_bit,
+	_collision_test_objects_machines_bit,
+	_collision_test_objects_vehicles_bit
+};
+struct collision_result
+{
+	real t;
+};
+struct rasterizer_light_submit_parameters
+{
+	real_point3d position;
+	real radius;
+};
+static struct
+{
+	long light_count;
+	struct rasterizer_light_submit_parameters lights[32];
+} rasterizer_lights;
+struct lighting_budget { int fields; long rays, time_us; };
+static struct lighting_budget budget_now = {8, 0, 0};
+const struct lighting_budget *lighting_budget(void) { return &budget_now; }
+static int on = 1, queries, allocations, blocked = 1, door, fail_upload;
+static unsigned long time_ms = 1000;
+static int uploads, fail_unlock;
+static real specular_scale = 1;
+static int muzzle_on, emitter_on, emitter_occlusion, shield_on, shield_occlusion, vehicle_on;
+static long last_ignore;
+static unsigned long last_flags;
+static int directional_on, vehicle_only;
+static int prong_on;
+struct plasma_collision_scene { int unused; };
+int plasma_lighting_prong_cone(long r,float axis[3],float origin[3],float *radius)
+{ axis[0]=1;axis[1]=axis[2]=0;origin[0]=origin[1]=origin[2]=0;*radius=.3f;return prong_on?3:0; }
+static int revision_calls;
+unsigned long plasma_collision_scene_revision(struct plasma_collision_scene *scene,const real_point3d *point,float extent,int vehicles)
+{
+ revision_calls++;
+ static int last=-1; static unsigned long revision;
+ int state=blocked+2*door+4*vehicle_only;
+ if(state!=last){last=state;revision++;}
+ return revision;
+}
+static float directional_axis[3]={-.8f,0,.6f}, directional_origin, directional_radius=1;
+int muzzle_lighting_vehicle_occlusion(long light) { return muzzle_on && light==500; }
+static long held_muzzle=NONE, held_emitter=NONE, held_third=NONE;
+int muzzle_lighting_held_weapon(long light) { return light!=NONE&&(light==held_muzzle||light==held_third); }
+int covenant_emitter_lighting_held_weapon(long light) { return light!=NONE&&light==held_emitter; }
+int covenant_emitter_lighting_cone(long r,float axis[3],float origin[3],float *radius)
+{
+ int i;if(!directional_on||r<0||r>=8)return 0;
+ for(i=0;i<3;i++){axis[i]=directional_axis[i];origin[i]=directional_origin;}
+ *radius=directional_radius;return directional_on;
+}
+long covenant_emitter_lighting_occlusion_ignore(long i) { return emitter_on && i == 502 ? 42 : NONE; }
+int covenant_emitter_lighting_enabled(void) { return emitter_on; }
+int covenant_emitter_lighting_selected(long i) { return emitter_on && i == 0; }
+int muzzle_lighting_selected(long i) { return muzzle_on && i == 0; }
+int shield_glow_enabled(void) { return shield_on; }
+int shield_glow_selected(long i) { return shield_on && i == 0; }
+void shield_glow_frame_end(void) {}
+void shield_glow_window_begin(void) {}
+void shield_glow_submitted(long l,long r) {}
+float shield_glow_radius(long l,float r) { return r; }
+/* (ours: muzzle and vehicle lights follow Light Occlusion, so their cases say it is on) */
+static int occlusion_forced = -1;
+int lighting_config_boolean(const char *name)
+{
+	if (!strcmp(name, "display.plasma_occlusion") && occlusion_forced >= 0) return occlusion_forced;
+	if (!strcmp(name, "display.plasma_occlusion") && shield_on) return shield_occlusion;
+	if (!strcmp(name, "display.muzzle_lighting")) return muzzle_on;
+	if (!strcmp(name, "display.vehicle_lighting")) return vehicle_on;
+	if (!strcmp(name, "display.plasma_occlusion") && emitter_on) return emitter_occlusion;
+	return on;
+}
+static unsigned long GetTickCount(void)
+{
+	return time_ms;
+}
+static int lights_hidden;
+int plasma_occlusion_light_visible(long r, float radius) { return !lights_hidden; }
+float plasma_occlusion_specular_scale(long index)
+{
+	return specular_scale;
+}
+static int collision_test_vector(unsigned long flags, const real_point3d *p, const real_vector3d *v,
+								 long ignore, struct collision_result *hit)
+{
+	float t, y;
+	queries++;
+	last_ignore = ignore;
+	last_flags = flags;
+	if (vehicle_only && !(flags & FLAG(_collision_test_objects_vehicles_bit))) return 0;
+	if (!blocked || v->i == 0)
+		return 0;
+	t = (0.3f - p->x) / v->i;
+	y = p->y + t * v->j;
+	if (t < 0 || t >= 1 || (door && fabsf(y) < 0.3f))
+		return 0;
+	hit->t = t;
+	return 1;
+}
+unsigned long lighting_budget_clock_us(void) { return (unsigned long)queries; } /* (a microsecond a ray) */
+static void plasma_collision_begin(unsigned long flags, const real_point3d *p, long ignore) {}
+static void plasma_collision_end(void) {}
+static float plasma_collision_depth(unsigned long flags, const real_point3d *p, const real_vector3d *v, long ignore)
+{
+	struct collision_result hit;
+	return collision_test_vector(flags, p, v, ignore, &hit) ? hit.t : 2.0f;
+}
+enum { PLASMA_COLLISION_RAYS = 1536 };
+static void plasma_collision_depths(unsigned long flags, const real_point3d *p,
+ const real_vector3d *vectors, int count, long ignore, float *depths)
+{ int i;for(i=0;i<count;i++)depths[i]=plasma_collision_depth(flags,p,&vectors[i],ignore); }
+/* the helper threads, as the game thread sees them: the rays handed over, and
+   traced when they are collected */
+static struct { int used; unsigned long flags; real_point3d p; real_vector3d v[PLASMA_COLLISION_RAYS]; int count; long ignore; } handed;
+static int helper_starts;
+static int plasma_collision_depths_start(unsigned long flags, const real_point3d *p, const real_vector3d *v, int count, long ignore)
+{
+	if (handed.used)
+		return -1;
+	handed.used = 1;
+	handed.flags = flags;
+	handed.p = *p;
+	memcpy(handed.v, v, count * sizeof(*v));
+	handed.count = count;
+	handed.ignore = ignore;
+	helper_starts++;
+	return 0;
+}
+static int plasma_collision_depths_finish(int handle, float *depths)
+{
+	if (handle || !handed.used)
+		return 0;
+	handed.used = 0;
+	plasma_collision_depths(handed.flags, &handed.p, handed.v, handed.count, handed.ignore, depths);
+	return 1;
+}
+#define MAXIMUM_LIGHTS_PER_WINDOW 32
+static int D3DDevice_CreateVolumeTexture(int w, int h, int d, int levels, int usage, int format, int pool,
+										 IDirect3DVolumeTexture8 **t)
+{
+	if (fail_upload)
+		return -1;
+	*t = calloc(1, sizeof(**t));
+	allocations++;
+	return 0;
+}
+static int field_forgotten;
+static float last_reach;
+static int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
+{
+	uploads++;
+	last_reach = reach;
+	if (fail_unlock)
+		return 0;
+	memcpy(((IDirect3DVolumeTexture8 *)texture)->pixels, pixels, 4096 * sizeof(long));
+	return 1;
+}
+static void halo_field_texture_forget(const void *texture) { field_forgotten++; }
+#define PLASMA_FIELD_RADIAL_REACH (0.5f + 0.10826f)
+static void D3DResource_Release(D3DResource *p)
+{
+	free(p);
+	allocations--;
+}
+static int moving_384;
+int lighting_moving_lights_384(void) { return moving_384; }
+int lighting_fast_occlusion_math(void) { return 0; }
+static int background_rays;
+int lighting_parallel_light_rays(void) { return 0; }
+int lighting_background_light_rays(void) { return background_rays; }
+static int log_lines;
+void platform_log(char const *format, ...) { log_lines++; }
+void plasma_occlusion_window(void);
+int plasma_lighting_vehicle_occlusion(long i) { return vehicle_on && i == 500; }
+int authored_emitter_lighting_enabled(void) { return vehicle_on; }
+int covenant_emitter_lighting_vehicle_occlusion(long light) { return vehicle_on && light == 502; }
+#include "under_test.inc"
+/* (the tests change a light between asks of one view, which the game never
+   does: each ask here is the view's first; the memo has its own check) */
+#define plasma_occlusion_texture(index, specular) \
+	(memset(view_textures, 0, sizeof(view_textures)), plasma_occlusion_texture(index, specular))
+#define plasma_occlusion_model_texture(slot, transform) \
+	(memset(view_textures, 0, sizeof(view_textures)), plasma_occlusion_model_texture(slot, transform))
+/* Match the renderer's linear filtering between vertical texel centres. */
+static float filtered_height(IDirect3DVolumeTexture8 *texture, float height, float radius)
+{
+	float z = PIN((height / radius + 1.0f) * 8.0f - 0.5f, 0.0f, 15.0f);
+	int lower = (int)z, upper = MIN(lower + 1, 15);
+	float a = (float)(texture->pixels[(lower * 16 + 8) * 16 + 8] & 255) / 255.0f;
+	float b = (float)(texture->pixels[(upper * 16 + 8) * 16 + 8] & 255) / 255.0f;
+	return a + (b - a) * (z - lower);
+}
+
+int main(int argc, char **argv)
+{
+	struct occlusion_field *f;
+	real previous;
+	int n, cap, step;
+	real temporal[4];
+	float transform[4];
+	rasterizer_lights.light_count = 1;
+	rasterizer_lights.lights[0].radius = 1;
+	if (argc > 1 && !strcmp(argv[1], "prong"))
+	{
+		static const float axes[][3] = {{1,0,0},{0,1,0},{0,0,1},{-.8f,0,.6f},{.577f,.577f,.577f},{-.267f,.802f,-.535f},{0,0,-1}};
+		static float mask[4096];
+		unsigned int a;
+		int x, y, z, i;
+		for (a = 0; a < sizeof(axes) / sizeof(axes[0]); a++)
+		{
+			plasma_prong_falloff_mask(axes[a], mask);
+			for (z = 0, i = 0; z < 16; z++)
+				for (y = 0; y < 16; y++)
+					for (x = 0; x < 16; x++, i++)
+					{
+						float dx = 2.0f * (x + 0.5f) / OCC_SIZE - 1, dy = 2.0f * (y + 0.5f) / OCC_SIZE - 1, dz = 2.0f * (z + 0.5f) / OCC_SIZE - 1;
+						CHECK(mask[i] == plasma_prong_falloff_factor(axes[a], dx, dy, dz), "a prong mask's cell is the factor's, exactly");
+					}
+		}
+		return 0;
+	}
+	if (argc > 1 && !strcmp(argv[1], "stats"))
+	/* debug.gpu_stats: each thing a field does is counted as what it was */
+	{
+		int views;
+		blocked=1;door=0;
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		#define STATS_VIEW(id) (time_ms+=16,plasma_occlusion_window(),plasma_occlusion_submit(id,0),field_for(0))
+		f=STATS_VIEW(880);
+		CHECK(f&&stats.trace_new==1&&stats.rays==1536&&stats.rebuild_moved==1,"a new field counts as new");
+		CHECK(STATS_VIEW(880)&&stats.fade==1&&stats.rays==1536,"an unchanged light only fades");
+		rasterizer_lights.lights[0].position.y=.01f;
+		CHECK(STATS_VIEW(880)&&stats.trace_moved==1&&stats.rebuild_moved==2,"a moved light counts as moved");
+		blocked=0;
+		CHECK(STATS_VIEW(880)&&stats.trace_scene==1&&stats.rebuild_stationary==1,"a still light in a changed scene counts as that");
+		CHECK(!stats.trace_held&&!stats.rebuild_held,"and none of them as held");
+		for(views=0;views<200;views++){stats.logged=time_ms;STATS_VIEW(880);}
+		CHECK(stats.fade_settled>0&&stats.fade_settled<stats.fade,"a fade counts as settled once it changes nothing");
+		n=stats.textures;
+		CHECK(field_texture(f,1,0)&&stats.textures==n+1,"a texture build is counted");
+		CHECK(field_texture(f,1,0)&&stats.textures==n+1,"a texture reused is not");
+		CHECK(stats.uploads>=1,"nor is an upload missed");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		held_muzzle=881;
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		CHECK(STATS_VIEW(881)&&stats.trace_new==1&&stats.rays==96,"a held light's rays are its own count");
+		rasterizer_lights.lights[0].position.y=.01f;
+		CHECK(STATS_VIEW(881)&&stats.trace_held==1&&stats.rebuild_held==2&&stats.rays==192,"and moving, it counts as held");
+		held_muzzle=NONE;
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		/* out of rays */
+		rasterizer_lights.light_count=2;
+		rasterizer_lights.lights[1].radius=1;rasterizer_lights.lights[1].position.y=0;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(882,0);plasma_occlusion_submit(883,1);
+		CHECK(field_for(0)&&field_for(1),"both admitted");
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		budget_now.rays=1536;
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=.9f;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(882,0);plasma_occlusion_submit(883,1);
+		field_for(0);field_for(1);
+		CHECK(stats.trace_moved==1&&stats.refused==1&&stats.too_far==1,"one traced, the other refused and too far");
+		budget_now.rays=0;
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=0;
+		plasma_occlusion_reset();
+		budget_now.fields=1;
+		memset(&stats,0,sizeof(stats));stats.logged=time_ms;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(884,0);plasma_occlusion_submit(885,1);
+		CHECK(field_for(0)&&!field_for(1)&&stats.overflow==1,"past the field limit counts as overflow");
+		budget_now.fields=8;
+		rasterizer_lights.light_count=1;
+		/* once a second, only with something to say, and then from nothing */
+		log_lines=0;stats.logged=time_ms;time_ms+=999;
+		plasma_occlusion_window();
+		CHECK(!log_lines&&stats.views,"nothing before the second is up");
+		time_ms+=1;
+		plasma_occlusion_window();
+		CHECK(log_lines==1&&!stats.views&&!stats.rays&&stats.logged==time_ms,"a line a second, then counting starts over");
+		time_ms+=1000;
+		plasma_occlusion_window();
+		CHECK(log_lines==1,"a second with no fields says nothing");
+		plasma_occlusion_reset();
+	}
+	if (argc > 1 && !strcmp(argv[1], "stats"))
+	{
+		/* still lights at rest leave room: budget_now.fields is lights at work a view */
+		#define REST_VIEW(lights) (time_ms+=16,stats.logged=time_ms,queries=0,plasma_occlusion_window())
+		{
+			int rest;
+			blocked=1;door=0;
+			budget_now.fields=3;budget_now.rays=1800;
+			rasterizer_lights.light_count=4;
+			for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=(float)n*.01f;}
+			plasma_occlusion_reset();
+			for(rest=0;rest<200;rest++)
+			{
+				REST_VIEW(0);
+				for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+				for(n=0;n<3;n++)field_for(n);
+			}
+			memset(&stats,0,sizeof(stats));
+			REST_VIEW(0);
+			for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a light at rest keeps its field");
+			CHECK(stats.at_rest==3&&!stats.fade&&!queries&&!updates_this_window,"and it does no work");
+			n=stats.textures;
+			{
+				struct occlusion_field *resting=field_for(0);
+				CHECK(field_texture(resting,1,0),"its texture is there");
+				n=uploads;
+				REST_VIEW(0);
+				for(step=0;step<3;step++)plasma_occlusion_submit(850+step,step);
+				CHECK(field_for(0)==resting&&field_texture(resting,1,0)&&uploads==n,"and isn't made again");
+			}
+			/* the case that found this: three still lights in view, and a shot */
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(850+n,n);
+			for(n=0;n<3;n++)field_for(n);
+			stats.overflow=0;
+			CHECK(field_for(3)&&queries==1536&&!stats.overflow,"three lights at rest still leave a new one room");
+			/* what is at work still counts */
+			rasterizer_lights.light_count=8;
+			for(n=0;n<8;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=0;}
+			budget_now.rays=0;
+			plasma_occlusion_reset();
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(860+n,n);
+			CHECK(field_for(0)&&field_for(1)&&field_for(2)&&!field_for(3),"new lights count against the limit");
+			budget_now.rays=1800;
+			rasterizer_lights.light_count=3;
+			plasma_occlusion_reset();
+			for(rest=0;rest<200;rest++)
+			{
+				REST_VIEW(0);
+				for(n=0;n<3;n++)plasma_occlusion_submit(850+n,n);
+				for(n=0;n<3;n++)field_for(n);
+			}
+			/* anything that changes its texels wakes it */
+			#define REST_WAKES(what) {stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);CHECK(field_for(0)&&!stats.at_rest,what);for(rest=0;rest<200;rest++){REST_VIEW(0);plasma_occlusion_submit(850,0);field_for(0);}stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);CHECK(field_for(0)&&stats.at_rest==1,"and it comes to rest again");}
+			rasterizer_lights.lights[0].position.x=.02f;
+			REST_WAKES("moving wakes it");
+			rasterizer_lights.lights[0].radius=1.1f;
+			REST_WAKES("a new radius wakes it");
+			rasterizer_lights.lights[0].radius=1;
+			REST_WAKES("the old radius wakes it");
+			blocked=0;
+			REST_WAKES("a changed scene wakes it");
+			blocked=1;
+			REST_WAKES("the scene changing back wakes it");
+			{
+				/* (smaller, or the extent would change with it) */
+				float specular_was=specular_scale;
+				specular_scale=specular_was*.5f;
+				REST_WAKES("a new specular wakes it");
+				specular_scale=specular_was;
+				REST_WAKES("the old specular wakes it");
+			}
+			{
+				struct occlusion_field *failed=field_for(0);
+				failed->texture_mask|=8;
+				stats.at_rest=0;REST_VIEW(0);plasma_occlusion_submit(850,0);
+				CHECK(field_for(0)&&!stats.at_rest&&!(failed->texture_mask&8),"a failed upload gets its retry");
+			}
+			rasterizer_lights.lights[0].position.x=0;
+			rasterizer_lights.light_count=1;
+			rasterizer_lights.lights[0].position.y=0;
+			budget_now.fields=8;budget_now.rays=0;
+			plasma_occlusion_reset();
+		}
+		/* three weapon lights at work: they go first, and must leave another light a slot */
+		{
+			struct occlusion_field *waiter, *last_waiter=NULL, *seen_waiter=NULL;
+			float sway=0, wide=0;
+			int view, turns=0, again=0, waiting;
+			#define WEAPON_VIEW(wides) {sway+=.001f;for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;rasterizer_lights.lights[3].position.y=.03f+wide;REST_VIEW(0);for(n=0;n<3;n++)plasma_occlusion_submit(870+n,n);for(n=0;n<(wides);n++)plasma_occlusion_submit(873+n,3+n);}
+			blocked=1;door=0;
+			budget_now.fields=3;budget_now.rays=1800;
+			held_muzzle=870;held_emitter=871;held_third=872;
+			rasterizer_lights.light_count=4;
+			for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.y=0;}
+			plasma_occlusion_reset();
+			WEAPON_VIEW(0);
+			for(n=0;n<3;n++)field_for(n);
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(0);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a weapon light has its field");
+			CHECK(updates_this_window==3&&!stats.waited&&!stats.refused&&queries==288,"with nothing else wanting one, weapon lights have every slot");
+			/* the case that found this */
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(!field_for(3),"a light that first asks with the slots full is turned away");
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)CHECK(field_for(n),"a weapon light that sits out still has its field");
+			CHECK(stats.waited==1&&updates_this_window==2&&!stats.refused&&queries==192,"a weapon light sits out for a light that asks");
+			CHECK(field_for(3)&&!stats.overflow&&queries==192+1536,"and that light has the slot");
+			/* taking turns, while the other light moves */
+			for(view=0;view<30;view++)
+			{
+				wide+=.001f;
+				WEAPON_VIEW(1);
+				view_budget.planned=TRUE;plan_traces(time_ms);
+				waiter=NULL;waiting=0;
+				for(n=0;n<OCC_LIGHTS;n++)if(fields[n].valid&&fields[n].waits_window==current_window){waiter=&fields[n];waiting++;}
+				CHECK(waiting==1,"one weapon light sits out a view");
+				if(waiter==last_waiter)again++;
+				if(waiter!=seen_waiter){turns++;seen_waiter=waiter;}
+				last_waiter=waiter;
+				for(n=0;n<4;n++)field_for(n);
+			}
+			CHECK(!again,"none waits two views running");
+			CHECK(turns>2,"they take turns");
+			/* once the other light rests, the slot is theirs again */
+			for(view=0;view<200;view++){WEAPON_VIEW(1);for(n=0;n<4;n++)field_for(n);}
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<4;n++)field_for(n);
+			CHECK(stats.at_rest==1&&!stats.waited&&updates_this_window==3,"once that light rests, weapon lights have every slot again");
+			/* it wakes with them all taken: turned away once, then in */
+			wide+=.01f;
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(!field_for(3),"woken with the slots full, it is turned away");
+			memset(&stats,0,sizeof(stats));
+			WEAPON_VIEW(1);
+			for(n=0;n<3;n++)field_for(n);
+			CHECK(field_for(3)&&stats.waited==1&&!stats.overflow,"a light woken and turned away has the slot next view");
+			/* too far from what it has, a waiting light can't keep it */
+			WEAPON_VIEW(1);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			memset(&stats,0,sizeof(stats));
+			for(n=0;n<OCC_LIGHTS;n++)if(fields[n].valid&&fields[n].waits_window==current_window)
+			{
+				long far_light=fields[n].identity-870;
+				rasterizer_lights.lights[far_light].position.y+=.6f;
+				CHECK(field_for(far_light)&&!stats.waited&&fields[n].center[1]==rasterizer_lights.lights[far_light].position.y,"a waiting light too far from its field asks like any other");
+				break;
+			}
+			/* a new weapon light can't take the slot either */
+			plasma_occlusion_reset();
+			for(view=0;view<2;view++)
+			{
+				wide+=.001f;
+				WEAPON_VIEW(1);
+				field_for(0);field_for(1);field_for(3);
+			}
+			memset(&stats,0,sizeof(stats));
+			/* (still and fading: at work, with rays to spare, so only the limit stops it) */
+			WEAPON_VIEW(1);
+			field_for(0);field_for(1);
+			CHECK(!field_for(2)&&stats.overflow==1,"a new weapon light doesn't take the slot");
+			CHECK(field_for(3),"which stays with the other light");
+			/* rays are only held for a light that can get in */
+			held_muzzle=held_emitter=held_third=NONE;
+			budget_now.rays=6000; /* so that three can be at work at once */
+			plasma_occlusion_reset();
+			for(view=0;view<2;view++)
+			{
+				sway+=.001f;
+				for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+				REST_VIEW(0);
+				for(n=0;n<4;n++)plasma_occlusion_submit(880+n,n);
+				for(n=0;n<4;n++)field_for(n);
+			}
+			sway+=.001f;
+			for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+			REST_VIEW(0);
+			for(n=0;n<4;n++)plasma_occlusion_submit(880+n,n);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			CHECK(!view_budget.reserved_rays,"no rays are held for a light with no slot to go to");
+			sway+=.001f;
+			for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=(float)n*.01f+sway;
+			REST_VIEW(0);
+			plasma_occlusion_submit(880,0);plasma_occlusion_submit(881,1);plasma_occlusion_submit(883,3);
+			view_budget.planned=TRUE;plan_traces(time_ms);
+			CHECK(view_budget.reserved_rays==1536,"but they are held for one with a slot");
+			budget_now.fields=8;budget_now.rays=0;
+			rasterizer_lights.light_count=1;
+			rasterizer_lights.lights[0].position.y=0;
+			plasma_occlusion_reset();
+		}
+		/* the overlay's comparison: a moving light's grid, and nothing else's */
+		#define GRID_VIEW(id) (time_ms+=16,queries=0,plasma_occlusion_window(),plasma_occlusion_submit(id,0),field_for(0))
+		blocked=1;
+		rasterizer_lights.lights[0].position.y=.005f; /* (away from a new field's zeros) */
+		plasma_occlusion_reset();
+		moving_384=1;
+		CHECK(GRID_VIEW(870)&&queries==1536&&TRUE,"a new light has the full grid");
+		CHECK(GRID_VIEW(870)&&queries==0,"a still one traces nothing");
+		rasterizer_lights.lights[0].position.y=.01f;
+		f=GRID_VIEW(870);
+		CHECK(f&&queries==384&&f->trace_resolution==8,"a moving light has 384 rays");
+		CHECK(sample_field(f->visibility,.9f,.5f,.5f)<.5f,"which still stop at a wall");
+		rasterizer_lights.lights[0].position.y=.02f;
+		CHECK(GRID_VIEW(870)&&queries==384,"and so it stays while it moves");
+		f=GRID_VIEW(870);
+		CHECK(f&&queries==1536&&f->trace_resolution==16,"once it stops, the full grid again");
+		CHECK(GRID_VIEW(870)&&queries==0,"and only the once");
+		held_muzzle=871;
+		plasma_occlusion_reset();
+		GRID_VIEW(871);
+		rasterizer_lights.lights[0].position.y=.03f;
+		CHECK(GRID_VIEW(871)&&queries==96,"a held light keeps its own grid");
+		held_muzzle=NONE;
+		plasma_occlusion_reset();
+		GRID_VIEW(872);
+		rasterizer_lights.lights[0].position.y=.04f;
+		moving_384=0;
+		CHECK(GRID_VIEW(872)&&queries==1536,"OFF, a moving light has the full grid");
+		moving_384=1;
+		rasterizer_lights.lights[0].position.y=.05f;
+		CHECK(GRID_VIEW(872)&&queries==384,"and ON takes effect at the next trace");
+		moving_384=0;
+		f=GRID_VIEW(872);
+		CHECK(f&&queries==1536,"and OFF again, even for one that stops");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		return 0;
+	}
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	CHECK(f, "admitted light");
+	CHECK(sample_field(f->visibility, 0.9f, 0.5f, 0.5f) < 0.01f, "wall blocks clearly hidden receiver");
+	CHECK(sample_field(f->visibility, 0.4f, 0.5f, 0.5f) > 0.99f, "near side stays lit");
+	n = queries;
+	time_ms++;
+	CHECK(field_for(0) == f && queries == n, "one bounded update per window, not per model draw");
+	n = queries;
+	time_ms += 4;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	CHECK(queries == n, "collision depths are briefly reused while render projection updates");
+	rasterizer_lights.lights[0].position.x = 0.2f;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	CHECK(queries == n + 1536, "fast movement invalidates cached depths immediately");
+	rasterizer_lights.lights[0].position.x = 0;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	blocked = 0;
+	previous = f->visibility[4095];
+	time_ms += 16;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	CHECK(f->visibility[4095] > previous && f->visibility[4095] < 0.5f,
+		  "clearing a corner fades rather than popping");
+	time_ms += 200;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(1, 0);
+	f = field_for(0);
+	CHECK(f->visibility[4095] > 0.9f, "clear view converges");
+	on = 0;
+	n = queries;
+	CHECK(!field_for(0) && n == queries, "disabled makes no queries");
+	plasma_occlusion_reset();
+	CHECK(!allocations && !submitted_count, "map cleanup releases fields");
+	on = 1;
+	blocked = 1;
+	door = 1;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(2, 0);
+	f = field_for(0);
+	CHECK(sample_field(f->visibility, 0.9f, 0.5f, 0.5f) > 0.99f, "door opening admits light");
+	CHECK(sample_field(f->visibility, 0.9f, 0.95f, 0.5f) < 0.35f,
+		  "filtered doorway edge remains predominantly blocked");
+	CHECK(sample_field(f->visibility, 0.9f, 0.99f, 0.5f) < 0.01f,
+		  "receiver beyond filtered edge is fully blocked");
+	door = 0;
+	time_ms += 16;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(2, 0);
+	f = field_for(0);
+	CHECK(sample_field(f->visibility, 0.9f, 0.5f, 0.5f) < 0.3f,
+		  "closing door blocks within bounded refresh and fade");
+	time_ms += 64;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(2, 0);
+	f = field_for(0);
+	CHECK(sample_field(f->visibility, 0.9f, 0.9f, 0.5f) < 0.01f,
+		  "thin blocker remains closed across cube face seam");
+	door = 1;
+	time_ms += 16;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(2, 0);
+	f = field_for(0);
+	CHECK(sample_field(f->visibility, 0.9f, 0.5f, 0.5f) > 0.3f &&
+			  sample_field(f->visibility, 0.9f, 0.5f, 0.5f) < 0.8f,
+		  "opening door clears gradually");
+	plasma_occlusion_reset();
+	door = 0;
+	rasterizer_lights.light_count = 9;
+	for (n = 0; n < 9; n++)
+	{
+		rasterizer_lights.lights[n].radius = 1;
+		plasma_occlusion_submit(10 + n, n);
+	}
+	queries = 0;
+	for (n = 0; n < 8; n++)
+		CHECK(field_for(n), "eight fields admitted");
+	CHECK(!field_for(8) && queries == 8 * 1536, "ninth light falls back without evicting active fields");
+	CHECK(allocations == 0, "visibility updates allocate no unused textures");
+	for (n = 0; n < 8; n++)
+		CHECK(plasma_occlusion_texture(n, 0), "diffuse texture requested");
+	CHECK(allocations == 8 && uploads == 8, "only consumed passes allocate and upload");
+	CHECK(plasma_occlusion_texture(0, 0) && uploads == 8, "repeated pass reuses upload");
+	time_ms += 16;
+	plasma_occlusion_window();
+	for (n = 0; n < 9; n++)
+		plasma_occlusion_submit(10 + n, n);
+	queries = 0;
+	CHECK(!field_for(8), "overflow cannot replace an active field");
+	for (n = 0; n < 8; n++)
+		CHECK(field_for(n), "rejected overflow does not consume an admitted light's update budget");
+	CHECK(queries == 0, "unchanged stationary fields reuse exact collision inputs without retracing");
+
+	time_ms += 120;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(18, 8);
+	f = field_for(8);
+	CHECK(f && f->fading, "previous overflow is admitted with a fade");
+	CHECK(field_texture(f, 0, 0) && f->texture[0]->pixels[4095] == 0xffffffffUL, "admission starts at previous unoccluded appearance");
+	time_ms += 40;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(18, 8);
+	f = field_for(8);
+	CHECK(field_texture(f, 0, 0) && f->texture[0]->pixels[4095] != 0xffffffffUL && f->texture[0]->pixels[4095] != 0,
+		  "admission blends instead of snapping");
+	plasma_occlusion_submit(10, 0);
+	plasma_occlusion_model_slot(0, 0);
+	CHECK(plasma_occlusion_model_texture(0, transform), "model uses selected field");
+	CHECK(!plasma_occlusion_model_texture(-1, transform), "invalid model slot rejected");
+	plasma_occlusion_window();
+	CHECK(!plasma_occlusion_model_texture(0, transform), "view transition clears model slots");
+	plasma_occlusion_reset();
+	CHECK(!allocations, "all fields released");
+	fail_upload = 1;
+	plasma_occlusion_submit(30, 0);
+	CHECK(!plasma_occlusion_texture(0, 0), "allocation failure falls back");
+	fail_upload = 0;
+	CHECK(!plasma_occlusion_texture(0, 0), "failed pass does not retry every draw in the same view");
+	time_ms += 16;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(30, 0);
+	CHECK(plasma_occlusion_texture(0, 0), "failed upload retries on the next view");
+	plasma_occlusion_reset();
+	fail_upload = 0;
+	time_ms = 1000;
+	for (cap = 0; cap < 4; cap++)
+	{
+		blocked = 1;
+		door = 0;
+		plasma_occlusion_submit(40 + cap, 0);
+		f = field_for(0);
+		blocked = 0;
+		for (step = 1; step <= (3 << cap); step++)
+		{
+			unsigned long next = 1000 + (unsigned long)(100.0f * step / (3 << cap));
+			if (step == 1)
+				time_ms = 1000;
+			time_ms = next;
+			plasma_occlusion_window();
+			plasma_occlusion_submit(40 + cap, 0);
+			f = field_for(0);
+		}
+		temporal[cap] = f->visibility[4095];
+		plasma_occlusion_reset();
+		time_ms = 1000;
+	}
+	CHECK(fabsf(temporal[0] - temporal[1]) < 0.025f && fabsf(temporal[1] - temporal[2]) < 0.025f && fabsf(temporal[2] - temporal[3]) < 0.025f,
+		  "30/60/120/240 response agrees within the bounded collision refresh interval");
+	blocked = 0;
+	plasma_occlusion_submit(99, 0);
+	f = field_for(0);
+	time_ms += 4;
+	rasterizer_lights.lights[0].position.x = 0.1f;
+	plasma_occlusion_window();
+	plasma_occlusion_submit(99, 0);
+	f = field_for(0);
+	CHECK(f->visibility[4095] > 0.99f, "a clear cached ray is not a wall at the old field boundary");
+	plasma_occlusion_reset();
+	/* Compare every output texel with the original attenuation expression,
+	   including different specular extents and partially admitted lights. */
+	for (cap = 0; cap < 3; cap++)
+	{
+		int pass, x, y, z;
+		specular_scale = cap == 0 ? 0.5f : cap == 1 ? 1.0f : 2.0f;
+		plasma_occlusion_submit(101 + cap, 0);
+		f = field_for(0);
+		for (n = 0; n < 4096; n++) f->visibility[n] = (n % 23) / 22.0f;
+		f->admission = 0.37f;
+		for (pass = 0; pass < 3; pass++)
+		{
+			IDirect3DVolumeTexture8 *t = field_texture(f, pass, 0);
+			CHECK(t, "requested pass uploaded");
+			if (pass == 2)
+				CHECK((t == f->texture[1]) == (specular_scale == 1.0f),
+					"only equal diffuse and specular extents share the same upload");
+			for (z=0; z<16; z++) for (y=0; y<16; y++) for (x=0; x<16; x++)
+			{
+				real dx=2.0f*(x+0.5f)/16-1, dy=2.0f*(y+0.5f)/16-1, dz=2.0f*(z+0.5f)/16-1;
+				real scale=(pass==2 ? f->specular : 1.0f)*f->radius/f->extent;
+				real remaining=MAX(0.0f,1-dx*dx-dy*dy-dz*dz);
+				real value=pass ? sample_field(f->visibility,0.5f+dx*scale*0.5f,0.5f+dy*scale*0.5f,0.5f+dz*scale*0.5f)*remaining*remaining : f->visibility[(z*16+y)*16+x];
+				int expected, actual;
+				value=pass ? (1-f->admission)*remaining*remaining+f->admission*value : 1-f->admission+f->admission*value;
+				expected=(int)(255*value+0.5f); actual=(int)(t->pixels[(z*16+y)*16+x]&255);
+				CHECK(abs(expected-actual)<=1,"lazy texture agrees with original within one quantization level");
+			}
+		}
+		if (specular_scale == 1.0f)
+		{
+			n = uploads;
+			CHECK(field_texture(f, 2, 0) == field_texture(f, 1, 0) && uploads == n,
+				"shared specular pass does not rebuild or upload a duplicate texture");
+		}
+		n=uploads; time_ms+=16; plasma_occlusion_window(); plasma_occlusion_submit(101+cap,0);
+		CHECK(plasma_occlusion_texture(0,0) && uploads==n+1,"new view invalidates each pass independently");
+		plasma_occlusion_reset();
+		CHECK(!allocations,"all lazy passes released");
+	}
+	/* Exact texture reuse is independent of visibility/history updates. */
+	specular_scale=1;plasma_occlusion_submit(700,0);f=field_for(0);
+	CHECK(field_texture(f,0,0),"initial model mask upload");n=uploads;
+	f->texture_mask=0;
+	CHECK(field_texture(f,0,0)&&uploads==n,"identical texels skip backing-memory and GPU work");
+	f->visibility[0]=.37f;f->texture_mask=0;
+	CHECK(field_texture(f,0,0)&&uploads==n+1,"changed texel still uploads");
+	f->visibility[0]=.61f;f->texture_mask=0;fail_unlock=1;
+	CHECK(!field_texture(f,0,0),"failed changed upload falls back");
+	f->visibility[0]=.37f;f->texture_mask=0;fail_unlock=0;
+	CHECK(field_texture(f,0,0)&&uploads==n+3,"failure invalidates byte cache even when old pixels return");
+	for(n=0;n<OCC_COUNT;n++) f->visibility[n]=1;
+	f->texture_mask=0;directional_on=1;
+	CHECK((field_texture(f,0,0) && (f->texture[0]->pixels[(8*16+8)*16]&255)>200),
+		"occluded counter mask lights its facing side");
+	directional_axis[0]=.8f;
+	CHECK((field_texture(f,0,0) && (f->texture[0]->pixels[(8*16+8)*16]&255)==0),
+		"rotating a counter invalidates cached texels even with identical visibility");
+	directional_axis[0]=-.8f;directional_on=0;
+	plasma_occlusion_reset();CHECK(!allocations,"cached upload textures disposed");
+	on=0; muzzle_on=1; time_ms+=200; occlusion_forced=0; n=queries;
+	plasma_occlusion_window(); plasma_occlusion_submit(500,0);
+	CHECK(!plasma_occlusion_texture(0,0)&&queries==n, "Light Occlusion off: a muzzle flash traces no rays");
+	occlusion_forced=1;
+	plasma_occlusion_window(); plasma_occlusion_submit(500,0);
+	CHECK(plasma_occlusion_texture(0,0), "muzzle occlusion works with projectile lighting off");
+	plasma_occlusion_reset();
+	plasma_occlusion_window(); plasma_occlusion_submit(501,1);
+	CHECK(!plasma_occlusion_texture(1,0), "muzzle option cannot enable unrelated projectile occlusion");
+	muzzle_on=0; plasma_occlusion_reset(); occlusion_forced=-1;
+	emitter_on=1; emitter_occlusion=1; time_ms+=200;
+	plasma_occlusion_window(); plasma_occlusion_submit(502,0);
+	CHECK(plasma_occlusion_texture(0,0), "emitter occlusion works with projectile lighting off");
+	CHECK(last_ignore==42, "luminous source is excluded from its own visibility rays");
+	emitter_occlusion=0; plasma_occlusion_reset();
+	plasma_occlusion_window(); plasma_occlusion_submit(503,0);
+	CHECK(!plasma_occlusion_texture(0,0), "emitter occlusion remains independently optional");
+	/* A counter remains directional with wall occlusion disabled or full. */
+	directional_on=1;plasma_occlusion_reset();
+	{
+	 float axis[3]={-.8f,0,.6f},tr[4];
+	 IDirect3DVolumeTexture8 *t;
+	 CHECK(ammo_counter_falloff_factor(axis,-.8f,0,.6f)==1,"screen-facing strength preserved");
+	 CHECK(ammo_counter_falloff_factor(axis,0,0,-1)==0,"floor behind display is dark");
+	 CHECK(ammo_counter_falloff_factor(axis,.8f,0,-.6f)==0,"back hemisphere is dark");
+	 CHECK(ammo_counter_falloff_factor(axis,0,0,1)==1,"face above screen retains brightness");
+	 CHECK(needler_falloff_factor(0)==1,"needles spill equally in every horizontal direction");
+	 CHECK(needler_falloff_factor(-.05f)==1,"nearby hands and housing below needles retain full spill");
+	 CHECK(needler_falloff_factor(-.09f)>.49f&&needler_falloff_factor(-.09f)<.51f,"lower spill fades softly with distance");
+	 CHECK(needler_falloff_factor(-.25f)==0,"distant floor spill suppressed");
+	 CHECK(needler_falloff_factor(1)==1,"exposed tips retain full intensity");
+	 plasma_occlusion_model_slot(0,0);t=plasma_occlusion_model_texture(0,tr);
+	 CHECK(t&&tr[3]==.5f,"model directional mask independent of collision option");
+	 CHECK((t->pixels[(0*16+8)*16+8]&255)==0,"model floor mask dark");
+	 t=plasma_occlusion_texture(0,0);
+	 CHECK(t&&(t->pixels[(0*16+8)*16+8]&255)==0,"world floor mask dark");
+	 n=uploads;CHECK(plasma_occlusion_texture(0,1)==t&&uploads==n,"specular reuses angular radial mask");
+	 CHECK(!plasma_occlusion_texture(20,0),"unrelated lights retain stock fallback");
+	 plasma_occlusion_window();
+	 CHECK(plasma_occlusion_texture(0,0)==t&&uploads==n,"unchanged view reuses directional upload");
+	 directional_origin=3;directional_radius=2;
+	 plasma_occlusion_window();
+	 CHECK(ammo_counter_falloff_texture(0,1,tr)==t&&uploads==n&&tr[0]==3&&tr[3]==.25f,"translation and radius update transform without rebuilding mask");
+	 directional_axis[0]=.8f;
+	 plasma_occlusion_window();
+	 CHECK(ammo_counter_falloff_texture(0,1,tr)==t&&uploads==n+1,"rotation refreshes radial mask");
+	 CHECK(ammo_counter_falloff_texture(0,0,tr)&&uploads==n+2,"rotation refreshes angular mask independently");
+	 directional_on=2;
+	 plasma_occlusion_window();
+	 CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==n+3,"profile change refreshes mask");
+	 directional_axis[0]=0;directional_axis[1]=1;directional_axis[2]=0;
+	 plasma_occlusion_window();
+	 CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==n+3,"radial Needler spill does not rotate with aim");
+	 specular_scale=2;
+	 t=plasma_occlusion_texture(0,1);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)==0,"unoccluded Needler specular uses physical lower fade");
+	 t=plasma_occlusion_texture(0,0);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)>0,"specular cache does not overwrite diffuse mask");
+	 specular_scale=1;
+	 CHECK(plasma_occlusion_texture(0,1)==t,"equal radii share diffuse and specular mask");
+	 specular_scale=.5f;
+	 t=plasma_occlusion_texture(0,1);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)>128,"changed specular radius refreshes its mask");
+	 specular_scale=1;
+	 directional_axis[0]=-.8f;directional_axis[1]=0;directional_axis[2]=.6f;
+	 directional_on=1;directional_origin=0;directional_radius=1;
+	 plasma_occlusion_reset();CHECK(!allocations,"directional textures released on reset");
+	}
+	on=1;emitter_on=1;emitter_occlusion=1;blocked=0;
+	plasma_occlusion_submit(502,0);
+	{
+	 IDirect3DVolumeTexture8 *t=plasma_occlusion_texture(0,0);
+	 CHECK(t&&(t->pixels[(0*16+8)*16+8]&255)==0,"combined collision and direction mask stays dark behind screen");
+	}
+	/* Model visibility spans the largest specular radius. The Needler's lower
+	   fade must still be measured against its actual diffuse radius. */
+	plasma_occlusion_reset();directional_on=2;specular_scale=2;
+	rasterizer_lights.lights[0].radius=1;
+	plasma_occlusion_submit(502,0);f=field_for(0);
+	{
+	 IDirect3DVolumeTexture8 *t=field_texture(f,0,0);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)==0,"model lower fade uses physical source radius");
+	 t=field_texture(f,1,0);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)>0,"nearby diffuse receiver retains lower glow");
+	 t=field_texture(f,2,0);
+	 CHECK(t&&(t->pixels[(7*16+8)*16+8]&255)==0,"specular lower fade uses physical source radius");
+	}
+	/* Captured crouched-player and short-Grunt source heights. Check filtered
+	   output, not just the analytic mask: specular uses twice the volume radius. */
+	for (cap = 0; cap < 2; cap++)
+	{
+		IDirect3DVolumeTexture8 *t;
+		plasma_occlusion_reset();
+		on = emitter_occlusion = cap;
+		directional_on = 2;
+		directional_radius = rasterizer_lights.lights[0].radius = 1.5f;
+		specular_scale = 2;
+		plasma_occlusion_submit(502, 0);
+		t = plasma_occlusion_texture(0, 0);
+		CHECK(t && filtered_height(t, -.38f, 1.5f) == 0, "crouched holder has no diffuse foot pool");
+		CHECK(filtered_height(t, -.25f, 1.5f) < .2f, "short holder has only faint near-contact diffuse spill");
+		CHECK(filtered_height(t, -.05f, 1.5f) > .9f, "diffuse spill immediately below needles stays bright");
+		t = plasma_occlusion_texture(0, 1);
+		CHECK(t && filtered_height(t, -.25f, 3.0f) == 0, "short holder has no specular foot pool");
+		CHECK(filtered_height(t, -.38f, 3.0f) == 0, "crouched holder has no specular foot pool");
+	}
+	directional_radius = rasterizer_lights.lights[0].radius = 1;
+	specular_scale=1;
+	plasma_occlusion_reset();on=0;
+	directional_on=0;emitter_on=0;muzzle_on=1;vehicle_only=blocked=1;occlusion_forced=1;
+	plasma_occlusion_submit(500,0);f=field_for(0);
+	CHECK(f&&(last_flags&FLAG(_collision_test_objects_vehicles_bit)),"turret rays include chassis");
+	CHECK(f->visibility[4095]<.1f,"vehicle blocks receiver behind hull");
+	plasma_occlusion_reset();plasma_occlusion_submit(501,0);f=field_for(0);
+	CHECK(f&&!(last_flags&FLAG(_collision_test_objects_vehicles_bit)),"other muzzle profiles retain original blockers");
+	CHECK(f->visibility[4095]>.99f,"vehicle-only blocker does not change unrelated lights");
+	plasma_occlusion_reset();
+	muzzle_on=0;vehicle_on=1;
+	for(n=0;n<2;n++)
+	{
+		plasma_occlusion_reset();time_ms+=200;plasma_occlusion_window();
+		plasma_occlusion_submit(n?502:500,0);f=field_for(0);
+		CHECK(f&&(last_flags&FLAG(_collision_test_objects_vehicles_bit)),"headlights and engine emitters include chassis");
+		CHECK(f->visibility[4095]<.1f,"vehicle emitter cannot illuminate through its hull");
+		/* (GulchCE also checks here that the vehicle switch alone selects no other light: with Light Occlusion
+		   on, as every light must have it here, each authored emitter is occluded, so that no longer applies) */
+	}
+	occlusion_forced=0;n=queries;
+	plasma_occlusion_reset();time_ms+=200;plasma_occlusion_window();plasma_occlusion_submit(500,0);
+	CHECK(!field_for(0)&&queries==n,"Light Occlusion off: a vehicle light traces no rays");
+	occlusion_forced=-1;
+	vehicle_on=0;n=queries;
+	CHECK(!plasma_occlusion_texture(0,0)&&queries==n,"vehicle disable skips GPU texture and collision work");
+	plasma_occlusion_reset();
+	on = muzzle_on = emitter_on = directional_on = 0; shield_on = shield_occlusion = 1;
+	plasma_occlusion_window(); plasma_occlusion_submit(600, 0);
+	CHECK(field_for(0), "shield-only lighting receives occlusion");
+	shield_occlusion = 0; n = queries;
+	plasma_occlusion_window(); plasma_occlusion_submit(600, 0);
+	CHECK(!field_for(0) && queries == n, "shield occlusion obeys its independent toggle");
+	plasma_occlusion_reset();
+	on=1;shield_on=shield_occlusion=emitter_on=directional_on=vehicle_only=0;
+	prong_on=1;blocked=0;rasterizer_lights.lights[0].radius=.3f;specular_scale=2;
+	queries=0;plasma_occlusion_submit(800,0);f=field_for(0);
+	CHECK(f&&queries==96,"short prongs use the smaller ray grid only");
+	{
+		float axis[3]={1,0,0};
+		IDirect3DVolumeTexture8 *t=field_texture(f,0,0);
+		CHECK(plasma_prong_falloff_factor(axis,1,0,0)==1,"outward prong spill remains full");
+		CHECK(plasma_prong_falloff_factor(axis,-1,0,0)==0,"prongs do not illuminate their rear hemisphere");
+		CHECK(plasma_prong_falloff_factor(axis,0,1,0)>0&&plasma_prong_falloff_factor(axis,0,1,0)<.3f,"side spill fades broadly and softly");
+		CHECK(t&&(t->pixels[(8*16+8)*16]&255)==0&&(t->pixels[(8*16+8)*16+15]&255)>240,"actual model texture carries the outward mask");
+	}
+	blocked=1;time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(800,0);f=field_for(0);
+	CHECK(f&&queries==192&&f->visibility[4095]<.3f,"small prong grid still blocks a nearby wall");
+	plasma_occlusion_reset();CHECK(!allocations,"prong reset releases GPU resources");
+	/* A permanently blocked cell must settle to black, not retain subnormal
+	   fade history forever at high frame rates. Reopening still fades normally. */
+	prong_on=directional_on=emitter_on=muzzle_on=vehicle_on=shield_on=0;
+	on=blocked=1;specular_scale=1;rasterizer_lights.lights[0].radius=1;
+	for(cap=0;cap<4;cap++)
+	{
+		int rates[4]={30,60,120,240};
+		plasma_occlusion_reset();
+		blocked=0;time_ms+=100;plasma_occlusion_window();plasma_occlusion_submit(900,0);f=field_for(0);
+		blocked=1;
+		for(n=0;n<rates[cap]*3;n++)
+		{
+			time_ms+=1000/rates[cap];plasma_occlusion_window();plasma_occlusion_submit(900,0);
+			f=field_for(0);
+		}
+		CHECK(f->visibility[4095]==0,"blocked history settles without denormal residue");
+		blocked=0;time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(900,0);f=field_for(0);
+		CHECK(f->visibility[4095]>0&&f->visibility[4095]<.5f,"settled cells reopen with the normal fade");
+		blocked=1;
+	}
+	plasma_occlusion_reset();
+	/* the scene is looked at only when it can decide, and an extent change
+	   between traces rescales what was traced */
+	/* the texture goes to the backend directly: it says how far a radial pass
+	   reaches, and forgets the image with the texture */
+	field_forgotten=0;
+	plasma_occlusion_window();plasma_occlusion_submit(940,0);
+	CHECK(plasma_occlusion_texture(0,0)&&last_reach>.6f&&last_reach<.61f,"a radial pass says its reach");
+	f=field_for(0);f->texture_mask=0;
+	CHECK(field_texture(f,0,0)&&last_reach<0,"the model mask, which fills the box, says none");
+	{
+		int x,y,z;
+		real worst=0;
+		IDirect3DVolumeTexture8 *t=field_texture(f,1,0);
+		for(z=0;z<16;z++)for(y=0;y<16;y++)for(x=0;x<16;x++)
+			if(t->pixels[(z*16+y)*16+x])
+			{
+				real u=(x+.5f)/16-.5f,v=(y+.5f)/16-.5f,w=(z+.5f)/16-.5f,reach=sqrtf(u*u+v*v+w*w)+sqrtf(3.0f/(16*16));
+				if(reach>worst)worst=reach;
+			}
+		CHECK(worst<=PLASMA_FIELD_RADIAL_REACH,"no radial texel lies past the reach it says");
+	}
+	plasma_occlusion_reset();
+	CHECK(field_forgotten==2,"a released field's images go with it");
+	blocked=1;rasterizer_lights.lights[0].radius=1;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(f&&f->trace_extent==1,"traced at its extent");
+	n=queries;revision_calls=0;
+	time_ms+=5;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(!revision_calls&&queries==n,"before the cadence, a stationary light asks nothing of the scene");
+	time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(revision_calls==1&&queries==n,"due and stationary: the scene is asked, unchanged, and nothing is traced");
+	revision_calls=0;time_ms+=12;rasterizer_lights.lights[0].position.x+=.01f;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(!revision_calls&&queries>n,"due and moved: it traces, with no snapshot of the scene (a moving light's is never compared)");
+	rasterizer_lights.lights[0].position.x-=.01f;
+	n=queries;revision_calls=0;
+	time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(!revision_calls&&queries>n,"moved again: traced again, still with no snapshot");
+	n=queries;time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(revision_calls==1&&queries>n,"at rest where it was traced: the scene is asked, and as its trace had none, traced again");
+	{
+		/* (the wall is at +x: face 1) */
+		real before=f->depths[1][0];
+		n=queries;revision_calls=0;
+		rasterizer_lights.lights[0].radius=2;time_ms+=1;
+		plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+		CHECK(queries==n&&!revision_calls,"an extent change before the cadence does not trace");
+		CHECK(before<1&&f->trace_extent==2&&fabsf(f->depths[1][0]-before*.5f)<1e-6f,"its depths are the same hits at the new extent");
+		n=queries;time_ms+=12;rasterizer_lights.lights[0].radius=3;
+		plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+		CHECK(queries>n&&f->trace_extent==3,"an extent change at the cadence traces");
+	}
+	plasma_occlusion_reset();
+	/* port: Background Light Rays. A moved light with depths is traced on the
+	   helpers: this frame draws from the depths it has, the frame's end collects
+	   the new ones, and the next frame is built from those. */
+	background_rays=1;blocked=1;door=0;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+	plasma_occlusion_frame_begin();
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(f&&!f->tracing&&!helper_starts&&f->valid,"a new light has no depths to go on with: traced at once");
+	time_ms+=12;rasterizer_lights.lights[0].position.x=.05f;n=queries;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(f&&f->tracing&&helper_starts==1&&queries==n&&f->trace_center[0]==0&&f->center[0]==.05f,
+		"moved: handed to the helpers, and drawn this frame from the depths it had, where it is");
+	time_ms+=12;rasterizer_lights.lights[0].position.x=.1f;
+	plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+	CHECK(helper_starts==1&&queries==n&&f->tracing,"another view before the frame's end: neither handed over again nor traced");
+	rasterizer_lights.lights[0].position.x=.05f;
+	plasma_occlusion_collect();
+	CHECK(!f->tracing&&queries>n&&f->trace_center[0]==.05f&&f->fresh&&!handed.used,"collected at the frame's end: the new depths, where they were traced");
+	{
+		real built[OCC_COUNT];
+		time_ms+=1;plasma_occlusion_window();plasma_occlusion_submit(950,0);f=field_for(0);
+		CHECK(!f->fresh&&f->trace_center[0]==.05f,"the next frame is built from them");
+		reconstruct_visibility(f->depths,f->extent,f->trace_resolution,0,0,0,built);
+		CHECK(!memcmp(built,f->targets,sizeof(built)),"as a trace where it stands would build it");
+	}
+	background_rays=0;
+	plasma_occlusion_reset();
+	/* port: a view's later asks for a light's texture are its first's answer,
+	   with no field search or texture work; the next view asks again */
+	{
+		void *first,*again;int u;
+		blocked=1;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+		plasma_occlusion_window();plasma_occlusion_submit(950,0);
+		first=(plasma_occlusion_texture)(0,0);n=queries;u=uploads;
+		again=(plasma_occlusion_texture)(0,0);
+		CHECK(first&&again==first&&queries==n&&uploads==u,"the view's second ask: its first answer");
+		CHECK(view_textures[0][1].window==current_window+1,"kept for this view");
+		time_ms+=1;plasma_occlusion_window();plasma_occlusion_submit(950,0);
+		CHECK(view_texture_find(0,1,NULL)==NULL,"and not the next");
+		CHECK((plasma_occlusion_texture)(0,0)==first,"which asks again");
+		plasma_occlusion_reset();
+	}
+	/* lights on a weapon in a hand: the small grid, and still occluded; a light
+	   whose status changes between traces reads its depths at the grid they had */
+	blocked=1;door=0;rasterizer_lights.lights[0].radius=1;rasterizer_lights.lights[0].position.x=0;
+	for(n=0;n<2;n++)
+	{
+		held_emitter=n?NONE:960;held_muzzle=n?961:NONE;
+		queries=0;time_ms+=200;plasma_occlusion_window();plasma_occlusion_submit(960+n,0);f=field_for(0);
+		CHECK(f&&queries==96,"a held weapon's light traces the small grid");
+		CHECK(f->visibility[4095]<.3f,"and a wall still blocks it");
+		plasma_occlusion_reset();
+	}
+	held_emitter=962;held_muzzle=NONE;queries=0;
+	plasma_occlusion_window();plasma_occlusion_submit(962,0);f=field_for(0);
+	previous=f->targets[(8*16+8)*16]; /* (clear, away from the wall) */
+	CHECK(previous>.9f,"the side away from the wall is lit");
+	held_emitter=NONE;n=queries;time_ms+=1;
+	plasma_occlusion_window();plasma_occlusion_submit(962,0);rasterizer_lights.lights[0].position.x=.001f;f=field_for(0);
+	CHECK(queries==n&&f->trace_resolution==4,"dropped between traces, it keeps the depths' grid");
+	CHECK(fabsf(f->targets[(8*16+8)*16]-previous)<.1f,"and they read as what they were");
+	time_ms+=12;plasma_occlusion_window();plasma_occlusion_submit(962,0);f=field_for(0);
+	CHECK(queries==n+1536&&f->trace_resolution==16,"its next trace has the full grid");
+	rasterizer_lights.lights[0].position.x=0;
+	plasma_occlusion_reset();
+	queries=0;plasma_occlusion_window();plasma_occlusion_submit(963,0);f=field_for(0);
+	CHECK(f&&queries==1536,"any other light keeps the full grid");
+	plasma_occlusion_reset();
+	/* a view's fields are made before its first draw, and only what is read */
+	{
+		int before,views;
+		blocked=1;rasterizer_lights.lights[0].radius=1;
+		time_ms+=200;uploads=0;queries=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		CHECK(queries==1536&&uploads==2,"a new field is traced and uploaded with no draw yet, its likely passes");
+		before=uploads;
+		plasma_occlusion_model_slot(0,0);
+		CHECK(plasma_occlusion_texture(0,0)&&plasma_occlusion_model_texture(0,transform)&&uploads==before,"so the draws send nothing");
+		CHECK(plasma_occlusion_texture(0,1)&&uploads==before,"a specular pass with the same radius is the diffuse one");
+		/* it read the world's passes and a model's: those, when it changes */
+		specular_scale=2;
+		time_ms+=16;blocked=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		before=uploads;
+		plasma_occlusion_model_slot(0,0);
+		CHECK(plasma_occlusion_texture(0,0)&&plasma_occlusion_model_texture(0,transform)&&uploads==before,"a pass read last view is ready");
+		specular_scale=1;
+		/* only a model read it this view: the next builds that alone */
+		time_ms+=16;blocked=1;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		time_ms+=16;blocked=0;before=uploads;
+		plasma_occlusion_model_slot(0,0);plasma_occlusion_model_texture(0,transform);before=uploads;
+		plasma_occlusion_window();plasma_occlusion_submit(1000,0);plasma_occlusion_prepare_view();
+		CHECK(uploads==before+1,"a pass no draw read is not built");
+		before=uploads;
+		CHECK(plasma_occlusion_texture(0,0)&&uploads==before+1,"and is built on demand if one asks after all");
+		plasma_occlusion_reset();
+		/* out of view: nothing, until a draw asks */
+		time_ms+=200;lights_hidden=1;queries=0;uploads=0;
+		plasma_occlusion_window();plasma_occlusion_submit(1001,0);plasma_occlusion_prepare_view();
+		CHECK(!queries&&!uploads,"a light out of view traces nothing");
+		CHECK(plasma_occlusion_texture(0,0)&&queries==1536,"and a draw that asks gets its field regardless");
+		lights_hidden=0;
+		plasma_occlusion_reset();
+		/* in view, and nothing reads it: it stops */
+		time_ms+=200;queries=0;
+		for(views=0;views<8;views++)
+		{
+			time_ms+=16;rasterizer_lights.lights[0].position.y+=.01f;
+			plasma_occlusion_window();plasma_occlusion_submit(1002,0);plasma_occlusion_prepare_view();
+		}
+		before=queries;
+		time_ms+=16;rasterizer_lights.lights[0].position.y+=.01f;
+		plasma_occlusion_window();plasma_occlusion_submit(1002,0);plasma_occlusion_prepare_view();
+		CHECK(before<8*1536&&queries==before,"a field no draw reads stops being updated");
+		CHECK(plasma_occlusion_texture(0,0)&&queries>before,"and starts again when one does");
+		rasterizer_lights.lights[0].position.y=0;
+		plasma_occlusion_reset();
+		/* a held weapon's light gets a field before a far one */
+		budget_now.fields=1;time_ms+=200;held_emitter=1004;
+		rasterizer_lights.light_count=2;rasterizer_lights.lights[1].radius=1;
+		plasma_occlusion_window();plasma_occlusion_submit(1003,0);plasma_occlusion_submit(1004,1);plasma_occlusion_prepare_view();
+		CHECK(field_for(1)&&!field_for(0),"short lights choose their fields first");
+		budget_now.fields=8;held_emitter=NONE;rasterizer_lights.light_count=1;
+		plasma_occlusion_reset();
+	}
+	/* a weapon's sway doesn't rebuild its mask; a real turn does */
+	{
+		int before;
+		IDirect3DVolumeTexture8 *t;
+		unsigned long pixel;
+		float tr[4];
+		blocked=0;directional_on=1;directional_axis[0]=-.8f;directional_axis[1]=0;directional_axis[2]=.6f;
+		time_ms+=200;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		t=plasma_occlusion_texture(0,0);before=uploads;pixel=t->pixels[(8*16+8)*16];
+		/* 2 degrees */
+		directional_axis[0]=-.7986f;directional_axis[2]=.6018f;
+		before=uploads;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		t=plasma_occlusion_texture(0,0);
+		CHECK(uploads==before&&t->pixels[(8*16+8)*16]==pixel,"a small sway rebuilds nothing, and the mask stays as built");
+		/* 25 degrees */
+		directional_axis[0]=-.47f;directional_axis[2]=.883f;
+		time_ms+=16;plasma_occlusion_window();plasma_occlusion_submit(1010,0);
+		plasma_occlusion_texture(0,0);
+		CHECK(uploads==before+1,"a real turn rebuilds the mask");
+		plasma_occlusion_reset();
+		/* without a field: the unoccluded mask behaves the same */
+		emitter_on=1;emitter_occlusion=0;
+		directional_axis[0]=-.8f;directional_axis[2]=.6f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)!=NULL,"the unoccluded mask is made");
+		before=uploads;
+		directional_axis[0]=-.7986f;directional_axis[2]=.6018f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==before,"and sways without a rebuild too");
+		directional_axis[0]=-.47f;directional_axis[2]=.883f;
+		plasma_occlusion_window();
+		CHECK(ammo_counter_falloff_texture(0,1,tr)&&uploads==before+1,"and turns with one");
+		emitter_on=emitter_occlusion=directional_on=0;
+		directional_axis[0]=-.8f;directional_axis[2]=.6f;
+		plasma_occlusion_reset();
+	}
+	/* a limit in rays: three moving lights share it, in turn, and none is left out */
+	{
+		int traced[3],light,frame,seen[3]={0,0,0};
+		struct occlusion_field *held[3];
+		budget_now.fields=3;budget_now.rays=1800;budget_now.time_us=0;
+		rasterizer_lights.light_count=4;
+		for(n=0;n<4;n++){rasterizer_lights.lights[n].radius=1;rasterizer_lights.lights[n].position.x=0;}
+		/* one a frame comes in: the rest are refused, and held room for next */
+		for(frame=0;frame<3;frame++)
+		{
+			time_ms+=16;queries=0;plasma_occlusion_window();
+			for(n=0;n<3;n++)
+			{
+				/* (those in already want rays too) */
+				rasterizer_lights.lights[n].position.y+=.002f;
+				plasma_occlusion_submit(970+n,n);
+			}
+			for(n=0;n<3;n++)
+			{
+				held[n]=field_for(n);
+				CHECK((held[n]!=NULL)==(n<=frame),"lights come in one a frame, in the order they were refused");
+			}
+			CHECK(queries==1536,"and each view stays within the limit");
+		}
+		/* moving now: the one that has waited longest goes first, one a view */
+		for(frame=0;frame<6;frame++)
+		{
+			time_ms+=16;queries=0;plasma_occlusion_window();
+			for(n=0;n<3;n++)
+			{
+				rasterizer_lights.lights[n].position.y+=.002f;
+				plasma_occlusion_submit(970+n,n);
+				traced[n]=(int)fields[n].traced;
+			}
+			for(n=0;n<3;n++)CHECK(field_for(n),"a light short of rays keeps its field");
+			CHECK(queries==1536,"one trace fits the limit each view");
+			for(light=0;light<3;light++)if((int)fields[light].traced!=traced[light])seen[light]++;
+		}
+		CHECK(seen[0]==2&&seen[1]==2&&seen[2]==2,"each light has its turn, whichever is drawn first");
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=0;
+		plasma_occlusion_reset();
+		/* held-weapon lights fit in beside a full one */
+		time_ms+=200;held_emitter=980;held_muzzle=981;
+		plasma_occlusion_window();plasma_occlusion_submit(980,0);plasma_occlusion_submit(981,1);plasma_occlusion_submit(982,2);
+		queries=0;
+		CHECK(field_for(0)&&field_for(1)&&field_for(2)&&queries==1728,"two small grids and a full one fit the limit");
+		held_emitter=held_muzzle=NONE;
+		plasma_occlusion_reset();
+		/* the worst off goes first, and one left too far from its depths falls back */
+		budget_now.rays=1;time_ms+=200;
+		plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(0);time_ms+=16;
+		plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(1);time_ms+=16;
+		rasterizer_lights.lights[0].position.y=.2f;rasterizer_lights.lights[1].position.y=.6f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		CHECK(field_for(1)&&queries==1536,"the light furthest from its depths is traced, drawn first or not");
+		CHECK(field_for(0)&&queries==1536,"one near its depths waits, and offsets them");
+		time_ms+=16;rasterizer_lights.lights[0].position.y=.7f;rasterizer_lights.lights[1].position.y=.61f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		CHECK(field_for(0)&&queries==1536,"now the other's turn");
+		time_ms+=1;rasterizer_lights.lights[0].position.y=.71f;rasterizer_lights.lights[1].position.y=1.4f;
+		queries=0;plasma_occlusion_window();plasma_occlusion_submit(983,0);plasma_occlusion_submit(984,1);
+		field_for(0);
+		CHECK(queries==1536,"the worst off has the rays");
+		rasterizer_lights.lights[0].position.y=rasterizer_lights.lights[1].position.y=0;
+		plasma_occlusion_reset();
+		/* a limit in time: rays stop at it, a field stays if its light is near it */
+		budget_now.fields=8;budget_now.rays=0;budget_now.time_us=2000;time_ms+=200;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		queries=0;
+		CHECK(field_for(0)&&field_for(1),"two traces fit in the time");
+		CHECK(!field_for(2)&&queries==3072,"the third has none left");
+		time_ms+=16;queries=0;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		CHECK(field_for(0)&&field_for(1)&&field_for(2)&&queries<=3072,"it goes first next view");
+		time_ms+=16;
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=.01f;
+		rasterizer_lights.lights[2].position.y=.6f;
+		queries=0;plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		f=field_for(2);
+		CHECK(f&&f->traced_window==current_window&&queries==3072,"the worst off traces first, then the next that fits");
+		CHECK(f->center[1]==.6f,"and a field traced this view is rebuilt from its new depths");
+		{
+			struct occlusion_field *near_field=field_for(1);
+			CHECK(view_budget.us>=2000&&near_field&&near_field->center[1]==0,"out of time, a light near its field keeps it as it is");
+			CHECK(near_field->window==current_window&&queries==3072,"and asks nothing more this view");
+		}
+		time_ms+=16;
+		rasterizer_lights.lights[1].position.y=.1f;
+		rasterizer_lights.lights[2].position.y=.9f;
+		plasma_occlusion_window();
+		for(n=0;n<3;n++)plasma_occlusion_submit(990+n,n);
+		view_budget.planned=TRUE;view_budget.traces=1;view_budget.us=2000;queries=0;
+		CHECK(field_for(1)&&!queries,"out of time, a near light still draws");
+		CHECK(!field_for(2),"out of time, a far light never draws from a misplaced field");
+		CHECK(!field_for(2)&&!queries,"and it asks only once a view");
+		for(n=0;n<3;n++)rasterizer_lights.lights[n].position.y=0;
+		budget_now.fields=8;budget_now.rays=budget_now.time_us=0;
+		rasterizer_lights.light_count=1;
+		plasma_occlusion_reset();
+	}
+	return 0;
+}

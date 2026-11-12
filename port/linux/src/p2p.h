@@ -160,6 +160,9 @@ struct p2p_listing
 	unsigned char failed;
 	/* milliseconds, -1 if not known */
 	short ping;
+	/* its host is being probed for the ping now (a ping known stays), and
+	whether Refresh asked for it (until that probe ends) */
+	unsigned char probing, refreshing;
 	/* it has a password: its invite is sealed with it (p2p_listing_unlock) */
 	unsigned char locked;
 	unsigned char key_hash[P2P_LISTING_KEY_HASH_SIZE];
@@ -211,6 +214,10 @@ int p2p_lobby_hidden_games(int *newer, int *wrong_clock);
 negative), if the platform learned it (the Switch: GitHub's, before the
 game starts); 0 if it did not */
 int p2p_lobby_clock_offset(long *seconds);
+/* the games the server browser shows, in its order (its sort, after its
+tab and Filters): their hosts are probed in that order, those not shown
+last */
+void p2p_lobby_shown(const struct p2p_listing *games, int count);
 /* the master servers' (port/linux/src/master_list.c, server_master.c): a
 fresh signed listing of the game this machine hosts for the internet, as
 the brokers get it (0 if it hosts none, or none public); a master's entry's
@@ -260,7 +267,7 @@ enum
 /* network.browser_sort's orders (a column title's), each in its own first
 direction: dedicated servers first, then the most players, then by name
 (servers); the most players; by name, map or type (A to Z); those with a
-password first */
+password first; the lowest ping first (those not timed yet last, either way) */
 enum
 {
 	P2P_LOBBY_SORT_SERVERS,
@@ -269,6 +276,7 @@ enum
 	P2P_LOBBY_SORT_MAP,
 	P2P_LOBBY_SORT_TYPE,
 	P2P_LOBBY_SORT_LOCKED,
+	P2P_LOBBY_SORT_PING,
 	NUMBER_OF_P2P_LOBBY_SORTS,
 };
 struct p2p_lobby_choices

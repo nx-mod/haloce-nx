@@ -89,6 +89,8 @@ int d3d8_dk_vertex_program_by_id(unsigned long id, uint64_t *program_hash, const
 #define DK_KEY_FOLDER "z:\\shader_keys"
 #define DK_KEY_CONSOLE_FILE "z:\\shader_keys\\console.dkk"
 #define DK_KEY_SHARED_FILE "z:\\shader_keys\\keys.dkk"
+/* (how much of a key file stdio reads, or writes, at a time) */
+#define KEY_FILE_BUFFER (256 * 1024)
 /* d3d8_gl.c's program records (phase 4 read them for the dump) */
 #define DK_RECORDS_PATH "z:\\shader_programs.bin"
 
@@ -133,28 +135,34 @@ then the packed mask, in that order - not the struct's, which has four
 bytes of padding at its end that would otherwise have to be promised zero
 by every caller */
 #define DK_KEY_DATA_SIZE 256UL
-/* (the pixel key's fields past them - ce_meter_channels, which deko3d never sets - are left 0 in a key read back) */
+/* (the pixel key's fields past them: ce_meter_channels in the record's
+reserved[0], record_key's; the others, which deko3d never sets, are left 0 in
+a key read back) */
 typedef char dk_key_data_within_pixel_key[sizeof(struct nv2a_pixel_shader_key) >= DK_KEY_DATA_SIZE ? 1 : -1];
 #define DK_VERTEX_KEY_BYTES 12UL
 
 struct dk_key_record
 {
 	uint8_t stage;
+	/* [0]: a pixel key's ce_meter_channels (0 in the records written before it was kept); the rest 0 */
 	uint8_t reserved[3];
 	uint32_t map_hash;
 	uint8_t data[DK_KEY_DATA_SIZE];
 };
 typedef char dk_key_record_size_check[sizeof(struct dk_key_record) == DK_KEY_RECORD_SIZE ? 1 : -1];
 
+/* a key whole, of either stage */
+union dk_key_data
+{
+	struct dk_vertex_key vertex;
+	struct nv2a_pixel_shader_key pixel;
+};
+
 struct dk_key
 {
 	uint32_t stage;
 	uint32_t map_hash;
-	union
-	{
-		struct dk_vertex_key vertex;
-		struct nv2a_pixel_shader_key pixel;
-	} data;
+	union dk_key_data data;
 	uint64_t hash;
 	/* the pass: 0 not reached, 1 asked of the host (loaded, queued, or
 	compiling), 2 skipped (its program the game never made) */
@@ -226,6 +234,8 @@ typedef char dk_pixel_key_per_pixel_lighting_after_hashed[
 	offsetof(struct nv2a_pixel_shader_key, per_pixel_lighting) == DK_PIXEL_KEY_HASHED_BYTES ? 1 : -1];
 typedef char dk_pixel_key_alpha_test_samples_where_hashed[
 	offsetof(struct nv2a_pixel_shader_key, alpha_test_samples) == 254 ? 1 : -1];
+/* (ce_meter_channels, past the bytes a record keeps: mixed after them only when it is not 0, and kept in the record's
+reserved[0]) */
 typedef char dk_pixel_key_size_as_hashed[offsetof(struct nv2a_pixel_shader_key, ce_meter_channels) == DK_KEY_DATA_SIZE ? 1 : -1];
 
 /* the debug options that change the pixel shaders' GLSL (nv2a_psh_dk.c):
@@ -281,15 +291,27 @@ static uint64_t key_hash(uint32_t stage, const void *data)
 			hash = dk_shader_hash_mix(hash, &key->per_pixel_lighting, sizeof(key->per_pixel_lighting));
 			hash = dk_shader_hash_mix(hash, &key->alpha_test_samples, sizeof(key->alpha_test_samples));
 		}
+		if (key->ce_meter_channels)
+			hash = dk_shader_hash_mix(hash, &key->ce_meter_channels, sizeof(key->ce_meter_channels));
 		hash = debug_hash_mix(hash);
 	}
 	return hash;
 }
 
-/* how many bytes of a record a stage's key takes */
+/* how many bytes of a stage's key there are (a pixel key's whole, of which a record keeps DK_KEY_DATA_SIZE and
+ce_meter_channels: record_key) */
 static unsigned long key_data_size(uint32_t stage)
 {
-	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE;
+	return stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : sizeof(struct nv2a_pixel_shader_key);
+}
+
+/* a record's key, whole */
+static void record_key(const struct dk_key_record *record, union dk_key_data *data)
+{
+	memset(data, 0, sizeof(*data));
+	memcpy(data, record->data, record->stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE);
+	if (record->stage == DK_SHADER_STAGE_PIXEL)
+		data->pixel.ce_meter_channels = record->reserved[0];
 }
 
 /* ---------- the key store */
@@ -381,12 +403,16 @@ static unsigned long keys_read_file(const char *xbox_path)
 	struct dk_key_record record;
 	unsigned long added = 0;
 
+	char *buffer;
+
 	platform_translate_path(xbox_path, path, sizeof(path));
 	if ((file = fopen(path, "rb")) == NULL)
 		return 0;
 	/* (read a quarter of a megabyte at a time, not stdio's kilobyte: each read is a call to the host and the card's,
-	and the shared keys are 4.5 MB) */
-	setvbuf(file, NULL, _IOFBF, 256 * 1024);
+	and the shared keys are 4.5 MB. port: in a buffer of its own: musl's setvbuf keeps its kilobyte when given none,
+	and both files were read a kilobyte at a time, some 3,000 reads at every start) */
+	if ((buffer = malloc(KEY_FILE_BUFFER)) != NULL)
+		setvbuf(file, buffer, _IOFBF, KEY_FILE_BUFFER);
 	if (fread(header, sizeof(header), 1, file) == 1 && header[0] == DK_KEY_MAGIC && header[1] == DK_KEY_FORMAT &&
 		header[2] == sizeof(record))
 	{
@@ -394,9 +420,12 @@ static unsigned long keys_read_file(const char *xbox_path)
 		{
 			if (record.stage == DK_SHADER_STAGE_VERTEX || record.stage == DK_SHADER_STAGE_PIXEL)
 			{
-				struct dk_key *key = key_add(record.stage, record.map_hash, record.data);
+				union dk_key_data data;
+				struct dk_key *key;
 				int shared = !strcmp(xbox_path, DK_KEY_SHARED_FILE);
 
+				record_key(&record, &data);
+				key = key_add(record.stage, record.map_hash, &data);
 				if (key)
 				{
 					key->shared = shared;
@@ -405,7 +434,7 @@ static unsigned long keys_read_file(const char *xbox_path)
 				/* (a key console.dkk had first, which keys.dkk has too: the
 				shared file's, loaded with its map - console_compact takes it
 				out of console.dkk) */
-				else if (shared && (key = key_find(key_hash(record.stage, record.data))) != NULL)
+				else if (shared && (key = key_find(key_hash(record.stage, &data))) != NULL)
 					key->shared = 1;
 			}
 		}
@@ -422,12 +451,14 @@ static unsigned long keys_read_file(const char *xbox_path)
 		if (!strcmp(xbox_path, DK_KEY_CONSOLE_FILE))
 		{
 			fclose(file);
+			free(buffer);
 			if (remove(path) == 0)
 				platform_log("shader keys: %s removed, to be written again", path);
 			return 0;
 		}
 	}
 	fclose(file);
+	free(buffer);
 	return added;
 }
 
@@ -521,7 +552,9 @@ static void console_append(uint32_t stage, uint32_t map_hash, const void *data, 
 	memset(&record, 0, sizeof(record));
 	record.stage = (uint8_t)stage;
 	record.map_hash = map_hash;
-	memcpy(record.data, data, size);
+	memcpy(record.data, data, size < DK_KEY_DATA_SIZE ? size : DK_KEY_DATA_SIZE);
+	if (stage == DK_SHADER_STAGE_PIXEL)
+		record.reserved[0] = ((const struct nv2a_pixel_shader_key *)data)->ce_meter_channels;
 	pthread_mutex_lock(&append_lock);
 	if (!append_started)
 	{
@@ -796,6 +829,7 @@ static void console_compact(void)
 	/* which keys of the store a record of this file has given already (each
 	record's key is in the store: keys_read_file put it there) */
 	unsigned char *seen = calloc(key_count ? key_count : 1, 1);
+	char *in_buffer = NULL, *out_buffer = NULL;
 	int pass;
 
 	if (!seen)
@@ -810,7 +844,11 @@ static void console_compact(void)
 	{
 		if ((file = fopen(path, "rb")) == NULL)
 			break;
-		setvbuf(file, NULL, _IOFBF, 256 * 1024);
+		/* (port: buffers of their own, as keys_read_file's) */
+		if (!in_buffer)
+			in_buffer = malloc(KEY_FILE_BUFFER);
+		if (in_buffer)
+			setvbuf(file, in_buffer, _IOFBF, KEY_FILE_BUFFER);
 		if (fread(header, sizeof(header), 1, file) != 1 || header[0] != DK_KEY_MAGIC || header[1] != DK_KEY_FORMAT ||
 			header[2] != sizeof(record))
 		{
@@ -826,18 +864,21 @@ static void console_compact(void)
 				fclose(file);
 				break;
 			}
-			setvbuf(out, NULL, _IOFBF, 256 * 1024);
+			if ((out_buffer = malloc(KEY_FILE_BUFFER)) != NULL)
+				setvbuf(out, out_buffer, _IOFBF, KEY_FILE_BUFFER);
 			fwrite(header, sizeof(header), 1, out);
 		}
 		memset(seen, 0, key_count ? key_count : 1);
 		while (fread(&record, sizeof(record), 1, file) == 1)
 		{
 			struct dk_key *key;
+			union dk_key_data data;
 			unsigned long index;
 
 			if (record.stage != DK_SHADER_STAGE_VERTEX && record.stage != DK_SHADER_STAGE_PIXEL)
 				continue;
-			key = key_find(key_hash(record.stage, record.data));
+			record_key(&record, &data);
+			key = key_find(key_hash(record.stage, &data));
 			if (!key)
 				continue;
 			if (key->shared)
@@ -878,6 +919,8 @@ static void console_compact(void)
 		}
 	}
 	free(seen);
+	free(in_buffer);
+	free(out_buffer);
 	pthread_mutex_unlock(&write_lock);
 }
 
@@ -1454,11 +1497,22 @@ static void stall_frame(void)
 		stall_close();
 }
 
+/* a dk_shader_variant_for_draw is asking; and whether it found the host did
+not know the key */
+static BOOL asking_variant;
+static BOOL variant_unknown;
+
 /* whether a draw now may wait for its shader (the window opened at the
 map's first draw, and said when it closes) */
 static BOOL stall_allowed(void)
 {
-	unsigned long long now = now_ms();
+	unsigned long long now;
+
+	/* (a variant with a stock shader to fall back on waits for nothing, and
+	spends none of the window's time: dk_shader_variant_for_draw) */
+	if (asking_variant)
+		return FALSE;
+	now = now_ms();
 
 	if (stall_armed)
 	{
@@ -1546,22 +1600,36 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 	uint64_t hash;
 	uint32_t state = 0;
 	uint32_t handle;
-	/* each stage's last key and its handle: draws in a row mostly share
+	/* each stage's latest keys and their handles: draws in a row mostly share
 	their shaders, and the copy and the hash below are a byte at a time
-	(dk_shader_for_draw was 3.8% of the game thread in a match) */
-	static uint32_t last_key[2][(sizeof(struct nv2a_pixel_shader_key) + 3) / 4];
-	static uint32_t last_handle[2];
+	(dk_shader_for_draw was 3.8% of the game thread in a match). port: eight,
+	not one: draws that alternate between a few materials missed every time,
+	and hashed (key_hash was 1% of the game thread in a campaign fight). A handle is never taken back. */
+	enum { RECENT_KEYS = 8 };
+	static uint32_t recent_key[2][RECENT_KEYS][(sizeof(struct nv2a_pixel_shader_key) + 3) / 4];
+	static uint32_t recent_handle[2][RECENT_KEYS];
+	static unsigned int recent_last[2], recent_next[2];
 	int which = stage == DK_SHADER_STAGE_PIXEL;
 	const uint32_t *words = key_data;
 	unsigned long word;
+	unsigned int probe;
 
-	if (last_handle[which] && !(size % 4) && !((uintptr_t)key_data % 4))
-	{
-		for (word = 0; word < size / 4 && words[word] == last_key[which][word]; word++)
-			;
-		if (word == size / 4)
-			return last_handle[which];
-	}
+	if (!(size % 4) && !((uintptr_t)key_data % 4))
+		for (probe = 0; probe < RECENT_KEYS; probe++)
+		{
+			/* (the latest found first) */
+			unsigned int slot = (recent_last[which] + probe) % RECENT_KEYS;
+
+			if (!recent_handle[which][slot])
+				continue;
+			for (word = 0; word < size / 4 && words[word] == recent_key[which][slot][word]; word++)
+				;
+			if (word == size / 4)
+			{
+				recent_last[which] = slot;
+				return recent_handle[which][slot];
+			}
+		}
 
 	/* the key as it is known: a pixel key with count_samples at 0 (it does
 	not change the GLSL), which is how the imported and shared keys hash */
@@ -1574,8 +1642,11 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 	entry = handle_slot(hash);
 	if (entry->hash == hash)
 	{
-		memcpy(last_key[which], key_data, size);
-		last_handle[which] = entry->handle;
+		unsigned int slot = recent_next[which]++ % RECENT_KEYS;
+
+		memcpy(recent_key[which][slot], key_data, size);
+		recent_handle[which][slot] = entry->handle;
+		recent_last[which] = slot;
 		return entry->handle;
 	}
 	handle = host_dk_shader_find(stage, hash, (uint32_t)(uintptr_t)&state);
@@ -1601,6 +1672,7 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 	/* unknown to the host: kept in console.dkk if this console has never
 	met it, and queued at the draw's priority - the compile is a few frames
 	away and the draws that need it are skipped until then */
+	variant_unknown = asking_variant;
 	if (key_add(stage, current_map, &data))
 		console_append(stage, current_map, &data, size);
 	{
@@ -1620,4 +1692,16 @@ uint32_t dk_shader_for_draw(uint32_t stage, const void *key_data)
 		}
 	}
 	return 0;
+}
+
+uint32_t dk_shader_variant_for_draw(const void *key_data, int *unknown)
+{
+	uint32_t handle;
+
+	asking_variant = TRUE;
+	variant_unknown = FALSE;
+	handle = dk_shader_for_draw(DK_SHADER_STAGE_VERTEX, key_data);
+	asking_variant = FALSE;
+	*unknown = variant_unknown;
+	return handle;
 }

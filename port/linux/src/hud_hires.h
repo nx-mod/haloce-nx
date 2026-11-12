@@ -141,6 +141,12 @@ unsigned char *hud_hires_png_pixels(const void *png, unsigned long size, unsigne
 /* Original HUD sheets lacking redraws, with their tag coordinates unchanged.
  * The cache owns the upscaled texture and invalidates it with the source. */
 long hud_hires_upscale_at(unsigned long address, long width, long height);
+/* the sheet's texels (BGRA, as the texture caches decode them) four times
+larger, red first, with the outline a known sheet gets: malloc'd, NULL if it
+is larger than the kind takes or memory ran out. hud_hires_upscale_texture's
+GL texture is made of these; the deko3d and Vulkan caches make their images
+of them */
+unsigned char *hud_hires_upscale_rgba(const unsigned char *bgra, unsigned long width, unsigned long height, long kind);
 unsigned int hud_hires_upscale_texture(const unsigned char *bgra, unsigned long width,
 	unsigned long height, long kind, unsigned long *levels);
 

@@ -52,6 +52,19 @@ which shows maps added since). */
 void custom_edition_maps_look_again(
 	void);
 
+/* As custom_edition_maps_look_again, but only if the names in the maps
+folders have changed since the last scan (a map list opening). */
+void custom_edition_maps_look_again_if_changed(
+	void);
+
+/* (port) The maps folders looked at, and scanned again if their names have
+changed, on a thread of the scan's own (a map list's opening); and whether
+it is done, its maps then taken for the lists (TRUE also if none runs). */
+void custom_edition_maps_scan_start(
+	void);
+boolean custom_edition_maps_scan_poll(
+	void);
+
 /* the display index of an entry in the latest level list */
 short custom_edition_maps_level_display_index(
 	short level_index);
@@ -98,6 +111,15 @@ char const *custom_edition_maps_level_name(
 Fields, Death Island and so on), which are listed as VANILLA */
 boolean custom_edition_maps_stock(
 	short display_index);
+
+/* deletes the CE map with this display index: its .map, and the description
+(.txt) and picture (.bmp) beside it, then its set's folder if that is left
+empty; or with whole_folder, the set's folder the map is in, with all in it
+(FALSE for a map at the maps folder's top). Whether it is gone. The maps are
+the menus' to find again (custom_edition_maps_look_again). */
+boolean custom_edition_maps_delete(
+	short display_index,
+	boolean whole_folder);
 
 /* name and description for a display index, or NULL (text_group.c) */
 wchar_t *custom_edition_maps_name(

@@ -194,6 +194,7 @@ static VkFormat format_of(uint32_t format)
 	case VK_IMAGE_FORMAT_BC1: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 	case VK_IMAGE_FORMAT_BC2: return VK_FORMAT_BC2_UNORM_BLOCK;
 	case VK_IMAGE_FORMAT_BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
+	case VK_IMAGE_FORMAT_ASTC_4X4: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
 	default: return VK_FORMAT_B8G8R8A8_UNORM;
 	}
 }
@@ -213,6 +214,7 @@ static uint32_t level_bytes(const struct host_vk_image *image, unsigned level)
 
 	if (image->format == VK_IMAGE_FORMAT_BGRA)
 		return width * height * depth * 4;
+	/* (BC1's blocks are 8 bytes; BC2's, BC3's and ASTC 4x4's 16) */
 	return ((width + 3) / 4) * ((height + 3) / 4) * (image->format == VK_IMAGE_FORMAT_BC1 ? 8 : 16) * depth;
 }
 
@@ -223,6 +225,14 @@ static void barrier(VkCommandBuffer command, struct host_vk_image *image, VkImag
 
 	host_vk_barrier_scope(image->layout, to, &source_stage, &barrier.srcAccessMask, &destination_stage,
 		&barrier.dstAccessMask);
+	/* a 3D image can be read by a vertex shader too (the dynamic lighting's fields, VK_PLASMA_SET) */
+	if (image->kind == VK_IMAGE_3D)
+	{
+		if (image->layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			source_stage |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+		if (to == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			destination_stage |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+	}
 	barrier.oldLayout = image->layout;
 	barrier.newLayout = to;
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -509,7 +519,10 @@ void host_vk_texture_data_command(const struct vk_command_texture_data *command)
 		B.counts.textures_skipped++;
 		return;
 	}
-	host_vk_rendering_end();
+	/* (a clear waiting for the next rendering can go on waiting: a copy into a texture has nothing to do with the targets,
+	and a rendering of the clear alone would be stored, and loaded again by the next) */
+	if (B.rendering)
+		host_vk_rendering_end();
 	cmd = host_vk_frame_command();
 	if (!copy_ready(cmd, image))
 		return;
@@ -546,7 +559,9 @@ void host_vk_textures_flush(void)
 
 	if (!dirty_count)
 		return;
-	host_vk_rendering_end();
+	/* (as above: a waiting clear goes on waiting) */
+	if (B.rendering)
+		host_vk_rendering_end();
 	cmd = host_vk_frame_command();
 	for (index = 0; index < dirty_count; index++)
 		barrier(cmd, dirty[index], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

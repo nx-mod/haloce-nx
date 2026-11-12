@@ -138,6 +138,9 @@ struct port_mod_file
 	/* lower case, backslashes */
 	char *key;
 	char *path;
+	/* (port_mods_file_stamp's answer, kept for the scan that found it) */
+	int stamped;
+	unsigned long size, stamp[2];
 };
 
 /* ---------- globals */
@@ -939,6 +942,7 @@ static long file_add(long mod, const char *key, const char *path)
 		return -1;
 	}
 	file->mod = mod;
+	file->stamped = 0;
 	file->hash = key_hash(key);
 	file->next = port_mods.buckets[file->hash % FILE_BUCKET_COUNT];
 	port_mods.buckets[file->hash % FILE_BUCKET_COUNT] = port_mods.file_count;
@@ -1010,13 +1014,30 @@ static int mod_for_map(const struct port_mod *mod, const char *map_name)
 	return 0;
 }
 
+/* the mods folder: game.mods.path's (an absolute path, or one under the
+data root), else the data root's mods */
 static const char *mods_root(char *path, size_t size)
 {
-	snprintf(path, size, "%s/mods", platform_data_root());
+	const char *configured = config_string("game.mods.path");
+
+	if (!configured || !*configured)
+		snprintf(path, size, "%s/mods", platform_data_root());
+	/* (absolute: /..., a drive's C:\... or C:/..., the Switch's sdmc:/...) */
+	else if (configured[0] == '/' || configured[0] == '\\' || strstr(configured, ":/") || strstr(configured, ":\\"))
+		snprintf(path, size, "%s", configured);
+	else
+		snprintf(path, size, "%s/%s", platform_data_root(), configured);
 	return path;
 }
 
 /* ---------- public code */
+
+const char *port_mods_root(void)
+{
+	static char root[MAXIMUM_PATH_LENGTH];
+
+	return mods_root(root, sizeof(root));
+}
 
 long port_mods_scan(void)
 {
@@ -1127,18 +1148,30 @@ long port_mods_file_find(const char *tag_file, const char *map_name)
 	return found;
 }
 
+/* (port: looked at once a scan, and kept: the files are found again only
+when the mods are (port_mods_scan), and each map's load asked again for
+every file it played, a stat each, some 150 on the Switch's card at every
+return to the menus) */
 int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2])
 {
 	struct posix_file_information information;
+	struct port_mod_file *entry;
 
-	if (file < 0 || file >= port_mods.file_count || posix_stat(port_mods.files[file].path, &information) != 0 ||
-		information.size_high)
-	{
+	if (file < 0 || file >= port_mods.file_count)
 		return 0;
+	entry = &port_mods.files[file];
+	if (!entry->stamped)
+	{
+		if (posix_stat(entry->path, &information) != 0 || information.size_high)
+			return 0;
+		entry->size = information.size_low;
+		entry->stamp[0] = information.modification_seconds;
+		entry->stamp[1] = information.modification_nanoseconds;
+		entry->stamped = 1;
 	}
-	*size = information.size_low;
-	stamp[0] = information.modification_seconds;
-	stamp[1] = information.modification_nanoseconds;
+	*size = entry->size;
+	stamp[0] = entry->stamp[0];
+	stamp[1] = entry->stamp[1];
 	return 1;
 }
 

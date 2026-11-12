@@ -17,11 +17,25 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- voice chat's microphone (asked for only when voice chat first talks) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- debug.profile_run's folder in Download (LauncherActivity), on Android 9 and 10 only: from 11 on, the app makes
-         its own files there without it. Asked for only when a profile is recorded -->
+    <!-- debug.profile_run's folder in Download (LauncherActivity), and a folder of the player's own for the maps
+         (MapsFolder), on Android 9 and 10 only: from 11 on, the app makes its own files in Download without it, and the
+         maps' folder takes MANAGE_EXTERNAL_STORAGE below. Asked for only when a profile is recorded or such a folder
+         chosen -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- maps kept in a folder of the player's own (the launcher's "Use another folder": MapsFolder), which
+         the game reads with plain file calls, from Android 11 on. On 9 and 10 WRITE_EXTERNAL_STORAGE above does it.
+         Asked for only when such a folder is chosen -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- installing a new version of the game (Updater) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- offering to remove the old app, once its data has been moved (Migration); Android still asks the player -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- the old package and the new, which must see each other for the move (Migration) -->
+    <queries>
+        <package android:name="com.halo.decomp" />
+        <package android:name="ar.com.slipstreamce" />
+    </queries>
 
     <!-- enableOnBackInvokedCallback: the back button and the back gesture
          stay KEYCODE_BACK, which SDL passes to the game as B; with
@@ -72,6 +86,13 @@
             </intent-filter>
         </activity>
 
+        <!-- the old package's bridge's notice, all it runs (LauncherActivity) -->
+        <activity
+            android:name=".BridgeActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode" />
+
         <!-- in a process of its own, with a fresh Java heap (HaloApplication) -->
         <activity
             android:name=".HaloActivity"
@@ -89,6 +110,14 @@
         </activity>
 
         <!-- the downloaded new version, for the package installer (Updater) -->
+        <!-- the old package's data for the new one, the bridge's alone; it answers only the new package of this app's
+             own key (MigrationProvider) -->
+        <provider
+            android:name=".MigrationProvider"
+            android:authorities="${applicationId}.migration"
+            android:enabled="${migrationProvider}"
+            android:exported="true" />
+
         <provider
             android:name=".UpdateProvider"
             android:authorities="${applicationId}.update"

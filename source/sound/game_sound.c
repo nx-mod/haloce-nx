@@ -925,8 +925,16 @@ void game_sound_set_mouth_aperture(
 render_interpolation.c), and the sound manager refreshes every sound each
 frame; on the Xbox, frames and ticks were one. A sound's obstruction, a
 collision test from the camera, is computed once per tick and reused by the
-tick's other frames. */
+tick's other frames.
+port: and by the next ticks', up to OBSTRUCTION_CACHE_TICKS (a tenth of a
+second), while the sound has not moved and the camera has moved less than a
+fiftieth of the way to it (a few centimetres at the least): a still sound heard
+from a still or slow camera, the ambience and machines of a level, no longer
+casts its ray every tick. */
 #define OBSTRUCTION_CACHE_SLOTS 128
+#define OBSTRUCTION_CACHE_TICKS 3
+#define OBSTRUCTION_CAMERA_SLACK 0.02f
+#define OBSTRUCTION_CAMERA_SLACK_MINIMUM 0.02f
 
 static struct
 {
@@ -934,6 +942,8 @@ static struct
 	long game_time;
 	short local_player_index;
 	real_point3d position;
+	real_point3d camera; /* port: where it was heard from */
+	short camera_cluster_index;
 	real obstruction;
 	real occlusion;
 } obstruction_cache[OBSTRUCTION_CACHE_SLOTS];
@@ -969,8 +979,14 @@ void compute_sound_obstruction(
 	long slot = obstruction_cache_slot(local_player_index, &source->location.position);
 	long now = game_time_get();
 
+	real slack = MAX(distance * OBSTRUCTION_CAMERA_SLACK, OBSTRUCTION_CAMERA_SLACK_MINIMUM);
+
 	if (obstruction_cache[slot].valid &&
-		obstruction_cache[slot].game_time == now &&
+		(obstruction_cache[slot].game_time == now ||
+			(now - obstruction_cache[slot].game_time > 0 &&
+			now - obstruction_cache[slot].game_time < OBSTRUCTION_CACHE_TICKS &&
+			obstruction_cache[slot].camera_cluster_index == camera->location.cluster_index &&
+			distance_squared3d(&obstruction_cache[slot].camera, &camera->position) < slack * slack)) &&
 		obstruction_cache[slot].local_player_index == local_player_index &&
 		obstruction_cache[slot].position.x == source->location.position.x &&
 		obstruction_cache[slot].position.y == source->location.position.y &&
@@ -1056,6 +1072,8 @@ void compute_sound_obstruction(
 	obstruction_cache[slot].game_time = now;
 	obstruction_cache[slot].local_player_index = local_player_index;
 	obstruction_cache[slot].position = source->location.position;
+	obstruction_cache[slot].camera = camera->position;
+	obstruction_cache[slot].camera_cluster_index = camera->location.cluster_index;
 	obstruction_cache[slot].obstruction = source->obstruction;
 	obstruction_cache[slot].occlusion = source->occlusion;
 
@@ -1183,10 +1201,11 @@ boolean track_object_impulse_sound(
 				node_matrix,
 				&attachment->forward,
 				&source->location.forward);
-			object_get_velocities(
+			/* port: the attachment's velocity, not only the object's */
+			object_get_point_velocity(
 				object_index,
-				&source->location.translational_velocity,
-				NULL);
+				&source->location.position,
+				&source->location.translational_velocity);
 
 			return TRUE;
 		}
@@ -1206,7 +1225,6 @@ static void update_potentially_audible_looping_sound(
 		sound->last_audible_frame_index == NONE
 		|| sound->last_audible_frame_index == game_sound_globals->update_index - 1;
 	boolean audible;
-	real_vector3d unused_velocity;
 	struct sound_source source;
 
 	if (!TEST_FLAG(sound->flags, _game_looping_sound_unattached_bit))
@@ -1237,10 +1255,11 @@ static void update_potentially_audible_looping_sound(
 				location);
 			matrix4x3_transform_point(node_matrix, &sound->position, &source.location.position);
 			matrix4x3_transform_normal(node_matrix, &sound->forward, &source.location.forward);
-			object_get_velocities(
+			/* port: the attachment's velocity, not only the object's */
+			object_get_point_velocity(
 				sound->object_index,
-				&source.location.translational_velocity,
-				&unused_velocity);
+				&source.location.position,
+				&source.location.translational_velocity);
 			source.location.game_location = *location;
 			source.spatialization_mode = _sound_spatialization_mode_absolute;
 		}

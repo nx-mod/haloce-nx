@@ -247,9 +247,13 @@ void mods_tags_loaded(
 	mods_globals.enabled = TRUE;
 	csstrncpy(mods_globals.map_name, map_name ? map_name : "", sizeof(mods_globals.map_name) - 1);
 	mods_globals.map_name[sizeof(mods_globals.map_name) - 1] = 0;
-	/* (found again, unless the menus of this map just found them: the
-	first map's, menu_tags.c) */
-	if (port_mods_scans() == mods_globals.scans)
+	/* (port: found once a run, at the start (port_mods_startup), and again
+	only when asked: the Mods menu's OK, IMPORT and DELETE, mods_reload and
+	mods_enable. Found again at every map's load, each of the mods' tags
+	folders was listed and each file in them looked at, at every return to
+	the menus: on the Switch's card some sixty folders and 150 stats. A mod
+	copied in while the game runs is played after the next start.) */
+	if (!port_mods_scans())
 		port_mods_scan();
 	mods_globals.scans = port_mods_scans();
 	if (port_mods_played())

@@ -28,6 +28,9 @@ void playlist_profiles_dispose(
 	void);
 word playlist_profile_number_of_default_profiles_on_disk(
 	void);
+/* port: changes whenever a gametype's file may have (playlist_profile.c) */
+unsigned long playlist_profile_changes(
+	void);
 boolean playlist_profile_get(
 	long playlist_profile_index,
 	struct game_variant *variant);

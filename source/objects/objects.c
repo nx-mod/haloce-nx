@@ -1496,6 +1496,27 @@ void object_get_velocities(
 	return;
 }
 
+/* port: the velocity of a point on an object: its ultimate parent's motion
+and spin (v + w x r about the parent's position, as physics.c works out its
+mass points' velocities), in world units a tick. For the sounds' Doppler
+effect (game_sound.c, sound_manager.c): a sound on a turning vehicle and the
+ear of whoever rides it move as their points do, and cancel. */
+void object_get_point_velocity(
+	long object_index,
+	real_point3d const *point,
+	real_vector3d *velocity)
+{
+	struct object_datum *ultimate_parent = object_get(object_get_ultimate_parent(object_index));
+	real_vector3d radius;
+	real_vector3d spin;
+
+	vector_from_points3d(&ultimate_parent->object.position, point, &radius);
+	cross_product3d(&ultimate_parent->object.angular_velocity, &radius, &spin);
+	add_vectors3d(&ultimate_parent->object.translational_velocity, &spin, velocity);
+
+	return;
+}
+
 struct location *object_get_location(
 	long object_index,
 	struct location *location)
@@ -4761,6 +4782,12 @@ static void object_connect_lights(
 		{
 			if (!object->object.attachment_types[i] && object->object.attachment_indices[i]!=NONE)
 			{
+				/* port: moved: its clusters may well still hold */
+				if (disconnect && reconnect)
+				{
+					light_move_with_object(object->object.attachment_indices[i]);
+					continue;
+				}
 				if (disconnect)
 				{
 					light_disconnect_from_map(object->object.attachment_indices[i]);

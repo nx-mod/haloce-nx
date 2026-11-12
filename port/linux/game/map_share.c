@@ -656,12 +656,26 @@ static unsigned long map_share_host_address(
 	struct network_connection *connection = client ? network_game_client_get_connection(client) : NULL;
 	struct transport_address reliable;
 	struct transport_address unreliable;
+	/* (asked every frame, and each ask is two system calls, 2.5% of a Switch
+	client's game thread: kept for its connection, and asked again each second
+	so that a connection reused for another host is followed) */
+	static struct network_connection *cached_connection;
+	static unsigned long cached_address, cached_time;
+	unsigned long now = system_milliseconds();
 
 	if (!connection || map_share_host())
+	{
+		cached_connection = NULL;
 		return 0;
+	}
+	if (connection == cached_connection && now - cached_time < 1000)
+		return cached_address;
 	csmemset(&reliable, 0, sizeof(reliable));
 	network_connection_get_address(connection, &reliable, &unreliable);
-	return reliable.address_length == IPV4_ADDRESS_LENGTH ? reliable.address.long_words[0] : 0;
+	cached_connection = connection;
+	cached_time = now;
+	cached_address = reliable.address_length == IPV4_ADDRESS_LENGTH ? reliable.address.long_words[0] : 0;
+	return cached_address;
 }
 
 static long upload_limit(

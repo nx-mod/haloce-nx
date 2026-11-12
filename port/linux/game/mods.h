@@ -48,6 +48,7 @@ char const *port_mods_file_path(long file);
 long port_mods_count(void);
 long port_mods_at(long position);
 char const *port_mods_folder(long index);
+char const *port_mods_root(void);
 int port_mods_describe(long index, char *text, unsigned long size, char const *map_name);
 
 /* ---------- prototypes/MODS.C */

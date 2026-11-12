@@ -482,6 +482,17 @@ static boolean saved_game_files_take_mapfile_mutex(
 	void);
 static void saved_game_files_release_mapfile_mutex(
 	void);
+/* port: the mapfile kept in memory (mapfile_copy, below) */
+static boolean mapfile_copy_read(
+	word memory_unit_index);
+static void mapfile_copy_forget(
+	void);
+static struct
+{
+	boolean valid;
+	long count;
+	struct enumerated_saved_game_file *entries;
+} mapfile_copy;
 static short enumerate_default_profiles(
 	void);
 
@@ -1316,6 +1327,7 @@ static boolean set_nth_entry_in_mapfile(
 
 	if (saved_game_files_take_mapfile_mutex())
 	{
+		mapfile_copy_forget(); /* port */
 		if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
 				memory_unit_mapfile_path[memory_unit_index], FALSE) &&
 			file_open(&saved_game_files_globals.memory_unit_mapfile, FLAG(_permission_write_bit)))
@@ -1713,7 +1725,28 @@ void saved_game_files_enumerate_available_to_local_player_index(
 		number_of_entries = count_enumerated_profiles_in_mapfile(memory_unit_index);
 		if (saved_game_files_take_mapfile_mutex())
 		{
-			if (enumerate_mapfile_start(memory_unit_index))
+			/* port: from the copy (mapfile_copy), the file read whole once */
+			if (mapfile_copy_read(memory_unit_index))
+			{
+				long entry_index;
+
+				for (entry_index = 0;
+					number_of_available_profiles < *number_of_profiles && entry_index < mapfile_copy.count;
+					entry_index++)
+				{
+					struct enumerated_saved_game_file const *entry = &mapfile_copy.entries[entry_index];
+
+					if (entry->type == saved_game_file_type &&
+						((include_default_profiles == TRUE) || !entry->read_only))
+					{
+						player_profile_indices[number_of_available_profiles] =
+							build_saved_game_file_index(saved_game_file_type, memory_unit_index,
+								entry_index, entry->read_only, entry->valid);
+						number_of_available_profiles++;
+					}
+				}
+			}
+			else if (enumerate_mapfile_start(memory_unit_index))
 			{
 				long entry_index;
 
@@ -2058,9 +2091,80 @@ static boolean find_and_create_directory_if_necessary(
 	return success;
 }
 
+/* port: the memory unit's mapfile (z:\saved\hdmu.map), the index of the
+saved games, kept in memory as it is on the card. Each lookup of an entry
+opened, sought and read the file: every saved gametype's name, path and
+variant the menus asked for, some thirty times a second while a gametype
+list was up on the Switch, each one also a stat of every folder of its
+path. Every change to the file is made here (the enumeration's rewrite of
+it, and set_nth_entry_in_mapfile, remove_nth_entry_in_mapfile and
+append_entry_to_mapfile), and each forgets the copy; the next lookup reads
+the file again, whole, once. */
+/* (counted, for the gametype blocks kept by their index: playlist_profile.c) */
+static unsigned long mapfile_copy_generation;
+
+static void mapfile_copy_forget(
+	void)
+{
+	mapfile_copy.valid = FALSE;
+	mapfile_copy_generation++;
+}
+
+/* port: a number that changes whenever the index of the saved games may have
+(an entry added, removed, changed, or the whole rewritten): what is kept of
+a saved game by its index is good while it is the same */
+unsigned long saved_game_files_index_generation(
+	void)
+{
+	return mapfile_copy_generation;
+}
+
+/* the copy, read if it is not there (with the mapfile mutex held, and no
+enumeration writing the file); FALSE if the file cannot be read */
+static boolean mapfile_copy_read(
+	word memory_unit_index)
+{
+	struct file_reference mapfile;
+	unsigned long mapfile_size;
+	long count;
+	boolean success = FALSE;
+
+	if (mapfile_copy.valid)
+		return TRUE;
+	if (file_reference_create_from_path(&mapfile, memory_unit_mapfile_path[memory_unit_index], FALSE) &&
+		file_open(&mapfile, FLAG(_permission_read_bit)))
+	{
+		mapfile_size = file_get_eof(&mapfile);
+		if (mapfile_size % sizeof(struct enumerated_saved_game_file))
+		{
+			error(_error_silent, "memory unit mapfile for memory unit #%d is possibly corrupt", memory_unit_index);
+		}
+		count = (long)(mapfile_size / sizeof(struct enumerated_saved_game_file));
+		if (count > MAXIMUM_ENUMERATED_SAVED_GAME_FILES_ANY_TYPE_PER_MEMORY_UNIT)
+			count = MAXIMUM_ENUMERATED_SAVED_GAME_FILES_ANY_TYPE_PER_MEMORY_UNIT;
+		if (!mapfile_copy.entries)
+		{
+			mapfile_copy.entries = malloc(MAXIMUM_ENUMERATED_SAVED_GAME_FILES_ANY_TYPE_PER_MEMORY_UNIT *
+				sizeof(struct enumerated_saved_game_file));
+		}
+		if (mapfile_copy.entries &&
+			(count == 0 || (file_set_position(&mapfile, 0) &&
+			file_read(&mapfile, (unsigned long)count * sizeof(struct enumerated_saved_game_file), mapfile_copy.entries))))
+		{
+			mapfile_copy.count = count;
+			mapfile_copy.valid = TRUE;
+			success = TRUE;
+		}
+		file_close(&mapfile);
+	}
+
+	return success;
+}
+
 static boolean enumerate_saved_game_files_start(
 	word memory_unit)
 {
+	mapfile_copy_forget(); /* port */
 	match_assert(
 		"c:\\halo\\SOURCE\\saved games\\saved_game_files.c",
 		1643,
@@ -2106,6 +2210,7 @@ static boolean enumerate_saved_game_files_end(
 		error(_error_silent, "failed to close memory unit mapfile for memory unit #%d", memory_unit);
 	}
 
+	mapfile_copy_forget(); /* port */
 	saved_game_files_globals.next_enumerated_profile_index = NONE;
 	saved_game_files_globals.enumeration_in_progress = FALSE;
 
@@ -2237,6 +2342,16 @@ static long count_enumerated_profiles_in_mapfile(
 		2147,
 		memory_unit_index < NUMBER_OF_MEMORY_UNITS);
 
+	/* port: the copy's count, the file read whole once (mapfile_copy) */
+	if (saved_game_files_take_mapfile_mutex())
+	{
+		boolean read = mapfile_copy_read(memory_unit_index);
+
+		number_of_entries = read ? mapfile_copy.count : NONE;
+		saved_game_files_release_mapfile_mutex();
+		if (read)
+			return number_of_entries;
+	}
 	if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
 			memory_unit_mapfile_path[memory_unit_index], FALSE) &&
 		file_get_size(&saved_game_files_globals.memory_unit_mapfile, &mapfile_size))
@@ -2454,6 +2569,7 @@ static boolean append_entry_to_mapfile(
 
 	if (saved_game_files_take_mapfile_mutex())
 	{
+		mapfile_copy_forget(); /* port */
 		if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
 				memory_unit_mapfile_path[memory_unit_index], FALSE) &&
 			file_open(&saved_game_files_globals.memory_unit_mapfile, FLAG(_permission_write_bit)))
@@ -2533,6 +2649,7 @@ static boolean remove_nth_entry_in_mapfile(
 
 	if (saved_game_files_take_mapfile_mutex())
 	{
+		mapfile_copy_forget(); /* port */
 		if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
 				memory_unit_mapfile_path[memory_unit_index], FALSE) &&
 			file_get_size(&saved_game_files_globals.memory_unit_mapfile, &mapfile_size) &&
@@ -2608,7 +2725,20 @@ static boolean get_nth_entry_in_mapfile(
 
 	if (saved_game_files_take_mapfile_mutex())
 	{
-		if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
+		/* port: from the copy (mapfile_copy), the file read whole once */
+		if (mapfile_copy_read(memory_unit_index))
+		{
+			if ((long)n < mapfile_copy.count)
+			{
+				*file = mapfile_copy.entries[n];
+				success = TRUE;
+			}
+			else
+			{
+				error(_error_silent, "invalid profile index (#%d) into memory unit #%d specified", n, memory_unit_index);
+			}
+		}
+		else if (file_reference_create_from_path(&saved_game_files_globals.memory_unit_mapfile,
 				memory_unit_mapfile_path[memory_unit_index], FALSE) &&
 			file_open(&saved_game_files_globals.memory_unit_mapfile, FLAG(_permission_read_bit)))
 		{

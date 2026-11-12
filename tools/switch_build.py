@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .android_build import (ANDROID_API, ANDROID_DEFINES, GUEST_CODE_FLAGS, MUSL_DIRECTORIES, MUSL_EXCLUDE,
+from .android_build import (ANDROID_API, ANDROID_DEFINES, GUEST_CODE_FLAGS, MUSL_DIRECTORIES, MUSL_EXCLUDE, compiler_include,
                             MUSL_FILES, MUSL_THREAD_PREFIXES, MUSL_URL, MUSL_VERSION, VARIADIC_PROTOTYPE_FILES,
                             ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES,
                             _musl_sources, _find_ndk, fetch_third_party, guest_abi_flags)
@@ -231,8 +231,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     nacp_author = "thelinkin3000, nx-mod"
     nacp_version = "1.6.0-nx"
     # The icon does not go in the NACP: it is an asset, embedded by elf2nro
-    # below. A 256x256 JPEG, converted from the same master the Android icon
-    # comes from (port/android/art/android-icon.png, via tools/android_icon.py),
+    # below. A 256x256 JPEG, made from the same logo as the Android icon
+    # (tools/slipstream_icon.py),
     # so the launcher on the console and the one on the phone show the same
     # picture rather than two pictures that happen to be a port of each other.
     # absolute, for the same reason the paths below are: elf2nro reports
@@ -489,6 +489,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     libc_includes = [
         f"-isystem {libc_include}", f"-isystem {arch}", f"-isystem {arch_generic}", f"-isystem {MUSL_DIR}/arch/generic",
         f"-isystem {MUSL_DIR}/include",
+        f"-idirafter {compiler_include(guest_cc)}",
     ]
 
     musl_cflags = " ".join([

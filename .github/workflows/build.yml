@@ -83,7 +83,7 @@ jobs:
       - name: Install the toolchain
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-          pacman -Syu --noconfirm --needed git zstd python python-pytest python-pillow python-numpy python-scipy ninja ccache \
+          pacman -Syu --noconfirm --needed git zstd python python-pytest python-pytest-xdist python-pillow python-numpy python-scipy ninja ccache \
             clang lld gcc lib32-glibc lib32-gcc-libs cmake pkgconf wayland
 
       - uses: actions/checkout@v4
@@ -115,12 +115,14 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_static_geometry.py tools/test_android_render_policy.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/harness tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
+          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_static_geometry.py tools/test_android_render_policy.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
+          # the harness's cases are independent (each builds in its own folder): across the runner's cores
+          python -m pytest -q -n auto tools/harness
           # the dedicated server: --version, and --server without maps refused (exit code 2); its cases with
           # clients need the retail maps, and are skipped
           python -m pytest -q tools/test_dedicated_server.py
           python tools/test_light_storage.py
-          python -m pytest -q tools/test_controller_buttons.py tools/test_controller_remap.py tools/test_hud_button_style.py tools/test_hud_corrections.py
+          python -m pytest -q tools/test_controller_buttons.py tools/test_controller_remap.py tools/test_controller_remap_context.py tools/test_hud_button_style.py tools/test_hud_corrections.py
 
       - name: Compile cache
         run: ccache --show-stats
@@ -340,10 +342,23 @@ jobs:
       - name: Compile cache
         run: ccache --show-stats
 
+      # (the bridge from the old package name, the file every installed build's updater asks for: Migration.java)
       - uses: actions/upload-artifact@v4
         with:
           name: halo-android-debug
           path: dist/halo-android-debug
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slipstreamce-android-debug
+          path: dist/slipstreamce-android-debug
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slipstreamce-android-release
+          path: dist/slipstreamce-android-release
           retention-days: 3
 
       - uses: actions/upload-artifact@v4
@@ -781,7 +796,9 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: halo-*
+          # (slipstreamce-android-* is the game itself, which the bridge in
+          # halo-android-* downloads: without it, Android players are stuck)
+          pattern: "{halo,slipstreamce}-*"
           path: artifacts
 
       - name: Package
@@ -792,12 +809,23 @@ jobs:
             # the Switch's and the PS5's stored, not deflated: their updaters
             # (port/switch/host/host_update.c, in every build installed so
             # far, and port/ps5/host/host_update_ps5.c) unpack stored entries
-            # only
+            # only (the slipstreamce- names are the ones their updaters look
+            # for first, for when the zips take them)
             case "$name" in
-              halo-switch*|halo-ps5*) level=-0 ;;
+              halo-switch*|halo-ps5*|slipstreamce-switch*|slipstreamce-ps5*) level=-0 ;;
               *) level= ;;
             esac
             (cd "$build" && zip $level -qr "$GITHUB_WORKSPACE/release/$name.zip" .)
+          done
+          # (what the updaters ask for: a release without one strands its
+          # players, so it is not published)
+          for required in halo-android slipstreamce-android; do
+            for flavor in release debug; do
+              if [ ! -f "release/$required-$flavor.zip" ]; then
+                echo "::error::the release has no $required-$flavor.zip"
+                exit 1
+              fi
+            done
           done
           python3 tools/ci_build.py sums release
           ls -l release
@@ -999,7 +1027,7 @@ jobs:
             title="Build failed"; color=15548997
           fi
           latest="$SERVER/$REPOSITORY/releases/latest"
-          downloads="[Android]($latest/download/halo-android-release.zip) · [Switch]($latest/download/halo-switch-release.zip) · [PS5]($latest/download/halo-ps5-release.zip) ([all builds]($latest))"
+          downloads="[Android]($latest/download/slipstreamce-android-release.zip) · [Switch]($latest/download/halo-switch-release.zip) · [PS5]($latest/download/halo-ps5-release.zip) ([all builds]($latest))"
           if [ -n "$RELEASE_TAG" ]; then
             release="[$RELEASE_TAG]($SERVER/$REPOSITORY/releases/tag/$RELEASE_TAG)"
             if [ "$PAGES" = success ]; then

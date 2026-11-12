@@ -181,12 +181,22 @@ struct nv2a_pixel_shader_key
 	meters' (shader_transparent_meter) */
 	unsigned char source_blend;
 	/* A CE meter draw sampling a sheet also used as ordinary artwork. (Here,
-	past the 256 bytes the Switch's shader cards keep of a key and hash,
-	port/switch/guest/dk_shaders.c: deko3d never sets it; padded to whole
-	words, which the OpenGL and Vulkan renderers hash the key by) */
+	past the 256 bytes the Switch's shader cards keep of a key: deko3d keeps
+	it in a record's spare byte and hashes it only when it is set,
+	port/switch/guest/dk_shaders.c; padded to whole words, which the OpenGL
+	and Vulkan renderers hash the key by) */
 	unsigned char ce_meter_channels;
-	unsigned char ce_meter_padding[3];
+	/* The dynamic lighting's model variant (XGPU_PLASMA_MODEL_*; 0 for the
+	stock shader, whose key and hash this leaves as they were). The Vulkan
+	renderer's: under deko3d only vertex shaders have the variant. */
+	unsigned char plasma_model;
+	unsigned char ce_meter_padding[2];
 };
+
+/* what a model lighting program's variant adds (plasma_model_shader.c):
+the selected lights' soft falloff, and the visibility fields too */
+#define XGPU_PLASMA_MODEL_FALLOFF 1u
+#define XGPU_PLASMA_MODEL_OCCLUSION 2u
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);
 
@@ -363,6 +373,14 @@ void xgpu_static_range_remove(const void *start, int indices);
 BSP's among them, which the game lets go only later, after the next map's
 data may have been read over it) */
 void xgpu_static_forget_all(void);
+/* the visibility tests ended at an index so far, and the number (from 1) of
+the one whose count GetVisibilityTestResult last gave there, 0 for none. A
+test's count is read two or more frames after it, and never for one dropped
+(no batch free), and until then the index gives an earlier test's: a lens
+flare's slot is read only once a count of the flare's own tests has come
+(rasterizer_lights.c; d3d8_gl.c) */
+unsigned long long xgpu_visibility_tests_ended(unsigned long index);
+unsigned long long xgpu_visibility_test_counted(unsigned long index);
 /* fills the corners x0, y0 to x1, y1 of the window (row 0 at the bottom)
 with color, as it is (an HDR display's scRGB framebuffer: linear, 1.0 at 80
 nits), or only the ring ring[0], ring[1] (its centre in the window), from

@@ -535,7 +535,10 @@ void input_abstraction_update(
 			boolean dpad_left_moves = TRUE;
 
 			player_look_yaw_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].yaw_rate;
-			player_look_pitch_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].pitch_rate;
+			/* port: the turn up and down a setting of its own, else Look Sensitivity's
+			(halo_stick_pitch_rate) */
+			player_look_pitch_rate[controller_index] = halo_stick_pitch_rate((short)controller_index,
+				input_abstraction_globals.player_control_preferences[controller_index].pitch_rate);
 			{
 				real scale;
 

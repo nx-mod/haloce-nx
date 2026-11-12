@@ -3068,9 +3068,9 @@ static boolean multiplayer_level_list_initialize(
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
 	/* port: the Xbox levels, then the Custom Edition maps in the maps
-	folders, looked for again as the list opens
+	folders, looked for again as the list opens if their names have changed
 	(port/linux/game/custom_edition_maps.c) */
-	custom_edition_maps_look_again();
+	custom_edition_maps_look_again_if_changed();
 	levels = custom_edition_maps_level_list(event_handler_functions.multiplayer_levels, level_count,
 		&level_count);
 	widget->generated_list = levels;

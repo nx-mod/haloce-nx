@@ -34,6 +34,7 @@ long light_new_unattached(
 	real_vector3d const *direction,
 	real scale);
 void light_delete(long light_index);
+void lights_submit_queued_lens_flares(void); /* port: after the sky */
 void lights_queue_lens_flare(
 	long lens_flare_definition_index,
 	real_point3d const *position,
@@ -52,6 +53,7 @@ void lights_illumination_at_point(union real_point3d const *point, struct locati
 
 void light_disconnect_from_map(long light_index);
 void light_reconnect_to_map(long light_index);
+void light_move_with_object(long light_index);
 void lights_disconnect_from_structure_bsp(
 	void);
 void lights_reconnect_to_structure_bsp(

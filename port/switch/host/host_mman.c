@@ -356,6 +356,17 @@ int host_mman_low_code_mode(void)
 	return low_code_mode;
 }
 
+/* the end of the range the guest's memory below 4 GB can be mapped in: the
+stack region's, where svcMapMemory maps it; anywhere below 4 GB where it is
+code memory or aliased heap (low code mode) */
+uint64_t host_mman_guest_limit(void)
+{
+	learn_regions();
+	if (low_code_mode || !stack_region_end || stack_region_end > 0x100000000ULL)
+		return 0x100000000ULL;
+	return stack_region_end;
+}
+
 /* whether svcMapMemory will take the range */
 static int ordinary_allowed(const void *address, size_t length)
 {

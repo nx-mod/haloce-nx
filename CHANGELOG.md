@@ -1,5 +1,139 @@
 # Changelog
 
+## Build 141
+
+### Dynamic lighting
+
+- New LIGHTING setting at the top of Video Setup > Dynamic Lighting: STOCK, 1X, 1.5X, 2X or 3X. STOCK, the default, is the same lighting as the original Xbox: every added light is off and the other options are hidden, keeping their settings for when you pick a level again. 1X to 3X make every dynamic light (projectiles, muzzle flashes, weapon glow, Needler prongs, shield emitters, vehicle lights, world emitters and shield glow) reach that much farther and shine that much brighter, its color kept. Online, each player's own level applies, except Shield Glow, which is still the host's choice. If you already had dynamic lights on, you keep them at 1X. (thelinkin3000)
+- Big fights cost less with dynamic lighting on: a light's occlusion rays are shared between the game thread and helper threads, moving lights are traced while the frame draws, occlusion uses faster math, and the ammo counter's light, Covenant emitters and objects standing still take less work each frame. (thelinkin3000)
+- Switch: every light ray helper thread now runs; only one of them ever did. (thelinkin3000)
+
+### Menus
+
+- The menus no longer stall on the SD card. Select Map and Select Gametype load in the background and say LOADING until they're ready; opened again, they're there at once. (thelinkin3000)
+- The campaign menus no longer read the whole 20 MB savegame each time they open: it's checked once, in the background, while the main menu is up. The saved games' index, gametype files, mods and the main menu's mod textures are kept in memory instead of read again and again. (thelinkin3000)
+- The maps folders are scanned again only when what's in them changes, and mods are found once a run (or when the Mods menu changes them), not at every map load. (thelinkin3000)
+- Startup touches the card less: unchanged default gametypes aren't rewritten, and shader caches are read in larger blocks. (thelinkin3000)
+- Android: Video Setup's last rows no longer overlap the help at the bottom. The Vulkan Driver's help now says it takes effect the next time the game starts. (thelinkin3000)
+
+### Split screen
+
+- Join a multiplayer match in progress: a controller with no player presses START, picks a profile in the box that opens in its quarter of the screen, and gets its own view. A player who leaves loses their view, and the others fill the screen. (thelinkin3000)
+- ADD PLAYER shows each profile's Spartan in its color. Player 1's controller can join when another controller started the game, and choosing a profile no longer sends players 2-4 to the title screen. (thelinkin3000)
+- Switch: a controller's face buttons follow the console's layout only while that player's own menu is up. (thelinkin3000)
+- The join box no longer opens during a replay. (thelinkin3000)
+
+### Android
+
+- On first start, the launcher asks where the game data goes: the app's own storage, as before, or a folder you choose. A folder that already has the stock maps starts at once; otherwise the disc image is extracted into it. A new `game.mods.path` setting says where the mods folder is. (thelinkin3000)
+- Settings > Audio Setup > Sound Processing has a new REALTIME AUDIO switch, on by default. Turn it off for screen recordings: on phones with low latency audio they came out silent. (thelinkin3000)
+
+### Fixes
+
+- Switch: big maps such as SPV2's a50 load again. They failed with an out-of-memory error, with plenty of memory free. (thelinkin3000)
+- A projectile whose owner was deleted mid-flight (a body cleaned up, a respawned vehicle) no longer stops the game when it hits something. (thelinkin3000)
+
+## Build 140: Dynamic lighting, and better Custom Edition maps!
+
+### Dynamic lighting
+
+- New: dynamic lighting, ported from GulchCE, on Vulkan (Android) and the Switch. Plasma bolts, rockets, muzzle flashes, held energy weapons, the Assault Rifle's ammo counter, Needlers, fuel rods, Jackal and Covenant shields, vehicles, powerups and teleporters can light what's around them, and energy shields glow onto their surroundings as they flare. Turn each one on in Video Setup > Dynamic Lighting; they're all off by default. (ported by thelinkin3000, thanks a lot Chester!)
+- Light Occlusion: dynamic lights stop at walls and vehicles instead of shining through them. On Android, Occluded Lights sets how many lights a frame get it (8, 6 or 4, 6 by default); fewer is faster on a slower phone. (thelinkin3000)
+- Dynamic lighting is tuned to keep big fights smooth: held weapons and moving lights trace far fewer rays, weapon lights always leave room for other lights, lights that can't reach your view or are far away stay as the game draws them, and a light on a moving object no longer rebuilds its place in the level every tick. (thelinkin3000)
+
+### Custom Edition maps
+
+- HUDs on Custom Edition maps now draw on Vulkan (Android) and the Switch as they do on OpenGL: ammo counters and health and shield meters drawn from sheets the map shares with other HUD art show correctly, and segmented high-res meters keep their steps sharp. With High-Res HUD on, the original HUD sheets that have no high-res redraw are drawn four times larger and smoother. (thelinkin3000, from chestahh's fix for OpenGL)
+- Android: DELETE on New Game's and the Map screen's map lists deletes the custom map or folder of maps chosen, after a second press to confirm. Only custom maps can be deleted. (thelinkin3000)
+- Android: on phones whose GPU can't use the game's compressed (DXT) textures, like the Nokia 8's Adreno 540 and Mali GPUs, most textures now take a quarter of the memory they did. Big Custom Edition maps such as the_Cage no longer run the phone out of memory while they load. To go back, set `display.dxt1_astc` to `false` in `config.toml`. (thelinkin3000)
+- Switch: very large textures (over 8 MB once unpacked) are drawn again. On the_Cage the pistol's zoom showed garbage instead of its scope, and the large 3D texture the game's own dynamic lights fade with was never drawn. (thelinkin3000)
+- Custom Edition maps: a custom_maps folder with no maps of its own, only folders of maps, no longer stops the game while it looks for maps. (thelinkin3000)
+
+### Theater and replays
+
+- Theater: once the player keeps moving, the cinematic camera now follows them at the left stick's distance, instead of chasing them in surges. It still stays put like a tripod while they stand or make short moves. (thelinkin3000)
+- Theater: the cinematic and free cameras no longer pass through trees, rocks, crashed ships and other scenery and machines, or see the player through them. (thelinkin3000)
+- Replays: rewinding a co-op replay no longer leaves players sliding along in a cutscene's pose, or misses doors, sounds and scenery animations. (thelinkin3000)
+- Replays: the watched player's weapon lights are lit as their own first-person weapon's, and lights in a replay measure their distance from the replay's camera. (thelinkin3000)
+
+### Controls and menus
+
+- Touch controls: a new "Show during cutscenes" switch in Options > General keeps the controls on screen while a cutscene plays. Press A to skip it then. (thelinkin3000)
+- Gamepads: a profile's Gamepads has VERTICAL SENSITIVITY, which sets how fast the right stick turns the view up and down on its own. SAME keeps the game's, half of Look Sensitivity. (thelinkin3000)
+- Server browser: the PING column sorts, lowest first, then highest. (thelinkin3000)
+- Menus: the PC menus are always in English. They showed in Spanish when the `loc.map` in custom_maps came from a Spanish Custom Edition. (thelinkin3000)
+- Android: the first time this build starts, it makes the files in the game's folder readable and writable by everyone, on Android versions that allow it. (thelinkin3000)
+
+### Graphics and performance
+
+- Vulkan and Switch: decals on surfaces seen at an angle, like the Pelican's red side lights, no longer sink into the surface in slivers at higher resolutions. (thelinkin3000, from Erik's fix for OpenGL)
+- Switch: a lens flare no longer reads another test's visibility, which could show or hide it wrongly. (thelinkin3000)
+- Decals are drawn in fewer, larger batches, and a network client stops asking for the host's address every frame. Big matches run lighter, especially on the Switch. (thelinkin3000)
+
+### From OpenCE
+
+#### Graphics
+
+- Lens flares are each tested for visibility on their own, so one no longer takes another's. (Erik)
+- Decals keep the Xbox's depth bias at any depth and screen size. (Erik)
+- A scope's zoom blur reaches the left and top edges of the screen. (Erik)
+- The Xbox scope's 2x and 10x labels are sized to match the stock glyphs. (Erik)
+- Chapter titles stay on the side they're aligned to on a widescreen. (Erik)
+- Between game ticks, shadows stay under their objects, camera shake shows on every frame, flags' cloth moves with its pole, lightning bolts keep their shape, and contrails age at the game's own pace. (Erik)
+- An empty-handed player's flashlight shines from where their body is drawn. (Erik)
+- The first-person weapon's quick animations, like melee, are smoothed between ticks. (Guven)
+
+#### Sound
+
+- Sounds have the Doppler effect: their pitch shifts as they move toward or away from you. (trevorm7)
+- A voice the game cuts off fades out instead of stopping dead, without a click. (trevorm7)
+
+#### Controls
+
+- Each controller stick's dead zone can be set, in percent. (Guven)
+- Remapped controls navigate the main menu correctly, and custom layouts have a Cycle Camera action. (chestahh)
+
+#### Multiplayer
+
+- Server browser: hosts are timed in the order shown, a row shows moving dots while its host is timed, and REFRESH shows the timing again. Probes wait at most a second for the listings. (medic-code, MrBruh)
+- Discord Account's LINK opens the master server's page when a server asked for one. (MrBruh)
+- Dedicated servers: custom maps whose file names have capitals can be played, and the web page's PLAY NOW starts rotation entries with many rules. (Guven)
+
+#### Fixes
+
+- A script that refers to an object that no longer exists gets none instead of crashing the game. (Guven)
+
+## Build 138: Hotfix for input lag
+
+- Switch: much less input lag. In our tests, the time from the stick moving to the view turning went from about 102 ms to about 67 ms. In first person on foot, the view now follows your stick on the frame you move it, and the game reads your input later, just before it's needed. To go back, set `display.direct_camera` to `false` or `debug.frame_pace_ahead` to `true` in `config.toml`. (thelinkin3000)
+- Android: in first person on foot, the view now follows your aim on the frame you move it, instead of up to two game ticks later. To go back, set `display.direct_camera` to `false` in `config.toml`. (thelinkin3000)
+- Android: Build 136 left out the new SlipstreamCE app, so the old Halo app said "The new game could not be found." The app is included now. Open the old Halo app and it downloads the new one. Your saves and settings are still in the old app until the new one copies them, so don't remove the old app before that. (thelinkin3000)
+- If you're updating from before Build 136, its notes still apply: Switch players should rebuild their forwarders, and PS5 players should uninstall the game from the home screen so ShadowMountPlus loads it again with the correct name and icon. (thelinkin3000)
+
+## Build 137: Hotfix for the Android download
+
+- Android: Build 136 left out the new SlipstreamCE app, so the old Halo app said "The new game could not be found." The app is included now. Open the old Halo app and it downloads the new one. Your saves and settings are still in the old app until the new one copies them, so don't remove the old app before that. (thelinkin3000)
+- If you're updating from before Build 136, its notes still apply: Switch players should rebuild their forwarders, and PS5 players should uninstall the game from the home screen so ShadowMountPlus loads it again with the correct name and icon. (thelinkin3000)
+
+## Build 136: Halo is now SlipstreamCE!
+
+- SlipstreamCE: this fork of OpenCE has a new name and a new logo, by puginatux, on Android, Switch and PS5. The project is now at github.com/thelinkin3000/SlipstreamCE, and old links redirect there. Your saves and settings stay yours on every platform. (thelinkin3000)
+- Switch: because the game's name and icon are changing, rebuild your forwarder if you start the game from one on your homescreen. Until you do, it keeps the old name and icon. The game stays at `/switch/halo/halo.nro`. (thelinkin3000)
+- Switch: builds older than v94 can no longer update themselves. If you're on one, install this release by hand. (thelinkin3000)
+- PS5: because the game's name and icon are changing, uninstall the game from the home screen after this update. ShadowMountPlus then loads it again with the correct name and icon. (thelinkin3000)
+- Android: the game is now a new app, SlipstreamCE (`ar.com.slipstreamce`), because Android can't change an installed app's package name. Your update to the old Halo app downloads the new one and offers to install it. The first time it starts, the new app copies your saves, settings, mods, replays, maps and touch layouts. Don't remove the old app until the new one offers to remove it. (thelinkin3000)
+- Multiplayer Color: your Spartan is now the game's real model in your color, holding the assault rifle, the plasma rifle and the skull in turn. The right stick turns him, the north button changes what he holds, and he walks when left alone. Select Profile shows him too. Without `wizard.map`, the screens keep their picture. (thelinkin3000)
+- Theater: the cinematic camera now stays in place like a tripod, turning, framing and zooming to follow the player, and moves only when they get far away. It cuts to a new spot when it loses sight of them, and brings whoever is hurting them into frame. The free camera backs away from corners. (thelinkin3000)
+- Settings: a new CREDITS page lists the licenses the game uses, beside the logo. The full license texts come with each release. (thelinkin3000)
+- Settings: About says what this is, for your platform, and shows the logo. (thelinkin3000)
+- Menus: new icons for Audio, Video, Network, Gameplay, Internet, LAN and Gametypes. (thelinkin3000)
+- Main menu: the corner now shows SlipstreamCE and the build number. (thelinkin3000)
+- Theater: pressing left in the Theater with no replays no longer crashes the game. (thelinkin3000)
+- Custom Edition maps: the flamethrower is now a flamethrower on Custom Edition maps, instead of turning into a rocket launcher. The Classic and Covenant weapon sets treat it to match. (thelinkin3000)
+- Switch: mod models with a lot of detail no longer fill the frame's upload buffer, which left the world flat and overbright and could drop the HUD, in replays with many players and bodies in view. In a Blood Gulch replay, 7 seconds of lost frames went to none. (thelinkin3000)
+- Switch: removed a wrong warning that Custom Edition maps can't run on some consoles. (thelinkin3000)
+- HUD: the timing counter left on by The Library's and The Maw's last cutscenes no longer sits over your ammo count. (thelinkin3000)
+
 ## Build 135: Hotfix for the Turnip crash, and mod packs import!
 
 - Vulkan: on some phones with the Turnip driver (an Adreno 750 phone, for one), the game crashed a moment after it started drawing at the screen's size. It was a bug in the driver, which the game no longer runs into. (thelinkin3000)

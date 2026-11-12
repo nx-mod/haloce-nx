@@ -83,7 +83,7 @@ RADV_ZLIB_VERSION = "1.3.1"
 
 # this repository, which the notice names at the build's commit, and which
 # the updater asks for releases (port/ps5/host/host_update_ps5.c)
-REPOSITORY_URL = "https://github.com/thelinkin3000/halo-ce-universal"
+REPOSITORY_URL = "https://github.com/thelinkin3000/SlipstreamCE"
 
 TITLE_ID = "PPSA99500"
 PORT_DIR = Path("port/ps5")
@@ -283,7 +283,7 @@ def this_commit() -> str:
 def notice_text(commit: str) -> str:
     """NOTICE.txt: what the title is built from, under which licences, and
     where its source is; made from the pins at every build (ps5_notice)"""
-    return f"""Halo: Combat Evolved for the PS5 ({TITLE_ID})
+    return f"""SlipstreamCE, Halo: Combat Evolved for the PS5 ({TITLE_ID})
 
 This title is a work under the GNU General Public License, version 3 or
 (at your option) any later version, as a whole: it is linked with parts
@@ -804,10 +804,7 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
     n.rule(name="ps5_copy", command="mkdir -p $$(dirname $out) && cp $in $out", description="PS5 COPY $out")
     param = title / "sce_sys" / "param.json"
     icon = title / "sce_sys" / "icon0.png"
-    # The icon is made once from the Android master, and committed, as the
-    # Switch's icon.jpg is:
-    #   python3 -c "from PIL import Image; Image.open('port/assets/icon/opence-icon.png').convert('RGBA')
-    #       .resize((512, 512), Image.LANCZOS).save('port/ps5/sce_sys/icon0.png', optimize=True)"
+    # The icon is committed, as the Switch's icon.jpg is: tools/slipstream_icon.py makes them
     check_content_version(PORT_DIR / "sce_sys" / "param.json", os.environ.get("HALO_BUILD_NUMBER", "0"))
     n.build(outputs=param, rule="ps5_copy", inputs=root / PORT_DIR / "sce_sys" / "param.json")
     n.build(outputs=icon, rule="ps5_copy", inputs=root / PORT_DIR / "sce_sys" / "icon0.png")

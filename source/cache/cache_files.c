@@ -695,6 +695,13 @@ void scenario_tags_unload(
 
 		mods_tags_unloaded();
 	}
+	/* port: the menus' Spartan goes, before the menus' table it extends
+	(port/linux/game/menu_chief.c) */
+	{
+		extern void menu_chief_tags_unloaded(void);
+
+		menu_chief_tags_unloaded();
+	}
 	/* port: the menus' tags go, and the map's own table comes back
 	(port/linux/game/menu_tags.c): after the texture cache, which writes to
 	the bitmaps it has loaded as it closes, theirs among them */
@@ -1111,6 +1118,18 @@ map's build, empty if unread. The multiplayer menus check the loaded map's
 (ui.map's) build; this checks a multiplayer map's own, which may be of
 another build: the object and damage messages name definitions by tag
 index, which differs between builds */
+/* port: the answers, by map, for the run: asked at every update of a
+lobby's game settings, each an open of the map on the card, which waited
+for the card behind the lobby's copy of the map (precaching) */
+#define MAP_PLAYS_KEPT 16
+static struct
+{
+	char name[64];
+	char build[0x20];
+	boolean result;
+} map_plays_kept[MAP_PLAYS_KEPT];
+static short map_plays_next;
+
 boolean cache_files_map_plays_multiplayer(
 	char const *map_name,
 	char build[0x20])
@@ -1119,6 +1138,8 @@ boolean cache_files_map_plays_multiplayer(
 	char path[256];
 	HANDLE file;
 	boolean result = TRUE;
+	boolean read = FALSE;
+	short index;
 
 	build[0] = 0;
 	if (!map_name || !map_name[0])
@@ -1128,6 +1149,14 @@ boolean cache_files_map_plays_multiplayer(
 	header's build is Halo PC's, not one to check */
 	if (custom_edition_level_name(map_name))
 		return TRUE;
+	for (index = 0; index < MAP_PLAYS_KEPT; index++)
+	{
+		if (map_plays_kept[index].name[0] && !csstrcasecmp(map_plays_kept[index].name, map_name))
+		{
+			csmemcpy(build, map_plays_kept[index].build, 0x20);
+			return map_plays_kept[index].result;
+		}
+	}
 	snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 	if (file != INVALID_HANDLE_VALUE)
@@ -1141,8 +1170,17 @@ boolean cache_files_map_plays_multiplayer(
 			csstrncpy(build, header.build, 0x20);
 			build[0x1F] = 0;
 			result = cache_files_build_region(header.build) != NULL;
+			read = TRUE;
 		}
 		CloseHandle(file);
+	}
+	/* (kept only once read: a map not there yet is asked of the card again) */
+	if (read && csstrlen(map_name) < sizeof(map_plays_kept[0].name))
+	{
+		csstrcpy(map_plays_kept[map_plays_next].name, map_name);
+		csmemcpy(map_plays_kept[map_plays_next].build, build, 0x20);
+		map_plays_kept[map_plays_next].result = result;
+		map_plays_next = (short)((map_plays_next + 1) % MAP_PLAYS_KEPT);
 	}
 
 	return result;
@@ -1495,6 +1533,12 @@ long scenario_tags_load(
 				extern void menu_tags_loaded(char const *map_name);
 
 				menu_tags_loaded(cache_file_globals.header.name);
+			}
+			/* port: the menus' Spartan, from another map (port/linux/game/menu_chief.c) */
+			{
+				extern void menu_chief_tags_loaded(char const *map_name);
+
+				menu_chief_tags_loaded(cache_file_globals.header.name);
 			}
 			/* port: the bitmaps the high-res HUD stands for (port/linux/game/hud_hires_tags.c) */
 			{

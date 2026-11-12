@@ -52,6 +52,14 @@ int host_errno(void);
 /* the end of a frame on the thread that presents: the datagrams it held to
 send together are sent (host_net.c) */
 void host_net_frame_end(void);
+/* the guest's use of the card, logged with the profiler on (host_syscall.c) */
+void host_sd_activity_start(int on);
+void host_sd_activity_frame(void);
+/* whether the calling thread is the game's (host_thread.c) */
+int host_on_game_thread(void);
+/* (another thread's bulk transfer, before it takes the card's lock: the game
+thread's use of the card first, host_main.c) */
+void host_sd_defer_to_game(void);
 void host_sd_lock(void);
 void host_sd_unlock(void);
 /* write the SD card's journal, so a file closed by the guest is still there
@@ -138,6 +146,8 @@ void host_memory_log_regions(void);
 /* whether the guest's memory below 4 GB has to be code memory, svcMapMemory
  * mapping nowhere there (host_mman.c) */
 int host_mman_low_code_mode(void);
+/* the end of the range below 4 GB that guest memory can be mapped in */
+uint64_t host_mman_guest_limit(void);
 
 /* Whether this port has set [address, address+size) aside, for the image, a
  * pool or the window. host_mman's allocator asks this before handing an
@@ -268,6 +278,8 @@ int host_dk_hud_decode(const unsigned char *data, uint32_t size, struct host_dk_
 the present of the frame before it (host_dk_pace, from the stand-in
 window's swap) */
 extern int host_dk_frame_pacing;
+/* debug.frame_pace_ahead: the frames the game may be ahead of the presents, 1 or 0 */
+extern int host_dk_pace_ahead;
 void host_dk_pace(void);
 /* debug.gpu_experiment: what-ifs that measure what part of the GPU's time a
 change could take back, comma-separated: "no_compression" (render targets

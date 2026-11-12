@@ -116,9 +116,9 @@ static unsigned long keystroke_head, keystroke_count;
 /* the system's on-screen keyboard shown or hidden as wanted (Steam's, or
 Android's) */
 static void screen_keyboard_update(void);
-#ifndef HALO_ANDROID
-/* dsound_sdl.c's: the output device followed */
+/* dsound_sdl.c's: the output device (and Android's realtime audio) followed */
 void dsound_sdl_output_device_check(void);
+#ifndef HALO_ANDROID
 /* updater.c's: the desktop self-updater */
 void updater_start(void);
 void updater_poll(SDL_Window *window);
@@ -2321,9 +2321,10 @@ void platform_pump_events(void)
 #endif
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);
-	/* (Settings > Audio's output device, as it changes: dsound_sdl.c) */
-	dsound_sdl_output_device_check();
 #endif
+	/* (Settings > Audio's output device, and Android's realtime audio, as
+	they change: dsound_sdl.c) */
+	dsound_sdl_output_device_check();
 	screen_keyboard_update();
 	pthread_mutex_lock(&input_lock);
 #ifndef HALO_ANDROID

@@ -14,9 +14,11 @@ from the pad (its message boxes are notifications), and the user asked for
 the updates to be automatic.
 
 The check is GitHub's answer for the latest release (its "tag_name"), and
-the download its halo-ps5-<release|debug>.zip, both through posix_update.c's
-update_download (HTTPS with Mbed TLS, redirects followed, the certificate
-and the host's name always checked) into the data folder. The console has
+the download its slipstreamce-ps5-<release|debug>.zip, or its
+halo-ps5-<release|debug>.zip if GitHub answers 404 for that one (the name the
+zips have until they take the new one), both through posix_update.c (HTTPS
+with Mbed TLS, redirects followed, the certificate and the host's name always
+checked) into the data folder. The console has
 no certificate store a title can read, so the title carries the roots
 GitHub's hosts chain to (certificates.pem in its folder), which
 posix_update.c takes through SSL_CERT_FILE when no system bundle exists.
@@ -71,8 +73,9 @@ it.
 #define HALO_BUILD_FLAVOR "release"
 #endif
 
-#define UPDATE_REPOSITORY "thelinkin3000/halo-ce-universal"
-#define UPDATE_ASSET "halo-ps5-" HALO_BUILD_FLAVOR ".zip"
+#define UPDATE_REPOSITORY "thelinkin3000/SlipstreamCE"
+#define UPDATE_ASSET "slipstreamce-ps5-" HALO_BUILD_FLAVOR ".zip"
+#define UPDATE_OLD_ASSET "halo-ps5-" HALO_BUILD_FLAVOR ".zip"
 #define UPDATE_LATEST "https://api.github.com/repos/" UPDATE_REPOSITORY "/releases/latest"
 /* the archive's folder that is the title's */
 #define UPDATE_TITLE_ENTRY "PPSA99500/"
@@ -245,7 +248,7 @@ void ps5_update_recover(void)
 	{
 		/* this program is the old one, and the game image beside it now the
 		new one's: the new build has to start instead */
-		ps5_notify("Halo: the update to build %s is installed; start the game again", stamp);
+		ps5_notify("SlipstreamCE: the update to build %s is installed; start the game again", stamp);
 		ps5_log_sync(1);
 		ps5_log("the host ends: the new build starts at the next start");
 		_exit(0);
@@ -318,7 +321,7 @@ static void download_progress(void *context, unsigned long long received, unsign
 	if (quarter > progress->quarter && quarter < 4)
 	{
 		progress->quarter = quarter;
-		ps5_notify("Halo: downloading build %ld: %d %%", progress->build, quarter * 25);
+		ps5_notify("SlipstreamCE: downloading build %ld: %d %%", progress->build, quarter * 25);
 		ps5_log("update: %llu of %llu bytes", received, total);
 	}
 }
@@ -514,22 +517,30 @@ static void *update_thread(void *argument)
 			(ps5_now_ns() - start) / 1e9);
 		return NULL;
 	}
-	ps5_log("update: build %ld is available (this is build %d): downloading " UPDATE_ASSET, build,
-		HALO_BUILD_NUMBER);
-	ps5_notify("Halo: downloading build %ld", build);
+	ps5_log("update: build %ld is available (this is build %d)", build, HALO_BUILD_NUMBER);
+	ps5_notify("SlipstreamCE: downloading build %ld", build);
 	progress.build = build;
 	{
+		static const char *const assets[] = { UPDATE_ASSET, UPDATE_OLD_ASSET };
 		char url[256];
+		int asset, answered = 0, downloaded = 0;
 
-		snprintf(url, sizeof(url), "https://github.com/" UPDATE_REPOSITORY "/releases/download/build-%ld/" UPDATE_ASSET,
-			build);
 		start = ps5_now_ns();
-		if (!update_download(url, UPDATE_ARCHIVE, UPDATE_MAXIMUM_ARCHIVE, download_progress, &progress, error,
-			sizeof(error)))
+		for (asset = 0; asset < 2 && !downloaded; asset++)
+		{
+			snprintf(url, sizeof(url), "https://github.com/" UPDATE_REPOSITORY "/releases/download/build-%ld/%s", build,
+				assets[asset]);
+			ps5_log("update: downloading %s", url);
+			downloaded = update_download_status(url, UPDATE_ARCHIVE, UPDATE_MAXIMUM_ARCHIVE, download_progress, &progress,
+				&answered, error, sizeof(error));
+			if (!downloaded && answered != 404)
+				break;
+		}
+		if (!downloaded)
 		{
 			unlink(UPDATE_ARCHIVE);
 			ps5_log("update: the download of %s did not finish: %s", url, error);
-			ps5_notify("Halo: the update did not finish: %s", error);
+			ps5_notify("SlipstreamCE: the update did not finish: %s", error);
 			return NULL;
 		}
 		ps5_log("update: downloaded in %.1f s", (ps5_now_ns() - start) / 1e9);
@@ -539,13 +550,13 @@ static void *update_thread(void *argument)
 	{
 		unlink(UPDATE_ARCHIVE);
 		ps5_log("update: the install did not finish: %s", error);
-		ps5_notify("Halo: the update did not finish: %s", error);
+		ps5_notify("SlipstreamCE: the update did not finish: %s", error);
 		return NULL;
 	}
 	unlink(UPDATE_ARCHIVE);
 	ps5_log("update: build %ld is installed (%.1f s); it starts at the next start", build,
 		(ps5_now_ns() - start) / 1e9);
-	ps5_notify("Halo: build %ld is installed: close the game and start it again to use it", build);
+	ps5_notify("SlipstreamCE: build %ld is installed: close the game and start it again to use it", build);
 	return NULL;
 }
 

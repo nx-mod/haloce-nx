@@ -284,6 +284,11 @@ enum
 	/* a replay plays: the overlay shows its stick and the replay's own
 	buttons (touch_input_replay_targets), not the game's */
 	_touch_scene_replay = 1 << 4,
+	/* beside _touch_scene_menus, which it comes with: a cinematic is all
+	that hides the controls (not a menu, the start or the chat's keyboard),
+	and an overlay whose option says so (TouchControls.java's "Show during
+	cutscenes") shows them anyway. The web's overlay hides as before */
+	_touch_scene_cinematic = 1 << 5,
 };
 
 /* the bit of the menu fingers on the touch controls in their buttons
@@ -368,12 +373,18 @@ void touch_input_controls(XINPUT_GAMEPAD *pad, int menus)
 	int index;
 
 	/* (the controls show only in a game: not while it starts, at the main
-	menu, in a menu or during a cinematic; nor while the text chat's
+	menu, in a menu or during a cinematic (unless the overlay's option
+	shows them there: _touch_scene_cinematic); nor while the text chat's
 	on-screen keyboard is up, whose keys the fingers then tap) */
-	host_touch_scene(_touch_scene_known | touch_controls_setting() |
-		(menus || !touch_game_playing() || touch_game_cinematic_playing() || (network_chat_controller() == 0) ?
-			_touch_scene_menus : 0) |
-		(touch_game_replay_playing() ? _touch_scene_replay : 0));
+	{
+		int hidden = menus || !touch_game_playing() || (network_chat_controller() == 0);
+		int cinematic = touch_game_cinematic_playing();
+
+		host_touch_scene(_touch_scene_known | touch_controls_setting() |
+			(hidden || cinematic ? _touch_scene_menus : 0) |
+			(cinematic && !hidden ? _touch_scene_cinematic : 0) |
+			(touch_game_replay_playing() ? _touch_scene_replay : 0));
+	}
 	/* (the profile's mapping, for the buttons' names; only when it changes) */
 	touch_game_button_controls(bindings);
 	if (!bindings_known || memcmp(bindings, bindings_sent, sizeof(bindings)))
