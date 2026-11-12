@@ -99,14 +99,15 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # a release tag must match the program's version (nacp_version in
-      # tools/switch_build.py): bump it first (port/switch/README.md)
+      # a release tag must match the program's version (NX_VERSION in
+      # tools/switch_build.py, the single source for nacp_version and the news
+      # label): bump it first (port/switch/README.md)
       - name: Version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          version=$(python3 -c "import re; print(re.search(r'nacp_version = \"(.+)\"', open('tools/switch_build.py').read()).group(1))")
+          version=$(python3 -c "import re; print(re.search(r'NX_VERSION = \"(.+)\"', open('tools/switch_build.py').read()).group(1))")
           if [ "v$version" != "${{ github.ref_name }}" ]; then
-            echo "::error::tag ${{ github.ref_name }} but nacp_version is $version: bump it in tools/switch_build.py first"
+            echo "::error::tag ${{ github.ref_name }} but NX_VERSION is $version: bump it in tools/switch_build.py first"
             exit 1
           fi
 
