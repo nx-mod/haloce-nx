@@ -210,9 +210,13 @@
 		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_map_select/header_select_map__0.png" width="512" height="64"/>
 	</bitmap>
 	<bitmap name="main_menu/multiplayer_type_select/mp_options">
+		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_options__0.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_options__1.png" width="512" height="256"/>
 		<frame map="ui\shell\main_menu\multiplayer_type_select\mp_options" index="3"/>
-		<frame map="ui\shell\main_menu\multiplayer_type_select\mp_options" index="3"/>
-		<frame map="ui\shell\main_menu\multiplayer_type_select\mp_options" index="3"/>
+		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_options__0.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_options__1.png" width="512" height="256"/>
+		<frame png="ce/port/blank__0.png" width="16" height="16"/>
+		<frame png="ce/shell/main_menu/multiplayer_type_select/mp_options__6.png" width="512" height="256"/>
 	</bitmap>
 	<bitmap name="main_menu/multiplayer_type_select/server_settings/header_server_settings">
 		<frame png="ce/shell/main_menu/multiplayer_type_select/server_settings/header_server_settings__0.png" width="512" height="64"/>
@@ -244,14 +248,14 @@
 		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/rules_options__5.png" width="256" height="256"/>
 	</bitmap>
 	<bitmap name="main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options">
-		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="2"/>
+		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__0.png" width="512" height="256"/>
 		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__1.png" width="512" height="256"/>
 		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="2"/>
-		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="2"/>
+		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__3.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__4.png" width="512" height="256"/>
 		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="4"/>
-		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="4"/>
-		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="4"/>
-		<frame map="ui\shell\main_menu\settings_select\multiplayer_setup\playlist_edit\gametype_options" index="4"/>
+		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__6.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__7.png" width="512" height="256"/>
 	</bitmap>
 	<bitmap name="main_menu/settings_select/multiplayer_setup/playlist_edit/header_edit_multiplayer_gametype">
 		<frame png="ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/header_edit_multiplayer_gametype__0.png" width="1024" height="64"/>
@@ -294,20 +298,24 @@
 	</bitmap>
 	<bitmap name="main_menu/settings_select/player_setup/player_profile_edit/profile_options">
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="0"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="0"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__1.png" width="512" height="256"/>
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="1"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="1"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="1"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__3.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__4.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__5.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__6.png" width="512" height="256"/>
 		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
-		<frame map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options" index="3"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__8.png" width="512" height="256"/>
+		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__9.png" width="512" height="256"/>
 	</bitmap>
 	<bitmap name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings">
 		<frame png="ce/shell/main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings__0.png" width="512" height="64"/>
 	</bitmap>
 	<bitmap name="main_menu/solo_level_select/header_load_level">
 		<frame png="ce/shell/main_menu/solo_level_select/header_load_level__0.png" width="512" height="64"/>
+	</bitmap>
+	<bitmap name="main_menu/settings_select/player_setup/player_profile_edit/credits/credits_logo">
+		<frame png="ce/port/main_menu/settings_select/player_setup/player_profile_edit/credits/credits_logo.png" width="256" height="256"/>
 	</bitmap>
 	<bitmap name="main_menu/settings_select/player_setup/player_profile_edit/gameplay/header_gameplay">
 		<frame png="ce/port/main_menu/settings_select/player_setup/player_profile_edit/gameplay/header_gameplay.png" width="512" height="64"/>
@@ -362,6 +370,15 @@
 		<frame png="ce/port/pause/pausebox_right__1.png" width="16" height="256"/>
 		<frame png="ce/port/pause/pausebox_right__2.png" width="16" height="256"/>
 		<frame png="ce/port/pause/pausebox_right__3.png" width="16" height="256"/>
+	</bitmap>
+	<bitmap name="pause/joinbox_left">
+		<frame png="ce/port/pause/pausebox_left__0.png" width="16" height="256"/>
+	</bitmap>
+	<bitmap name="pause/joinbox_center">
+		<frame png="ce/port/pause/pausebox_center__0.png" width="4" height="256"/>
+	</bitmap>
+	<bitmap name="pause/joinbox_right">
+		<frame png="ce/port/pause/pausebox_right__0.png" width="16" height="256"/>
 	</bitmap>
 	<bitmap name="pause/objectives_left">
 		<frame png="ce/port/pause/objectives_left__0.png" width="16" height="256"/>
