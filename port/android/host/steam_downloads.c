@@ -202,6 +202,9 @@ static struct
 	int want_password;
 	int want_sign_out;
 	int want_page;
+	/* the page asked for by PREVIOUS or NEXT: its first item chosen once it
+	has come */
+	int page_jump;
 	int want_updates;
 	int cancel_sign_in;
 	char typed_account[TEXT_SIZE];
@@ -1061,9 +1064,13 @@ static void do_page(void)
 		steam.item_count = kept;
 		steam.total = total;
 		steam.message[0] = 0;
+		/* (the screen moves its focus to it: steam_update, menu_functions.c) */
+		if (steam.page_jump && kept && steam.view == VIEW_BROWSE)
+			steam.chosen = BROWSE_FILTER_ROWS;
 	}
 	else
 		snprintf(steam.message, sizeof(steam.message), "The Workshop could not be listed: %s", error);
+	steam.page_jump = 0;
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
@@ -1934,6 +1941,9 @@ static void install_run(uint64_t id)
 	}
 	pthread_mutex_lock(&steam.state_lock);
 	steam.cancel_download = 0;
+	/* (its progress from nothing: host_steam_install_progress) */
+	steam.done = steam.size = 0;
+	speed_reset();
 	pthread_mutex_unlock(&steam.state_lock);
 	/* (by what download_item says, not item_installed: the screen's list of
 	packages, which that asks, is looked at again only by the files thread;
@@ -2544,6 +2554,8 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 			percent_text(state, state_size);
 		else if (queue_find(-1, 0) >= 0)
 			snprintf(state, (size_t)state_size, "QUEUED");
+		else if (steam.confirm == place)
+			snprintf(state, (size_t)state_size, "DOWNLOAD AGAIN?");
 		else if (steam.files_known)
 			snprintf(state, (size_t)state_size, "%s", shared_installed() ? "INSTALLED" :
 				steam.owns_halo1 == 0 ? "NOT OWNED" : "DOWNLOAD");
@@ -2679,8 +2691,9 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		else
 		{
 			shared_text(body, sizeof(body));
-			snprintf(body + strlen(body), sizeof(body) - strlen(body), "\n\nA downloads them%s.",
-				shared_installed() ? " again" : "");
+			snprintf(body + strlen(body), sizeof(body) - strlen(body), "\n\n%s",
+				!shared_installed() ? "A downloads them." : steam.confirm == place ?
+				"They are installed: A again downloads them anew." : "A downloads them again (press it twice).");
 		}
 		break;
 	case ROW_PACKAGE:
@@ -2858,6 +2871,9 @@ void steam_downloads_choose(int place)
 			steam.cancel_download = 1;
 		else if (queue_find(-1, 0) >= 0)
 			queue_remove(queue_find(-1, 0));
+		/* (installed already: downloaded again only on a second A) */
+		else if (steam.files_known && shared_installed() && confirm != place)
+			steam.confirm = place;
 		else
 			download_ask(-1, NULL);
 		break;
@@ -2901,12 +2917,12 @@ void steam_downloads_choose(int place)
 	case ROW_PREVIOUS:
 		steam.page--;
 		steam.want_page = 1;
-		steam.chosen = BROWSE_FILTER_ROWS;
+		steam.page_jump = 1;
 		break;
 	case ROW_NEXT:
 		steam.page++;
 		steam.want_page = 1;
-		steam.chosen = BROWSE_FILTER_ROWS;
+		steam.page_jump = 1;
 		break;
 	default:
 		break;
@@ -3451,6 +3467,19 @@ int host_steam_install_status(void)
 	state = fetch.install_state;
 	pthread_mutex_unlock(&steam.state_lock);
 	return state;
+}
+
+/* the joiner's install's progress, in KB: done, of all (0 not yet known),
+and a second (0 not yet measured) */
+void host_steam_install_progress(unsigned int progress_address)
+{
+	uint32_t *progress = GUEST_POINTER(progress_address);
+
+	pthread_mutex_lock(&steam.state_lock);
+	progress[0] = (uint32_t)(steam.done >> 10);
+	progress[1] = (uint32_t)(steam.size >> 10);
+	progress[2] = (uint32_t)(steam.speed >> 10);
+	pthread_mutex_unlock(&steam.state_lock);
 }
 
 /* nonzero once when files were put in mcc_maps since the last ask (an
