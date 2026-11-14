@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- What the port adds to a custom campaign's own menus (tools/port_settings.py) -->
+<menus>
+	<widget name="custom_campaign/y_butn_back_to_halo" type="text" controller="1" width="200" height="24" text="%y-button BACK TO HALO" font="ui\small_ui" color="#FFFFFFFF" text_y="2" text_flags="no_focus_test">
+	</widget>
+</menus>

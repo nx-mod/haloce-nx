@@ -46,6 +46,8 @@ static boolean *director_camera_scripted = &scripted;
 static struct director *director_get(short player) { return &directors[player]; }
 static long player_control_get_unit_index(short player) { return 100 + player; }
 static void director_update(real dt) {}
+/* a custom campaign's cameras' log (no campaign here) */
+static void custom_campaign_note_camera(short camera_point_index) { (void)camera_point_index; }
 static void observer_update(real dt) {}
 #define _camera_script_mode_point 1
 static struct

@@ -124,6 +124,7 @@ their handlers open opens.
 #include "text_filter.h"
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 #include "../src/posix.h"
+#include "custom_campaigns.h"
 #endif
 
 #include <pthread.h>
@@ -13879,6 +13880,12 @@ boolean pc_menu_event_function_invoke(
 		if (!strcmp(name, "main menu quit game"))
 		{
 			platform_request_quit();
+		}
+		/* (a custom campaign's main menu's BACK TO HALO: menu_tags.c's
+		custom_campaign_patch) */
+		else if (!strcmp(name, "port custom campaign back"))
+		{
+			custom_campaign_back_to_halo();
 		}
 		else if (!strcmp(name, "profile set edit begin"))
 		{

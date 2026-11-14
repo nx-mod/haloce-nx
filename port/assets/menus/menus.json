@@ -2,6 +2,7 @@
  "comment": "The menus' files the game embeds (tools/ce_menus.py, tools/embed_assets.py).",
  "files": [
   "ce/bitmaps.xml",
+  "ce/custom_campaign.xml",
   "ce/error.xml",
   "ce/main_menu.campaign_select.xml",
   "ce/main_menu.difficulty_select.xml",

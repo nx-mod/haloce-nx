@@ -3654,7 +3654,25 @@ def multiplayer_files() -> dict:
                                           "(tools/port_settings.py) -->", head[2]] + _mods() + ["</menus>", ""],
         THEATER.replace("/", ".") + ".xml": [head[0], "<!-- The port's Theater screen, in the PC version's style "
                                              "(tools/port_settings.py) -->", head[2]] + _theater() + ["</menus>", ""],
+        CUSTOM_CAMPAIGN.replace("/", ".") + ".xml": [head[0], "<!-- What the port adds to a custom campaign's own "
+                                                     "menus (tools/port_settings.py) -->", head[2]] +
+        _custom_campaign() + ["</menus>", ""],
     }
+
+
+# ---------- custom campaigns (port/linux/game/custom_campaigns.c,
+# docs/custom_campaigns.md): a campaign with a ui.map of its own shows its own
+# main menu, to which menu_tags.c adds this key, BACK TO HALO (Y, and a tap on
+# it: its name begins y_butn, ui_widget.c's ui_mouse_key_button), and a Y
+# handler on the screen that runs "port custom campaign back"
+CUSTOM_CAMPAIGN = "custom_campaign"
+
+
+def _custom_campaign() -> list:
+    return _widget(f"{CUSTOM_CAMPAIGN}/y_butn_back_to_halo",
+                   [("type", "text"), ("controller", 1), ("width", 200), ("height", 24),
+                    ("text", "%y-button BACK TO HALO"), ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"),
+                    ("text_y", 2), ("text_flags", "no_focus_test")], [])
 
 
 REPLACED_FOLDERS = [f"{MT}/server_settings"]

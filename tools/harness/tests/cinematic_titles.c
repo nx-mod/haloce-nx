@@ -33,6 +33,8 @@ static struct cinematic_global_data *cinematic_globals = &globals_data;
 /* a menu (any local player's widget) is up or not */
 static boolean menu_up;
 static boolean ui_widgets_active(void) { return menu_up; }
+/* a custom campaign's titles' log (no campaign here) */
+static void cinematic_title_note(short title_index, char const *problem) { (void)title_index; (void)problem; }
 
 /* the game's clock: one tick a frame */
 static long ticks;

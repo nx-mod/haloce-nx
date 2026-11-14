@@ -407,6 +407,7 @@ symbols in this file:
 #include "text/font_group.h"
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.h */
 #include "mcc_main.h" /* port: port/linux/game/mcc_main.h */
 #include "view_fov.h" /* port: display.fov, before the projection and culling */
@@ -1929,6 +1930,9 @@ void main_load_ui_scenario(
 {
 	struct game_options options;
 
+	/* port: the custom campaign the settings name, mounted before the menus'
+	map first loads (port/linux/game/custom_campaigns.c) */
+	custom_campaign_startup();
 	game_precache_new_map("levels\\ui\\ui", TRUE);
 	match_assert("c:\\halo\\SOURCE\\main\\main.c", 1092,
 		!main_globals.main_menu_scenario_loaded);

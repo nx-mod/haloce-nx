@@ -2851,6 +2851,7 @@ symbols in this file:
 #include "mcc_script_parameters.h" /* port: port/linux/game/mcc_script_parameters.h */
 #include "mcc_syntax.h" /* port: port/linux/game/mcc_syntax.h */
 #include "mcc_scripts.h" /* port: port/linux/game/mcc_scripts.c */
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 
 /* ---------- constants */
 
@@ -13075,8 +13076,13 @@ static short hs_syntax_node_check(
 		return _hs_node_refusal_damaged;
 	function = hs_function_get(function_index);
 	*name = function->name;
-	if (from_map && !hs_function_allowed_in_maps[function_index])
+	/* port: (a mounted custom campaign's maps change the level as the game's
+	own campaign does: port/linux/game/custom_campaigns.c) */
+	if (from_map && !hs_function_allowed_in_maps[function_index] &&
+		!custom_campaign_script_may_call(cache_file_loaded_map_name(), function->name))
+	{
 		return _hs_node_refusal_function;
+	}
 	/* port: a downloaded map's (hs_functions_denied_to_downloaded_maps) */
 	if (from_map && hs_scenario_downloaded && hs_name_listed(function->name, hs_functions_denied_to_downloaded_maps))
 		return _hs_node_refusal_downloaded_function;

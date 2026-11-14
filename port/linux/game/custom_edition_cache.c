@@ -31,6 +31,8 @@ where its offset falls in their combined offset space.
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
 #include "map_share.h"
+#include "custom_campaigns.h"
+#include "mcc_loading.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -137,6 +139,9 @@ static int custom_edition_file_read(
 {
 	FILE *stream = context;
 
+	/* (the loading screen drawn again, at most every 50 ms, while the map is
+	read: mcc_loading.c) */
+	mcc_loading_pulse();
 	return fseek(stream, (long)offset, SEEK_SET) == 0 && fread(buffer, 1, size, stream) == size;
 }
 
@@ -324,6 +329,10 @@ static boolean custom_edition_map_named(
 	char hashed[MAP_PATH_SIZE];
 	short folder;
 
+	/* (a mounted custom campaign's map of the name its header gives:
+	custom_campaigns.c) */
+	if (custom_campaign_map_path(map_name, TRUE, path))
+		return TRUE;
 	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
 	{
 		if (maps_folder_has(maps_folder(folder), name, MAP_FILE_EXTENSION, path) ||
@@ -418,8 +427,16 @@ static boolean custom_edition_resource_map_path(
 	char *path)
 {
 	char const *name = resource_map_type_describe(type);
+	char file_name[MAP_PATH_SIZE];
 	short folder;
 
+	/* (a mounted custom campaign's own, if it has them) */
+	if (strlen(name) + strlen(MAP_FILE_EXTENSION) < sizeof(file_name))
+	{
+		sprintf(file_name, "%s%s", name, MAP_FILE_EXTENSION);
+		if (custom_campaign_file_path(file_name, path))
+			return TRUE;
+	}
 	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
 	{
 		if (maps_folder_has(maps_folder(folder), name, MAP_FILE_EXTENSION, path))
@@ -665,6 +682,11 @@ static boolean custom_edition_cache_tags_convert(
 	{
 		error(_error_silent, "custom edition: the multiplayer score hint names the BACK button where Halo PC names a key");
 	}
+	if (conversion.widget_functions_renumbered || conversion.widget_inputs_renumbered)
+	{
+		error(_error_silent, "custom edition: %ld menu event handlers and %ld game data inputs of Halo PC's own functions run the port's",
+			(long)conversion.widget_functions_renumbered, (long)conversion.widget_inputs_renumbered);
+	}
 	if (conversion.widget_functions_cleared || conversion.pause_menu_trimmed)
 	{
 		error(
@@ -776,8 +798,11 @@ boolean custom_edition_cache_refuse(
 boolean custom_edition_level_name(
 	char const *level_name)
 {
+	/* (and a mounted Custom Edition campaign's maps, which keep their own
+	names: custom_campaigns.c) */
 	return level_name &&
-		!_strnicmp(level_name, CUSTOM_EDITION_LEVEL_NAME_PREFIX, csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX));
+		(!_strnicmp(level_name, CUSTOM_EDITION_LEVEL_NAME_PREFIX, csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX)) ||
+			custom_campaign_custom_edition_map(level_name));
 }
 
 boolean custom_edition_map_file_path(

@@ -30,6 +30,7 @@ the channels (port/linux/src/dsound_sdl.c decodes it).
 #include "sound/sound_definitions.h"
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
+#include "mcc_loading.h"
 
 #define STB_VORBIS_HEADER_ONLY
 #include "../../third_party/stb_vorbis/stb_vorbis.c"
@@ -301,6 +302,8 @@ static boolean vorbis_decode(
 			frames->samples = larger;
 			capacity *= 2;
 		}
+		/* (the loading screen, at most every 50 ms: mcc_loading.c) */
+		mcc_loading_pulse();
 		count = stb_vorbis_get_frame_short_interleaved(vorbis, info.channels,
 			frames->samples + frames->count * info.channels,
 			(int)((capacity - frames->count) * info.channels));
@@ -621,8 +624,15 @@ boolean custom_edition_sounds_decode(
 	int32_t tag_index = NONE;
 	long converted_count = 0;
 	long failed_count = 0;
+	unsigned long sound_count = 0, sounds_done = 0;
 
 	custom_edition_sounds_globals.decoded_limit = decoded_limit;
+	/* (the loading screen's progress: the sounds, which are most of a Custom
+	Edition map's load, mcc_loading.c) */
+	while (custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index))
+		sound_count++;
+	tag_index = NONE;
+	mcc_loading_stage(MCC_LOADING_AUDIO);
 	while ((sound = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index)) != NULL)
 	{
 		boolean converted = TRUE;
@@ -655,6 +665,7 @@ boolean custom_edition_sounds_decode(
 				}
 			}
 		}
+		mcc_loading_update(MCC_LOADING_AUDIO, ++sounds_done, sound_count);
 		if (any || sound->compression != SOUND_COMPRESSION_XBOX_ADPCM)
 		{
 			sound->compression = SOUND_COMPRESSION_XBOX_ADPCM;

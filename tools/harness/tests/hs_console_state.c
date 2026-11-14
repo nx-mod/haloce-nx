@@ -81,6 +81,9 @@ static void hs_syntax_error(long i) {(void)i;abort();}
 static void hs_stack_overflow(long i) {(void)i;abort();}
 static void object_list_gc(void) {}
 static void error(int severity,char const *message,...) {(void)severity;(void)message;}
+/* a mounted custom campaign's maps may change the level (none here) */
+static char const *cache_file_loaded_map_name(void) {return "";}
+static int custom_campaign_script_may_call(char const *map,char const *function) {(void)map;(void)function;return 0;}
 #define _error_silent 0
 static void hs_evaluate(long,long,long *);
 static void hs_thread_main(long);

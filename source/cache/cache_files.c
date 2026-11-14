@@ -144,6 +144,7 @@ symbols in this file:
 #include "cache_file_formats.h" /* port: CUSTOM_EDITION_TAG_CACHE_BYTES */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "mcc_share.h" /* port: port/linux/game/mcc_share.c */
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 #ifdef HALO_ANDROID
 /* port: geometry the map holds and does not write, drawn on Android from
 GL buffers of its own (port/linux/src/d3d8_gl.c) */
@@ -1178,7 +1179,9 @@ boolean cache_files_map_plays_multiplayer(
 			return map_plays_kept[index].result;
 		}
 	}
-	snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
+	/* port: (a mounted custom campaign's map of the name: custom_campaigns.c) */
+	if (!custom_campaign_map_path(map_name, FALSE, path))
+		snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 	if (file != INVALID_HANDLE_VALUE)
 	{
@@ -1304,7 +1307,9 @@ boolean cache_files_map_present(
 
 		if (cache_files_precache_map_loaded(map_name))
 			return TRUE;
-		snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
+		/* port: (a mounted custom campaign's map of the name: custom_campaigns.c) */
+		if (!custom_campaign_map_path(map_name, FALSE, path))
+			snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
 		file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 		if (file != INVALID_HANDLE_VALUE)
 		{

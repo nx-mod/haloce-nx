@@ -46,6 +46,8 @@ menu gets FRIENDLY FIRE too.
 #include "mcc_cache.h"
 #include "mcc_menu_preview.h"
 #include "custom_edition_cache.h"
+#include "custom_campaigns.h"
+#include "cache_file_formats.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -436,6 +438,8 @@ static char const *const port_function_names[] =
 	"port host edit server name", "port host edit server password", "port host edit motd",
 	"port host map kind", "port host entry grab", "port host reorder", "port host remove all",
 	"port host round edit", "port host round add", "port host round back",
+	/* (a custom campaign's main menu's BACK TO HALO: custom_campaign_patch) */
+	"port custom campaign back",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -526,6 +530,10 @@ static struct
 	/* a game map's build (the pause menu's SETTINGS): what the map has not
 	got is none, not a failure */
 	boolean game_map;
+	/* a custom campaign's own ui.map (custom_campaigns.c): its menus are its
+	own, and the ui.map tags ours name that it has not are none, as a game
+	map's, a missing picture drawn blank */
+	boolean campaign_ui;
 	/* a single-player campaign's map's, whose screens pause the game */
 	boolean campaign;
 	/* a network co-op game's map's: its pause menu gets FRIENDLY FIRE too */
@@ -657,7 +665,7 @@ static long map_tag(long group_tag, char const *name, char const *file, long lin
 	long index = tag_loaded(group_tag, name);
 
 	/* (a game map has few of ui.map's: those are none) */
-	if (index == NONE && !build.game_map)
+	if (index == NONE && !build.game_map && !build.campaign_ui)
 		problem(file, line, "the map has no tag", name);
 	return index;
 }
@@ -937,7 +945,10 @@ static void *bitmap_build(struct halo_menu_bitmap const *source, long tag_index)
 		/* (a frame of the map's: a copy of its bitmap, which the texture cache
 		loads from the map as its own; in a game map that has not got it,
 		nothing) */
-		if (data->map && build.game_map && tag_loaded(BITMAP_GROUP_TAG, data->map) == NONE)
+		if (data->map && (build.game_map || build.campaign_ui) &&
+			(tag_loaded(BITMAP_GROUP_TAG, data->map) == NONE ||
+				data->index < 0 ||
+				data->index >= bitmap_group_get(tag_loaded(BITMAP_GROUP_TAG, data->map))->bitmaps.count))
 		{
 			png = BLANK_PNG;
 			width = height = PLACEHOLDER_SIZE;
@@ -2620,6 +2631,190 @@ static boolean menus_pc_chosen(void)
 	return FALSE;
 }
 
+/* ---------- a custom campaign's ui.map's Halo PC functions
+
+A Custom Edition map's widgets run the PC's event handler functions (from
+102) and game data inputs (from 41) by the PC's numbers, which this engine
+has not: the Custom Edition loader makes such handlers run none
+(cache_file_formats.c). For a custom campaign's own ui.map, whose menus are
+shown as they are, each is given the number of the port's function of its
+name instead (port_function_names, port_game_data_input_names), when the
+port has one. The PC's names, in its order (Invader's
+ui_widget_definition.json, UIEventHandlerReferenceFunction and
+UIGameDataInputReferenceFunction): */
+
+static char const *const pc_event_function_names[] =
+{
+	"exit gracefully to xbox dashboard", "pause game invert pitch", "start new coop game",
+	"pause game invert spinner get", "pause game invert spinner set", "main menu quit game",
+	"mouse emit accept event", "mouse emit back event", "mouse emit dpad left event", "mouse emit dpad right event",
+	"mouse spinner 3wide click", "controls screen init", "video screen init", "controls begin binding",
+	"gamespy screen init", "gamespy screen dispose", "gamespy select header", "gamespy select item",
+	"gamespy select button", "plr prof init mouse set", "plr prof change mouse set", "plr prof init audio set",
+	"plr prof change audio set", "plr prof change video set", "controls screen dispose", "controls screen change set",
+	"mouse emit x event", "gamepad screen init", "gamepad screen dispose", "gamepad screen change gamepads",
+	"gamepad screen select item", "mouse screen defaults", "audio screen defaults", "video screen defaults",
+	"controls screen defaults", "profile set edit begin", "profile manager delete", "profile manager select",
+	"gamespy dismiss error", "server settings init", "ss edit server name", "ss edit server password",
+	"ss start game", "video test dialog init", "video test dialog dispose", "video test dialog accept",
+	"gamespy dismiss filters", "gamespy update filter settings", "gamespy back handler", "mouse spinner 1wide click",
+	"controls back handler", "controls advanced launch", "controls advanced ok", "mp pause menu open",
+	"mp game options open", "mp choose team", "mp prof init vehicle options", "mp prof save vehicle options",
+	"single prev cl item activated", "mp prof init teamplay options", "mp prof save teamplay options",
+	"mp game options choose", "emit custom activation event", "plr prof cancel audio set",
+	"plr prof init network options", "plr prof save network options", "credits post render", "difficulty item select",
+	"credits initialize", "credits dispose", "gamespy get patch", "video screen dispose", "campaign menu init",
+	"campaign menu continue", "load game menu init", "load game menu dispose", "load game menu activated",
+	"solo menu save checkpoint", "mp type set mode", "checking for updates ok", "checking for updates dismiss",
+	"direct ip connect init", "direct ip connect go", "direct ip edit field", "network settings edit a port",
+	"network settings defaults", "load game menu delete request", "load game menu delete finish",
+};
+
+static char const *const pc_game_data_input_names[] =
+{
+	"pause game set textbox inverted", "dim unless two controllers", "controls update menu", "video menu update",
+	"gamespy screen update", "common button bar update", "gamepad update menu", "server settings update",
+	"audio menu update", "mp prof vehicles update", "solo map list update", "mp map list update",
+	"gt select list update", "gt edit list update", "load game list update", "checking for updates",
+	"direct ip connect update", "network settings update",
+};
+
+static long custom_campaign_renumber(char const *map_name, long pc_function, long first,
+	char const *const *pc_names, long pc_count, char const *const *port_names, long port_count)
+{
+	long index;
+
+	if (!map_name || strcmp(map_name, "ui") || !custom_campaign_has_ui() ||
+		pc_function < first || pc_function >= first + pc_count)
+	{
+		return NONE;
+	}
+	index = name_index(pc_names[pc_function - first], port_names, port_count);
+
+	return index == NONE ? NONE : PC_MENU_FUNCTION_BASE + index;
+}
+
+static long custom_campaign_event_function(char const *map_name, long pc_function)
+{
+	return custom_campaign_renumber(map_name, pc_function, 102, pc_event_function_names,
+		NUMBEROF(pc_event_function_names), port_function_names, NUMBEROF(port_function_names));
+}
+
+static long custom_campaign_game_data_input(char const *map_name, long pc_function)
+{
+	return custom_campaign_renumber(map_name, pc_function, 41, pc_game_data_input_names,
+		NUMBEROF(pc_game_data_input_names), port_game_data_input_names, NUMBEROF(port_game_data_input_names));
+}
+
+/* (custom_campaigns.c, as a campaign is mounted) */
+void menu_tags_custom_campaign_install(void)
+{
+	custom_edition_widget_renumber_set(custom_campaign_event_function, custom_campaign_game_data_input);
+}
+
+/* ---------- a custom campaign's own main menu (custom_campaigns.c)
+
+A campaign with a ui.map of its own shows its own main menu, as its map
+has it, whatever it holds: only BACK TO HALO is added, a key at its bottom
+left (custom_campaign/y_butn_back_to_halo, tools/port_settings.py's
+_custom_campaign: a tap on it presses Y) and a Y handler on the screen that
+runs "port custom campaign back" (menu_functions.c), which lets the
+campaign go and loads the stock menus again. */
+
+/* A list's item named "dummy" (Lumoria's main menu has one, a copy of its
+first item at the list's corner, so that the items count from 1 as the
+pictures of its extended description do) is not drawn by Halo PC: it keeps
+its place in the list, and is moved where it is not seen. */
+#define CUSTOM_CAMPAIGN_DUMMY_CHILD "dummy"
+#define CUSTOM_CAMPAIGN_OFF_SCREEN (-4096)
+
+static void custom_campaign_dummies_hide(struct cache_file_tag_instance const *instances, long count)
+{
+	long index, hidden = 0;
+
+	for (index = 0; index < count; index++)
+	{
+		struct ui_widget_definition *definition;
+		struct ui_widget_child_reference *children;
+		long child;
+
+		if (instances[index].group_tag != UI_WIDGET_DEFINITION_TAG || !instances[index].base_address)
+			continue;
+		definition = instances[index].base_address;
+		if (definition->type != _widget_type_column_list)
+			continue;
+		children = TAG_BLOCK_ADDRESS(definition->child_widgets);
+		for (child = 0; child < definition->child_widgets.count; child++)
+		{
+			if (!_strnicmp(children[child].name, CUSTOM_CAMPAIGN_DUMMY_CHILD, sizeof(children[child].name)))
+			{
+				children[child].horizontal_offset = CUSTOM_CAMPAIGN_OFF_SCREEN;
+				children[child].vertical_offset = CUSTOM_CAMPAIGN_OFF_SCREEN;
+				hidden++;
+			}
+		}
+	}
+	if (hidden)
+		platform_log("menus: %ld list items named dummy in the custom campaign's ui.map not drawn", hidden);
+}
+
+#define CUSTOM_CAMPAIGN_BACK_WIDGET "custom_campaign/y_butn_back_to_halo"
+#define CUSTOM_CAMPAIGN_BACK_X 24
+#define CUSTOM_CAMPAIGN_BACK_Y 446
+
+static boolean custom_campaign_patch(struct cache_file_tag_instance const *instances)
+{
+	long screen = tag_loaded(UI_WIDGET_DEFINITION_TAG, CUSTOM_CAMPAIGN_MAIN_MENU);
+	long widget = widget_named(CUSTOM_CAMPAIGN_BACK_WIDGET);
+	long function = function_index("port custom campaign back", "custom campaign", 0);
+	long y_event = name_index("y", event_names, NUMBEROF(event_names));
+	struct ui_widget_definition *definition;
+	struct ui_widget_child_reference *children;
+	struct ui_widget_event_handler_reference *handlers;
+	long count;
+
+	if (screen == NONE || widget == NONE || function == NONE || y_event == NONE)
+	{
+		platform_log("menus: the custom campaign's ui.map has no %s, or BACK TO HALO cannot be made",
+			CUSTOM_CAMPAIGN_MAIN_MENU);
+		return FALSE;
+	}
+	definition = tag_get(UI_WIDGET_DEFINITION_TAG, screen);
+
+	count = definition->child_widgets.count;
+	children = allocate((count + 1) * sizeof(*children));
+	if (!children)
+		return FALSE;
+	if (count)
+		memcpy(children, TAG_BLOCK_ADDRESS(definition->child_widgets), count * sizeof(*children));
+	memset(&children[count], 0, sizeof(children[count]));
+	reference_set(&children[count].widget_tag, UI_WIDGET_DEFINITION_TAG, build.widget_tags[widget]);
+	children[count].horizontal_offset = CUSTOM_CAMPAIGN_BACK_X;
+	children[count].vertical_offset = CUSTOM_CAMPAIGN_BACK_Y;
+	definition->child_widgets.address = children;
+	definition->child_widgets.count = count + 1;
+
+	count = definition->event_handlers.count;
+	handlers = allocate((count + 1) * sizeof(*handlers));
+	if (!handlers)
+		return FALSE;
+	if (count)
+		memcpy(handlers, TAG_BLOCK_ADDRESS(definition->event_handlers), count * sizeof(*handlers));
+	memset(&handlers[count], 0, sizeof(handlers[count]));
+	handlers[count].flags = 1L << _event_handler_run_function_bit;
+	handlers[count].event_type = (short)y_event;
+	handlers[count].function = (short)function;
+	reference_set(&handlers[count].widget_tag, UI_WIDGET_DEFINITION_TAG, NONE);
+	reference_set(&handlers[count].sound_effect, SOUND_TAG, NONE);
+	definition->event_handlers.address = handlers;
+	definition->event_handlers.count = count + 1;
+
+	custom_campaign_dummies_hide(instances, menu_tags.original_count);
+	snprintf(menu_tags.root, sizeof(menu_tags.root), "%s", CUSTOM_CAMPAIGN_MAIN_MENU);
+	platform_log("menus: the custom campaign %s's own main menu, with BACK TO HALO", custom_campaign_folder());
+	return TRUE;
+}
+
 void menu_tags_loaded(
 	char const *map_name)
 {
@@ -2657,6 +2852,7 @@ mcc_settings:
 	memset(&build, 0, sizeof(build));
 	build.menus = menus;
 	build.game_map = game_map;
+	build.campaign_ui = !game_map && custom_campaign_has_ui();
 	/* Settings must not pause the simulation in a network campaign. */
 	build.campaign = campaign && game_connection() == _game_connection_local &&
 		!network_game_is_active() && !game_is_cooperative();
@@ -2761,6 +2957,10 @@ mcc_settings:
 			goto failed;
 		/* (those it made) */
 		cache_files_set_tag_instances(instances, build.first_index + build.next);
+	}
+	else if (custom_campaign_has_ui() && custom_campaign_patch(instances))
+	{
+		profile_settings_hide();
 	}
 	else if (widget_named(menus->root) != NONE)
 	{

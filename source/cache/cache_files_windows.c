@@ -193,6 +193,7 @@ symbols in this file:
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.c */
 #include "mcc_share.h" /* port: port/linux/game/mcc_share.c */
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 
 #include <xtl.h>
 
@@ -1301,7 +1302,13 @@ static void cache_file_get_map_path(
 	{
 		MAXIMUM_MAP_PATH_LENGTH = 256,
 	};
-	int length = snprintf(path, MAXIMUM_MAP_PATH_LENGTH, "%s%s.map", cache_files_map_directory(), map_name);
+	int length;
+
+	/* port: a mounted custom campaign's map of the name its header gives
+	(port/linux/game/custom_campaigns.c) */
+	if (custom_campaign_map_path(map_name, FALSE, path))
+		return;
+	length = snprintf(path, MAXIMUM_MAP_PATH_LENGTH, "%s%s.map", cache_files_map_directory(), map_name);
 
 	if (length < 0 || length >= MAXIMUM_MAP_PATH_LENGTH)
 	{
