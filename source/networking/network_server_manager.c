@@ -484,6 +484,7 @@ symbols in this file:
 #include "bots.h" /* port: port/linux/game/bots.c */
 #include "bots_common.h" /* port: port/linux/game/bots_common.h: bots.kind */
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
@@ -5686,6 +5687,9 @@ static boolean network_game_server_handle_client_machines(
 	unsigned long start_time = system_milliseconds();
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x827, server);
+	/* port: the machines that cannot play the game, told and removed
+	(port/linux/game/network_extensions.c) */
+	network_extensions_host_update();
 
 	for (i = 0; success && i < MAXIMUM_NETWORK_MACHINE_COUNT; i++)
 	{

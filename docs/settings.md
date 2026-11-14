@@ -261,6 +261,7 @@ For finding problems and measuring the game. You should not need these to play.
 | `debug.null_renderer` | `false` | All | Run drawing nothing. |
 | `debug.gl_debug` | `false` | All | Report OpenGL errors in the log. |
 | `debug.menu_open` | `""` | All | Start on this screen of the menus instead of the main menu, a player profile being edited; empty for the main menu. |
+| `debug.network_extensions_require` | `""` | All | Capabilities (docs/network_extensions.md) this machine's games require when it hosts, separated by commas, whatever the game is: a machine without them is told and removed (for testing the handshake); empty for none. |
 | `debug.custom_campaign` | `""` | All | Mount this folder of custom_campaigns as the game starts, its own menus and maps played instead of the stock ones (docs/custom_campaigns.md); empty for none. |
 | `debug.gpu_stats` | `false` | All | Log the renderer's draw counts once a second (otherwise, on Android's Vulkan, only a second whose draws were skipped), and what dynamic lighting's fields did. |
 | `debug.gpu_trace_frame` | `-1` | All | Log every draw of this frame; -1 none. |

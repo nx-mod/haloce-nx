@@ -397,6 +397,7 @@ void network_game_client_reset_settings_staging(void); /* port: discard partial 
 #include "text/unicode.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
+#include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
 
 /* ---------- constants */
 
@@ -2340,6 +2341,8 @@ void network_game_client_reset(
 		client);
 
 	network_game_invalidate(&client->game);
+	/* port: a host's capabilities are its game's (port/linux/game/network_extensions.c) */
+	network_extensions_client_reset();
 
 	client->machine_index = NONE;
 	client->state = _network_game_client_state_searching;

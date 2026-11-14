@@ -282,6 +282,7 @@ void mcc_share_game_handle_message(long machine_index, word const *message, word
 #include "mcc_load_network.h" /* port: MCC send-only loading progress */
 #include "mcc_admission.h" /* port: MCC validation before players and precaching */
 #include "mcc_ui_teams.h" /* port: port/linux/game/mcc_ui_teams.c */
+#include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
 boolean network_map_vote_handles_message(word const *message, word size);
 void network_map_vote_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 void map_share_handle_message(long machine_index, word const *message, word size, boolean from_stream);
@@ -924,6 +925,39 @@ boolean network_distributed_server_send_to_machine(
 	return network_game_server_write(network_game_server_get_connection(server), buffer, size, &address, 0);
 }
 
+/* port: the game's settings to the game's machine `machine_index`, held from
+it until it told the host its capabilities (port/linux/game/network_extensions.c) */
+boolean network_extensions_server_send_settings(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game_server_client_machine *machine;
+	struct network_game *game;
+
+	if (!server || !(game = network_game_server_get_game(server)))
+		return FALSE;
+	machine = network_game_server_client_machine_in_game(server, machine_index);
+	if (!machine || network_game_server_client_machine_is_local(server, machine))
+		return FALSE;
+
+	return network_game_server_send_game_settings_to_client_machine(server, machine, game, sizeof(*game));
+}
+
+/* port: whether the game's machine `machine_index` is a client's machine in
+the game, not the host's own (port/linux/game/network_extensions.c) */
+boolean network_extensions_server_machine_remote(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game_server_client_machine *machine;
+
+	if (!server)
+		return FALSE;
+	machine = network_game_server_client_machine_in_game(server, machine_index);
+
+	return machine && !network_game_server_client_machine_is_local(server, machine);
+}
+
 /* reliably to one machine in the game (the host's objects, to a client
 that has loaded) */
 boolean network_distributed_server_send_to_machine_reliably(
@@ -983,6 +1017,12 @@ boolean network_distributed_server_send_to_all_reliably(
 	return result;
 }
 
+/* port: the game's settings being sent (network_game_server_send_game_settings_to_all_machines):
+a machine whose capabilities the game needs and has not heard of yet is not
+sent them (port/linux/game/network_extensions.c: it never learns a map it
+cannot play, and is told why and removed) */
+static boolean network_game_server_sending_settings;
+
 boolean network_game_server_send_message_to_all_machines(
 	struct network_game_server *server,
 	struct network_message *message)
@@ -1011,10 +1051,16 @@ boolean network_game_server_send_message_to_all_machines(
 		struct network_game_server_client_machine *machine =
 			network_game_server_get_client_machine_at_index(server, machine_index);
 
+		long game_machine_index = NONE;
+
 		if (network_game_server_client_machine_is_joined_to_game(server, machine)
 			/* (not a machine still loading the game in progress: it takes
 			none of the game's messages until it has) */
 			&& !network_game_server_machine_is_loading_late(server, machine)
+			/* (port: nor the settings a machine is held from) */
+			&& !(network_game_server_sending_settings &&
+				network_game_server_get_client_machine(server, machine, &game_machine_index) &&
+				network_extensions_host_machine_held(game_machine_index))
 			)
 		{
 			struct network_connection *connection =
@@ -1130,8 +1176,13 @@ boolean network_game_server_send_game_settings_to_all_machines(
 			sizeof(message));
 		if (encoded_message)
 		{
+			boolean sent;
+
 			/* (a piece that failed stays failed: the next is no retry of it) */
-			if (!network_game_server_send_message_to_all_machines(server, encoded_message))
+			network_game_server_sending_settings = TRUE; /* port */
+			sent = network_game_server_send_message_to_all_machines(server, encoded_message);
+			network_game_server_sending_settings = FALSE;
+			if (!sent)
 			{
 				network_event(
 					"failed to send message_server_game_settings_update message to all machines");
@@ -1397,6 +1448,20 @@ boolean network_game_server_handle_client_message(
 								network_event("network_game_server_handle_message_client_graceful_game_exit_postgame() failed");
 							}
 							break;
+
+						/* port: a client's capabilities (port/linux/game/network_extensions.c),
+						a packet a build without them never sends */
+						case NETWORK_EXTENSIONS_PACKET_TYPE:
+						{
+							long machine_index = NONE;
+
+							if (network_game_server_get_client_machine(server, machine, &machine_index))
+							{
+								network_extensions_host_handle(machine_index, message + 1,
+									message_buffer_size - (short)sizeof(word));
+							}
+							break;
+						}
 
 						default:
 							network_event(
@@ -2156,6 +2221,9 @@ static boolean network_game_server_handle_message_client_join_game_request(
 								network_event(
 									"sent _message_type_server_machine_accepted message to %d",
 									machine_index);
+								/* port: this build's capabilities, before the game's
+								settings (port/linux/game/network_extensions.c) */
+								network_extensions_host_machine_accepted(machine_index);
 							}
 
 							if (result == TRUE)
@@ -2164,9 +2232,15 @@ static boolean network_game_server_handle_message_client_join_game_request(
 								the others are in game) */
 								if (late_join)
 								{
-									result = network_game_server_send_game_settings_to_client_machine(server,
-										server_client_machine, network_game_server_get_game(server),
-										sizeof(struct network_game));
+									/* (port: held from a machine the game's capabilities
+									have not been heard of from: network_extensions.c,
+									which sends them once they are) */
+									if (!network_extensions_host_machine_held(machine_index))
+									{
+										result = network_game_server_send_game_settings_to_client_machine(server,
+											server_client_machine, network_game_server_get_game(server),
+											sizeof(struct network_game));
+									}
 								}
 								/* (to every machine: one the write failed for is
 								closed, which is not this machine's failure) */
