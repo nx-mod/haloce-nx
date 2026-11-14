@@ -145,6 +145,9 @@ struct custom_edition_map
 	/* (and room for a version's number, " (2)") */
 	wchar_t display_name[MAXIMUM_MAP_NAME_LENGTH + 8];
 	wchar_t description[MAXIMUM_DESCRIPTION_LENGTH + 1];
+	/* an Xbox multiplayer map (custom_xbox_map_level), not a Custom Edition
+	one: its default description says so */
+	boolean xbox_map;
 	boolean picture_read;
 	struct bitmap_data *picture;
 };
@@ -183,6 +186,8 @@ static struct
 
 /* for a map without a description file */
 static wchar_t const default_description[] = L"Halo Custom\r\nEdition map";
+/* (an Xbox multiplayer map's: custom_xbox_map_level) */
+static wchar_t const default_xbox_description[] = L"Custom Xbox\r\nmultiplayer map";
 
 /* ---------- private code */
 
@@ -201,6 +206,8 @@ struct identity_cache_entry
 	uint64_t time;
 	unsigned long size;
 	short scenario_type;
+	/* (an Xbox multiplayer map: custom_xbox_map_level) */
+	boolean xbox_map;
 	boolean used;
 };
 
@@ -237,7 +244,8 @@ static uint64_t name_hash(
 static short identity_cached(
 	char const *path,
 	unsigned long size,
-	uint64_t time)
+	uint64_t time,
+	boolean *xbox_map)
 {
 	uint64_t key = name_hash(path, NULL);
 	long slot = (long)(key % IDENTITY_CACHE_SIZE);
@@ -252,6 +260,7 @@ static short identity_cached(
 	}
 	if (entry->used && entry->size == size && entry->time == time)
 	{
+		*xbox_map = entry->xbox_map;
 		return entry->scenario_type;
 	}
 	if (!entry->used)
@@ -269,7 +278,8 @@ static short identity_cached(
 	entry->size = size;
 	entry->time = time;
 	entry->used = TRUE;
-	entry->scenario_type = custom_edition_cache_file_scenario_type(path);
+	entry->scenario_type = custom_edition_cache_file_scenario_type(path, &entry->xbox_map);
+	*xbox_map = entry->xbox_map;
 
 	return entry->scenario_type;
 }
@@ -447,7 +457,10 @@ static void custom_edition_map_description_read(
 
 	if (!length)
 	{
-		csmemcpy(map->description, default_description, sizeof(default_description));
+		if (map->xbox_map)
+			csmemcpy(map->description, default_xbox_description, sizeof(default_xbox_description));
+		else
+			csmemcpy(map->description, default_description, sizeof(default_description));
 	}
 
 	return;
@@ -476,6 +489,7 @@ static void custom_edition_map_add(
 	boolean campaign;
 	short map_index;
 	short scenario_type;
+	boolean xbox_map = FALSE;
 
 	if (csstrcasecmp(extension, "map"))
 	{
@@ -505,7 +519,7 @@ static void custom_edition_map_add(
 		return;
 	}
 	csprintf(path, "%s%s.%s", directory, name, extension);
-	scenario_type = identity_cached(path, size, time);
+	scenario_type = identity_cached(path, size, time, &xbox_map);
 	campaign = scenario_type == _scenario_type_solo;
 	if (!campaign && scenario_type != _scenario_type_multiplayer)
 	{
@@ -549,6 +563,7 @@ static void custom_edition_map_add(
 	csstrncpy(map->category, category, sizeof(map->category) - 1);
 	csprintf(map->level_name, "%s%s", CUSTOM_EDITION_LEVEL_NAME_PREFIX, name);
 	display_name_make(name, map->display_name);
+	map->xbox_map = xbox_map;
 	custom_edition_map_description_read(map, descriptions);
 	/* (named for its hash by a build of before: its name given back,
 	map_share_files.c; custom_maps' own files alone, not a subfolder's) */

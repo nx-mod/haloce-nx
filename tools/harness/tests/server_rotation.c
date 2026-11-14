@@ -221,6 +221,7 @@ static void write_maps(void)
 	write_map("custom_maps/hugeass.map", 609, 1, 0x800, "daeh", "toof");
 	write_map("custom_maps/c_campaign.map", 609, 0, 0x800, "daeh", "toof");
 	write_map("custom_maps/xboxmap.map", 5, 1, 0x800, "daeh", "toof");
+	write_map("custom_maps/xboxcampaign.map", 5, 0, 0x800, "daeh", "toof");
 }
 
 /* server_maps_each's maps, as "name level kind;" in the order told */
@@ -795,7 +796,7 @@ int main(int argc, char **argv)
 		CHECK(!resolved("nowhere") && entry.map_missing && strstr(entry.rejected, "there is no map nowhere"),
 			"a missing map: %s", entry.rejected);
 		CHECK(!resolved("custom_maps\\bloodgulch") && entry.map_missing &&
-			strstr(entry.rejected, "no Custom Edition map bloodgulch"), "an Xbox map as Custom Edition's: %s",
+			strstr(entry.rejected, "no map bloodgulch in custom_maps"), "the maps folder's map as custom_maps': %s",
 			entry.rejected);
 		CHECK(!resolved("levels\\test\\nowhere\\nowhere") && entry.map_missing, "a missing level: %s", entry.rejected);
 		CHECK(!resolved("broken") && entry.map_missing, "a file too short for a header: %s", entry.rejected);
@@ -896,13 +897,16 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	/* a map file of another game's version is not played as the Xbox's or
-	Custom Edition's (server_maps_each does not list it) */
+	Custom Edition's (server_maps_each does not list it); custom_maps takes an
+	Xbox multiplayer map (custom_xbox_map_level), but no other Xbox map */
 	CASE("resolve-version")
 	{
 		make_root(argv[0], case_name);
 		write_maps();
 		CHECK(!resolved("pcmap"), "a Halo PC map (version 7) in maps was taken");
-		CHECK(!resolved("custom_maps\\xboxmap"), "an Xbox map (version 5) in custom_maps was taken");
+		CHECK(resolved("custom_maps\\xboxmap"), "an Xbox multiplayer map in custom_maps: %s", entry.rejected);
+		CHECK(!resolved("custom_maps\\xboxcampaign:coop") && strstr(entry.rejected, "not a multiplayer one"),
+			"an Xbox campaign map in custom_maps: %s", entry.rejected);
 		return 0;
 	}
 	/* the multiplayer maps there are: the Xbox's of version 5, Custom

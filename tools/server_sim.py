@@ -1099,7 +1099,7 @@ class Sim:
         if not found:
             entry["rejected"] = {
                 "name": f"there is no map {name} (maps/{name}.map, custom_maps/{name}.map)",
-                "custom": f"there is no Custom Edition map {name} (custom_maps/{name}.map)",
+                "custom": f"there is no map {name} in custom_maps (custom_maps/{name}.map)",
                 "path": f"there is no map file maps/{name}.map for {map_text}"}[kind]
             return entry
         entry["level"] = found[0] if kind != "path" else map_text

@@ -703,13 +703,20 @@ static int custom_map_file(const char *folder, const char *name, char *path, int
 
 /* a campaign level plays only as co-op, a multiplayer map never so, and
 the main menu's not at all (the scenario's type in its header); the maps
-folder's an Xbox cache file, custom_maps' a Custom Edition one (version) */
+folder's an Xbox cache file, custom_maps' a Custom Edition one (version), or
+an Xbox multiplayer map (custom_edition_cache.c's custom_xbox_map_level, which
+a game needs the custom_xbox_multiplayer_maps capability of its machines for) */
 static void server_rotation_check_kind(struct server_entry *entry, long type, long version)
 {
 	int coop = !strcmp(entry->gametype, "coop");
 	long wanted = entry->map_kind == _server_map_custom ? 609 : 5;
+	int custom_xbox = entry->map_kind == _server_map_custom && version == 5;
 
-	if (version != wanted)
+	if (custom_xbox && type != 1)
+		snprintf(entry->rejected, sizeof(entry->rejected),
+			"%s is an Xbox map that is not a multiplayer one (custom_maps takes Xbox multiplayer maps alone)",
+			entry->map_name);
+	else if (version != wanted && !custom_xbox)
 		snprintf(entry->rejected, sizeof(entry->rejected), "%s is not %s cache file (version %ld, not %ld)",
 			entry->map_name, wanted == 5 ? "an Xbox" : "a Custom Edition", version, wanted);
 	else if (type == 2)
@@ -782,7 +789,7 @@ void server_rotation_resolve(struct server_entry *entry)
 			server_rotation_check_kind(entry, type, version);
 			return;
 		}
-		snprintf(entry->rejected, sizeof(entry->rejected), "there is no Custom Edition map %s (custom_maps/%s.map)",
+		snprintf(entry->rejected, sizeof(entry->rejected), "there is no map %s in custom_maps (custom_maps/%s.map)",
 			entry->map_name, entry->map_name);
 		entry->map_missing = 1;
 		return;

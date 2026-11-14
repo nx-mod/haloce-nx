@@ -1094,11 +1094,15 @@ boolean custom_edition_cache_playable(
 }
 
 short custom_edition_cache_file_scenario_type(
-	char const *path)
+	char const *path,
+	boolean *xbox_map)
 {
 	struct custom_edition_file file;
 	struct cache_file_identity identity;
 	short type = NONE;
+
+	if (xbox_map)
+		*xbox_map = FALSE;
 
 	if (!custom_edition_file_open(&file, path))
 	{
@@ -1111,6 +1115,8 @@ short custom_edition_cache_file_scenario_type(
 				identity.scenario_type == _scenario_type_multiplayer)))
 	{
 		type = (short)identity.scenario_type;
+		if (xbox_map)
+			*xbox_map = identity.format == _cache_file_format_xbox_cache;
 	}
 	custom_edition_file_close(&file);
 

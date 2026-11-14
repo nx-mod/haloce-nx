@@ -161,10 +161,13 @@ boolean custom_edition_cache_present(
 
 /* The scenario type of the Custom Edition cache at `path`: a campaign map's
 (_scenario_type_solo, played alone or as network co-op) or a multiplayer
-map's, or another; NONE if it is no Custom Edition cache. `path` is the
-file a folder's listing found (custom_edition_maps.c), opened once. */
+map's, or another; NONE if it is no Custom Edition cache (nor an Xbox
+multiplayer map: custom_xbox_map_level); *xbox_map (NULL: not asked) whether it
+is an Xbox map. `path` is the file a folder's listing found
+(custom_edition_maps.c), opened once. */
 short custom_edition_cache_file_scenario_type(
-	char const *path);
+	char const *path,
+	boolean *xbox_map);
 
 /* Loads the Custom Edition map `map_name` names into its tag cache and
 converts its tags for this build, copying its cache header to `header`

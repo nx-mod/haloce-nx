@@ -895,8 +895,10 @@ entries. `config.toml` keeps a string setting of up to 4096 characters, so
 a rotation that long is saved whole and read back after a restart.
 
 - The map is a multiplayer map's name (`bloodgulch`: the Xbox's
-  `maps/<name>.map`, else a Custom Edition map of `custom_maps`),
-  `custom_maps\<name>` (a Custom Edition map; `/` is taken for `\`), or a
+  `maps/<name>.map`, else a map of `custom_maps`),
+  `custom_maps\<name>` (a Custom Edition map, or an Xbox multiplayer map,
+  whose game needs every machine to have the `custom_xbox_multiplayer_maps`
+  capability: `docs/network_extensions.md`; `/` is taken for `\`), or a
   level's path (`levels\test\bloodgulch\bloodgulch`). A campaign level is
   played as co-op only: `<level>:coop`, at `server.coop_difficulty`.
 - The gametype (`slayer` when there is none) is a built-in's name
