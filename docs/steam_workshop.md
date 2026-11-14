@@ -39,6 +39,23 @@ comes from [Halo Content Evolved](https://github.com/Watanoge/halo-content-evolv
   be reached, the sign-in is forgotten on the device only. The screen then says
   that Steam's own settings can deauthorize it.
 
+## Joining an MCC game
+
+A joiner signed in with Steam installs a host's MCC package from Steam when
+the package is a Workshop item (`port/linux/game/mcc_share.c`,
+`steam_downloads.c`'s joiner's install), with no prompt, since the host is
+not the only source. MCC's shared files come from Steam too when they're
+missing; no host sends them. The host's offer is kept meanwhile, so the host
+keeps counting the joiner as downloading, and the package is checked against
+the host's fingerprint once it's in. If it doesn't match, or the install
+fails, the joiner is asked to download it from the host as before.
+
+Nothing new goes between the machines, so any host takes it, and a joiner
+without a sign-in downloads from the host. The fingerprints the lobby and the
+host's offer need are worked out in the host with the CPU's SHA-256 and
+CRC32 instructions (`host_mcc_hash.c`) and kept on the card
+(`mcc_fingerprints.txt`); an item is fingerprinted as it is installed.
+
 ## How it reaches Steam
 
 - **Connection:** a TCP session with one of Steam's connection servers, found

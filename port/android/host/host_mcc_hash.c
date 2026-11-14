@@ -1022,19 +1022,6 @@ static int sha256_file_sized(char const *path, unsigned char digest[32], unsigne
 	return ok;
 }
 
-/* a file's plain SHA-256, read a megabyte at a time (host_mcc_hash.h) */
-int host_sha256_file(char const *path, unsigned char digest[32], volatile int const *cancel)
-{
-	static unsigned char buffer[1 << 20];
-	static pthread_mutex_t buffer_lock = PTHREAD_MUTEX_INITIALIZER;
-	int ok;
-
-	pthread_mutex_lock(&buffer_lock);
-	ok = sha256_file_sized(path, digest, NULL, cancel, buffer, sizeof(buffer));
-	pthread_mutex_unlock(&buffer_lock);
-	return ok;
-}
-
 struct job {
 	int state;
 	volatile int cancel;

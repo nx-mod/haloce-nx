@@ -15,7 +15,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "tools/tests/host_mcc_hash.c"
-NDK = Path("/home/carlo/projects/Wiicompiled/.android-ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/clang")
+NDK = Path(os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT") or "/nonexistent",
+           "toolchains/llvm/prebuilt/linux-x86_64/bin/clang")
 PREFIX = b"GulchCE MCC content v1"
 
 
