@@ -730,6 +730,58 @@ static boolean custom_edition_cache_identify(
 	return identified;
 }
 
+/* whether the file at `path` is an Xbox cache (version 5) of a multiplayer
+scenario: one of custom_maps' Xbox multiplayer maps
+(custom_xbox_map_level) */
+static boolean xbox_multiplayer_cache_file(
+	char const *path)
+{
+	struct custom_edition_file file;
+	struct cache_file_identity identity;
+	boolean found = FALSE;
+
+	if (!custom_edition_file_open(&file, path))
+		return FALSE;
+	if (cache_file_identify(&file.source, &identity) == _cache_file_status_ok &&
+		identity.format == _cache_file_format_xbox_cache &&
+		identity.scenario_type == _scenario_type_multiplayer)
+	{
+		found = TRUE;
+	}
+	custom_edition_file_close(&file);
+
+	return found;
+}
+
+boolean custom_xbox_map_level(
+	char const *level_name)
+{
+	/* (the last answer, for a second: the game asks many times a frame, and
+	the file is looked for in the folders each time) */
+	static struct
+	{
+		char name[MAP_PATH_SIZE];
+		boolean found;
+		unsigned long looked_at;
+	} last;
+	char path[MAP_PATH_SIZE];
+	unsigned long now = GetTickCount() | 1;
+
+	if (!level_name ||
+		_strnicmp(level_name, CUSTOM_EDITION_LEVEL_NAME_PREFIX, csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX)) ||
+		strlen(level_name) >= sizeof(last.name))
+	{
+		return FALSE;
+	}
+	if (last.looked_at && now - last.looked_at < 1000 && !csstrcasecmp(last.name, level_name))
+		return last.found;
+	strcpy(last.name, level_name);
+	last.found = custom_edition_map_path(level_name, path) && xbox_multiplayer_cache_file(path);
+	last.looked_at = now;
+
+	return last.found;
+}
+
 static void custom_edition_cache_report_log(
 	struct custom_edition_load_report const *report)
 {
@@ -975,6 +1027,10 @@ boolean custom_edition_cache_present(
 			(int)MIN(64, map_share_name_base_length(name)), name);
 		return FALSE;
 	}
+	/* (an Xbox multiplayer map of custom_maps: played as the game's own
+	are, unpacked into the map cache, with no resource maps) */
+	if (xbox_multiplayer_cache_file(path))
+		return TRUE;
 	if (!halo_custom_edition_tag_cache())
 	{
 		error(_error_silent, "custom edition: the map '%s' cannot be played: %s", level_name,
@@ -1033,7 +1089,8 @@ boolean custom_edition_cache_playable(
 {
 	struct cache_file_identity identity;
 
-	return custom_edition_level_name(level_name) && custom_edition_cache_identify(level_name, &identity);
+	return custom_edition_level_name(level_name) &&
+		(custom_edition_cache_identify(level_name, &identity) || custom_xbox_map_level(level_name));
 }
 
 short custom_edition_cache_file_scenario_type(
@@ -1043,12 +1100,15 @@ short custom_edition_cache_file_scenario_type(
 	struct cache_file_identity identity;
 	short type = NONE;
 
-	if (!halo_custom_edition_tag_cache() || !custom_edition_file_open(&file, path))
+	if (!custom_edition_file_open(&file, path))
 	{
 		return NONE;
 	}
 	if (cache_file_identify(&file.source, &identity) == _cache_file_status_ok &&
-		identity.format == _cache_file_format_custom_edition_cache)
+		((identity.format == _cache_file_format_custom_edition_cache && halo_custom_edition_tag_cache()) ||
+			/* (an Xbox multiplayer map: custom_xbox_map_level) */
+			(identity.format == _cache_file_format_xbox_cache &&
+				identity.scenario_type == _scenario_type_multiplayer)))
 	{
 		type = (short)identity.scenario_type;
 	}

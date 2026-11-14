@@ -54,6 +54,23 @@ message text). A map without such tags of a kind plays without that
 resource map; one that lacks a resource map it needs is refused, saying
 which.
 
+### Xbox multiplayer maps
+
+An Xbox multiplayer map (an Xbox cache, version 5, of a multiplayer
+scenario: a mod's, such as Halo CE+ X's) can be put in `custom_maps` too. It
+is listed and named as a Custom Edition map is (`custom_maps\<name>`), but
+played as the game's own maps are: unpacked into the map cache
+(`cache_files_windows.c`) from its file there, under its level name, so it
+is never taken for the game's map of the name its header gives (Halo CE+ X's
+`bloodgulch.map` is "bloodgulch" in its header) and the game's is never
+taken for it. The map cache's multiplayer files hold 64 MB, where the
+Xbox's held 47. A network game on one needs every machine to have the
+`custom_xbox_multiplayer_maps` capability (`docs/network_extensions.md`): an
+OpenCE machine, which refuses such a map, is told so and removed, and map
+sharing offers the map only to machines that have it
+(`custom_xbox_map_level`, `custom_edition_cache.c`;
+`custom_xbox_multiplayer_maps_required`, `map_share.c`).
+
 ### In the menus
 
 The map lists (New Game's, and the Map screen of Create Game's INTERNET and

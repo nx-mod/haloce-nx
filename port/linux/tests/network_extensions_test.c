@@ -32,6 +32,7 @@ static int failures;
 /* ---------- the networking, as the test has it */
 
 static unsigned long now = 1000;
+static boolean custom_map_game;
 static char const *required_setting = "";
 static boolean machine_remote[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 
@@ -95,6 +96,11 @@ void distributed_send_notice_to_machine(long machine_index, char const *text)
 {
 	(void)machine_index;
 	snprintf(notice, sizeof(notice), "%s", text);
+}
+
+boolean custom_xbox_multiplayer_maps_required(void)
+{
+	return custom_map_game;
 }
 
 void display_error_text_when_main_menu_loaded(wchar_t const *text)
@@ -418,6 +424,23 @@ static void test_machine_gone_forgotten(void)
 	required_setting = "";
 }
 
+/* a game on an Xbox map of custom_maps requires it (map_share.c) */
+static void test_custom_map_game_requires(void)
+{
+	host_reset();
+	required_setting = "";
+	custom_map_game = TRUE;
+	machine_remote[9] = TRUE;
+	network_extensions_host_machine_accepted(9);
+	CHECK(((byte const *)message_data(sent_to_machine))[10 + strlen(NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS)] == 1);
+	now += ANSWER_MILLISECONDS;
+	network_extensions_host_update();
+	now += NOTICE_MILLISECONDS;
+	network_extensions_host_update();
+	CHECK(kicked == 9);
+	custom_map_game = FALSE;
+}
+
 /* the host's game requires a capability this build has not: the client
 leaves itself, with the host's text */
 static void test_client_leaves_without_required(void)
@@ -477,6 +500,7 @@ int main(void)
 	test_nothing_required_nobody_removed();
 	test_requirement_change_announced();
 	test_machine_gone_forgotten();
+	test_custom_map_game_requires();
 	test_client_leaves_without_required();
 	if (failures)
 	{

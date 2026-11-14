@@ -83,6 +83,16 @@ the Custom Edition maps folders alone, never from the game's own. */
 boolean custom_edition_level_name(
 	char const *level_name);
 
+/* Whether a level name is custom_maps\<name> of an Xbox multiplayer map (an
+Xbox cache, version 5): the game's own format, unpacked into the map cache
+as the game's maps are (cache_files_windows.c) rather than read by the Custom
+Edition loader, under its level name, never taken for the game's map of the
+name its header gives; a network game on one needs the
+custom_xbox_multiplayer_maps capability of each machine
+(network_extensions.h). */
+boolean custom_xbox_map_level(
+	char const *level_name);
+
 /* TRUE when Custom Edition maps may run (game.custom_edition) and the level
 `level_name` is a Custom Edition map's whose file is a Custom Edition cache:
 it is then read in place, never copied to the cache partition. */

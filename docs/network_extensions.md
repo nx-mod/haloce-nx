@@ -1,6 +1,6 @@
 # Network extensions
 
-Branch `custom_campaigns` (2026-11-14). Built: `port/linux/game/network_extensions.c`, tested by `tools/test_network_extensions.py`; not yet tried between two machines. No capability is required by any game yet but through `debug.network_extensions_require`.
+Branch `custom_campaigns` (2026-11-14). Built: `port/linux/game/network_extensions.c`, tested by `tools/test_network_extensions.py`; not yet tried between two machines. A game on an Xbox multiplayer map of `custom_maps` requires `custom_xbox_multiplayer_maps`; `debug.network_extensions_require` requires any capability, for testing.
 
 SlipstreamCE (and any build that adopts this) tells the machines of a game
 what it can do beyond the shared OpenCE protocol, as a list of capabilities
@@ -115,10 +115,13 @@ its end, a bad key) is dropped whole.
 - `network_extension_agreed(machine_index, key)` (host) and
   `network_extension_host_has(key)` (client), for the features.
 
-Its first user, in the next change: Xbox multiplayer maps in `custom_maps`
-(`custom_xbox_multiplayer_maps`), which an OpenCE machine cannot load
+Its first user: Xbox multiplayer maps in `custom_maps`
+(`custom_xbox_multiplayer_maps`, docs/custom_edition_caches.md, "Xbox
+multiplayer maps"), which an OpenCE machine cannot load
 (`custom_edition_cache_present` refuses a cache that is not Custom
-Edition's, and deletes such a download).
+Edition's, and deletes such a download). The host requires it while its
+game's map is one (`custom_xbox_multiplayer_maps_required`, map_share.c),
+and map sharing offers such a map only to machines that have it.
 
 ## To offer upstream
 

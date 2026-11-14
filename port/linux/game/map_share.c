@@ -77,6 +77,7 @@ a part file to open) it leaves for that thread.
 #include "rasterizer/rasterizer.h"
 #include "network_distributed.h"
 #include "cache_file_formats.h"
+#include "network_extensions.h"
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "map_share.h"
@@ -3247,6 +3248,22 @@ static boolean map_share_machine_needs_map_unlocked(
 	return machine && !machine->downloaded && host_machine_downloading(machine);
 }
 
+/* Whether this machine hosts a game on an Xbox multiplayer map of
+custom_maps (custom_xbox_map_level), which only machines with the
+custom_xbox_multiplayer_maps capability can play (network_extensions.c's
+table) */
+boolean custom_xbox_multiplayer_maps_required(
+	void)
+{
+	struct network_game *game;
+
+	if (!global_network_game_server_get())
+		return FALSE;
+	game = network_game_get_game();
+
+	return game && custom_xbox_map_level(game->map.name);
+}
+
 static boolean host_in_game(
 	void)
 {
@@ -3391,6 +3408,15 @@ static void host_request(
 	if (!game || csstrcmp(game->map.name, request->level_name) || !custom_edition_level_name(request->level_name) ||
 		!custom_edition_map_file_path(request->level_name, path) ||
 		(TEST_FLAG(request->wanted, _map_share_file_map) && !game->map.version))
+	{
+		host_offer(machine_index, _offer_unavailable);
+		return;
+	}
+	/* (an Xbox map of custom_maps, only to a machine that can play it: one
+	that has told the host so, network_extensions.h; a machine that cannot
+	is told and removed from the game) */
+	if (custom_xbox_map_level(request->level_name) &&
+		!network_extension_agreed(machine_index, NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS, 1))
 	{
 		host_offer(machine_index, _offer_unavailable);
 		return;

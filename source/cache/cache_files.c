@@ -1445,7 +1445,7 @@ long scenario_tags_load(
 	own maps are (port/linux/game/custom_edition_cache.c). It has no Xbox
 	vertex or index buffers. It is never the game's own map of that file
 	name: a Custom Edition map that cannot load is not played at all. */
-	if (custom_edition_level_name(scenario_name))
+	if (custom_edition_level_name(scenario_name) && !custom_xbox_map_level(scenario_name))
 	{
 		/* port: a protected map's structure bsp names the groups of tags
 		whose own are scrambled (port/linux/game/tag_validate.c) */
@@ -1489,7 +1489,11 @@ long scenario_tags_load(
 
 		return result;
 	}
-	if (cache_file_open(stripped_scenario_name, &cache_file_globals.header))
+	/* port: an Xbox map of custom_maps (custom_maps\<name>) is in the cache
+	file its level name was copied into, never that of the game's map its
+	header names (cache_files_windows.c) */
+	if (cache_file_open(custom_xbox_map_level(scenario_name) ? scenario_name : stripped_scenario_name,
+		&cache_file_globals.header))
 	{
 		tag_cache_base_address = physical_memory_get_tag_cache_base_address();
 		if (cache_file_header_verify(&cache_file_globals.header, scenario_name, TRUE))

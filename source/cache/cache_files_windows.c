@@ -209,7 +209,11 @@ enum
 
 	SOLO_CACHE_FILE_MAXIMUM_SIZE = 0x11600000,
 	MAIN_MENU_CACHE_FILE_MAXIMUM_SIZE = 0x02300000,
-	MULTIPLAYER_CACHE_FILE_MAXIMUM_SIZE = 0x02F00000,
+	/* port: 64 MB, where the Xbox's partition held 47: the cache files are
+	the host's memory (port/android/host/host_memory_files.c), and custom
+	Xbox multiplayer maps (custom_maps: Halo CE+ X's Intensity is 50 MB
+	unpacked) are larger than the game's own */
+	MULTIPLAYER_CACHE_FILE_MAXIMUM_SIZE = 0x04000000,
 };
 
 /* ---------- macros */
@@ -432,6 +436,15 @@ go, whose maps have the stock ones' names. Such a file is no map's until a
 map is copied into it again. */
 static boolean cached_map_file_stale[NUMBER_OF_CACHED_MAP_FILES];
 
+/* port: the level each cache file's map was copied for when it is an Xbox
+map of custom_maps (custom_maps\<name>, custom_xbox_map_level), else empty:
+such a map is found by its level name alone, and the game's maps only in
+the files holding none, whatever name their headers give (Halo CE+ X's
+bloodgulch.map is "bloodgulch" as the game's is). The level being copied,
+the same way. */
+static char cached_map_file_level[NUMBER_OF_CACHED_MAP_FILES][CUSTOM_EDITION_MAXIMUM_LEVEL_NAME_LENGTH + 1];
+static char cached_map_copying_level[CUSTOM_EDITION_MAXIMUM_LEVEL_NAME_LENGTH + 1];
+
 /* ---------- public code */
 
 void tags_header_register_vertex_and_index_buffers(
@@ -577,7 +590,14 @@ boolean cache_files_precache_in_progress(
 boolean cache_files_precache_is_copying_map(
 	const char *map_name)
 {
+	/* port: (an Xbox map of custom_maps: by its level name) */
+	if (custom_xbox_map_level(map_name))
+	{
+		return cache_file_globals.copying_to_map_file_index != NONE &&
+			!_stricmp(cached_map_copying_level, map_name);
+	}
 	if (cache_file_globals.copying_to_map_file_index != NONE &&
+		!cached_map_copying_level[0] &&
 		strcmp(
 			cache_file_globals.copying_to_map_file_name,
 			tag_name_strip_path(map_name)) == 0)
@@ -597,8 +617,11 @@ boolean cache_files_precache_map_loaded(
 	/* port: a Halo Custom Edition map (custom_maps\<name>) is read in place
 	and never copied to the cache partition; it is never the game's own map
 	of that file name (port/linux/game/custom_edition_cache.c) */
-	if (custom_edition_level_name(map_name))
+	if (custom_edition_level_name(map_name) && !custom_xbox_map_level(map_name))
 		return custom_edition_cache_playable(map_name);
+	/* port: (an Xbox map of custom_maps: by its level name) */
+	if (custom_xbox_map_level(map_name))
+		return cached_map_files_find_map(map_name) != NONE;
 	return cached_map_files_find_map(tag_name_strip_path(map_name)) != NONE;
 }
 
@@ -642,7 +665,11 @@ boolean cache_files_precache_map_begin(
 		struct cache_file_header header;
 		char path[256];
 
-		if (cache_file_read_header_from_dvd(cache_map_name, &header))
+		/* port: an Xbox map of custom_maps is read from its file there
+		(cache_file_get_map_path), under its level name */
+		boolean custom = custom_xbox_map_level(map_name);
+
+		if (cache_file_read_header_from_dvd(custom ? map_name : cache_map_name, &header))
 		{
 			long buffer_size = cache_copy_buffer_size(copy_map);
 			short map_file_index = cached_map_files_find_free_map(
@@ -655,7 +682,7 @@ boolean cache_files_precache_map_begin(
 			header (cached_map_files_find_map): a map file whose header names
 			another map would be copied again each time it was asked for, for
 			ever */
-			if (_stricmp(header.name, cache_map_name) != 0)
+			if (!custom && _stricmp(header.name, cache_map_name) != 0)
 			{
 				error(_error_silent, "map '%s' names itself '%s' in its header: refused", cache_map_name, header.name);
 				platform_log("map %s.map names itself '%s' in its header; a map's name must be its file's",
@@ -698,7 +725,12 @@ boolean cache_files_precache_map_begin(
 				sizeof(cache_file_globals.copying_to_map_file_name) - 1);
 			cache_file_globals.copying_to_map_file_name[
 				sizeof(cache_file_globals.copying_to_map_file_name) - 1] = 0;
-			cache_file_get_map_path(cache_map_name, path);
+			cache_file_get_map_path(custom ? map_name : cache_map_name, path);
+			/* port: (the level it is copied for: cached_map_file_level) */
+			csstrncpy(cached_map_file_level[map_file_index], custom ? map_name : "",
+				sizeof(cached_map_file_level[map_file_index]) - 1);
+			cached_map_file_level[map_file_index][sizeof(cached_map_file_level[map_file_index]) - 1] = 0;
+			csstrncpy(cached_map_copying_level, cached_map_file_level[map_file_index], sizeof(cached_map_copying_level) - 1);
 			platform_file_discard(cached_map_file_get_handle(map_file_index));
 			error(_error_silent, "starting precaching of map '%s'", cache_map_name);
 			cache_copy_begin(
@@ -1308,6 +1340,14 @@ static void cache_file_get_map_path(
 	(port/linux/game/custom_campaigns.c) */
 	if (custom_campaign_map_path(map_name, FALSE, path))
 		return;
+	/* port: an Xbox map of custom_maps, by its level name (custom_maps\<name>:
+	port/linux/game/custom_edition_cache.c) */
+	if (custom_xbox_map_level(map_name))
+	{
+		if (!custom_edition_map_file_path(map_name, path))
+			path[0] = 0;
+		return;
+	}
 	length = snprintf(path, MAXIMUM_MAP_PATH_LENGTH, "%s%s.map", cache_files_map_directory(), map_name);
 
 	if (length < 0 || length >= MAXIMUM_MAP_PATH_LENGTH)
@@ -1759,16 +1799,21 @@ static short cached_map_files_find_map(
 	const char *map_name)
 {
 	short map_file_index;
+	boolean custom = custom_xbox_map_level(map_name); /* port */
 
 	for (map_file_index = 0;
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;
 		map_file_index++)
 	{
-		/* port: (not a stale file's, cache_files_forget_cached_maps) */
-		if (!cached_map_file_stale[map_file_index] &&
-			_stricmp(
-				map_name,
-				cached_map_file_get(map_file_index)->header.name) == 0)
+		/* port: (not a stale file's, cache_files_forget_cached_maps; an Xbox
+		map of custom_maps by its level name, the game's maps in the files
+		of none) */
+		if (cached_map_file_stale[map_file_index])
+			continue;
+		if (custom ?
+			!_stricmp(map_name, cached_map_file_level[map_file_index]) && cached_map_file_get(map_file_index)->header.name[0] :
+			!cached_map_file_level[map_file_index][0] &&
+				_stricmp(map_name, cached_map_file_get(map_file_index)->header.name) == 0)
 		{
 			return map_file_index;
 		}
@@ -1807,6 +1852,7 @@ void cache_files_forget_cached_maps(
 		if (map_file->header.name[0])
 			emptied++;
 		memset(&map_file->header, 0, sizeof(map_file->header));
+		cached_map_file_level[map_file_index][0] = 0;
 		if (map_file->file != INVALID_HANDLE_VALUE)
 			platform_file_discard(map_file->file);
 	}

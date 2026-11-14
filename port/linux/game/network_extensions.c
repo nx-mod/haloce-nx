@@ -76,6 +76,9 @@ enum
 
 /* ---------- this build's capabilities */
 
+/* map_share.c's: a game on an Xbox multiplayer map of custom_maps */
+boolean custom_xbox_multiplayer_maps_required(void);
+
 struct capability
 {
 	char const *key;
@@ -90,7 +93,7 @@ struct capability
 static struct capability const capabilities[] =
 {
 	{ NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS, 1,
-		"You need a client with support for custom OG Xbox multiplayer maps.", NULL },
+		"You need a client with support for custom OG Xbox multiplayer maps.", custom_xbox_multiplayer_maps_required },
 };
 
 #define CAPABILITY_COUNT ((long)(sizeof(capabilities) / sizeof(capabilities[0])))
