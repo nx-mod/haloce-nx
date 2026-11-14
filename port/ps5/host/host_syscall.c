@@ -28,6 +28,9 @@ Per family:
 - the standard output and error go to the log, a line at a time, prefixed
   "game: ";
 - memory is host_memory.c's, futexes host_futex.c's;
+- the game's map cache files (z/cacheNNN.map) are kept in the host's
+  memory (host_memory_files.c, Android's): a call on one of their
+  descriptors or paths goes there first;
 - clocks translated (Linux's MONOTONIC is FreeBSD's 4, BOOTTIME its
   UPTIME), timespec and timeval in the guest's 32-bit layouts;
 - identity and limits answered here: a Linux 5.15 on x86_64, user 1000,
@@ -47,6 +50,7 @@ Per family:
 #include "ps5_host.h"
 #include "freebsd_abi.h"
 #include "host_syscall_tables.h"
+#include "host_memory_files.h"
 
 #include <ps5platform/kernel.h>
 
@@ -885,6 +889,26 @@ static long long guest_call(long long number, long long a, long long b, long lon
 	char buffer[PATH_SIZE], second_buffer[PATH_SIZE];
 	const char *path, *second_path;
 	long error = 0;
+	int handled;
+	long long memory_result;
+
+	/* the game's map cache files, kept in memory (host_memory_files.c, as
+	Android's host): a call on one of their descriptors or paths */
+	memory_result = host_memory_file_guest_descriptor_call(number, a, b, c, d, e, &handled);
+	if (handled)
+		return memory_result;
+	if ((number == GUEST_SYS_openat || number == GUEST_SYS_newfstatat || number == GUEST_SYS_faccessat ||
+		number == GUEST_SYS_unlinkat || number == GUEST_SYS_utimensat) && b)
+	{
+		path = path_of((int)a, (uint64_t)b, buffer, &error);
+		if (path)
+		{
+			memory_result = host_memory_file_guest_path_call(number, path, a, b, c, d, &handled);
+			if (handled)
+				return memory_result;
+		}
+		error = 0;
+	}
 
 	switch (number)
 	{

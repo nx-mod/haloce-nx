@@ -5,7 +5,8 @@ Tests of the translation of the guest's system calls
 (port/android/host/host_syscall.c) on the build machine, whatever its
 architecture: the numbers, open's flags, the kernel stat layout, fcntl's
 locks, _llseek, vectored I/O (with preadv's and pwritev's offsets in
-halves), sysinfo, sleeps and futex timeouts. Built and run by
+halves), sysinfo, sleeps and futex timeouts; and the map cache files kept
+in memory (host_memory_files.c), reached through the same calls. Built and run by
 tools/test_host_syscall.py; exits nonzero on a failure.
 
 The calls are made as the guest makes them, through host_syscall, with the
@@ -14,6 +15,7 @@ are 32-bit).
 */
 
 #include "../host/host_syscall.c"
+#include "../host/host_memory_files.c"
 
 #include <dirent.h>
 #include <stdarg.h>
@@ -76,6 +78,58 @@ int host_low_owns(uintptr_t address, size_t size)
 	(void)address;
 	(void)size;
 	return 1;
+}
+
+/* posix_files.c's, which host_memory_files.c calls for every other file:
+not reached by these tests */
+int posix_stat(const char *path, struct posix_file_information *information)
+{
+	(void)path;
+	(void)information;
+	errno = ENOSYS;
+	return -1;
+}
+
+int posix_fstat(int descriptor, struct posix_file_information *information)
+{
+	(void)descriptor;
+	(void)information;
+	errno = ENOSYS;
+	return -1;
+}
+
+int posix_set_file_times(const char *path, posix_ulong access_seconds, posix_ulong access_nanoseconds,
+	posix_ulong modification_seconds, posix_ulong modification_nanoseconds)
+{
+	(void)path;
+	(void)access_seconds;
+	(void)access_nanoseconds;
+	(void)modification_seconds;
+	(void)modification_nanoseconds;
+	errno = ENOSYS;
+	return -1;
+}
+
+int posix_seek(int descriptor, posix_long offset_low, posix_long offset_high, int whence,
+	posix_ulong *position_low, posix_ulong *position_high)
+{
+	(void)descriptor;
+	(void)offset_low;
+	(void)offset_high;
+	(void)whence;
+	(void)position_low;
+	(void)position_high;
+	errno = ENOSYS;
+	return -1;
+}
+
+int posix_truncate(int descriptor, posix_ulong size_low, posix_ulong size_high)
+{
+	(void)descriptor;
+	(void)size_low;
+	(void)size_high;
+	errno = ENOSYS;
+	return -1;
 }
 
 /* ---------- guest memory */
@@ -740,6 +794,141 @@ static void test_futex_timeouts(void)
 }
 
 /* the files go in a new folder in argv[1], or in /tmp */
+/* The map cache files (<save root>/z/cacheNNN.map) kept in memory: the
+files a build that kept them on the storage left there deleted the first
+time one is named, and nothing else of the folder; then each call the
+cache code makes, as the guest makes it, answered from memory. */
+static void test_memory_files(void)
+{
+	char folder[512];
+	char stored[600], saved[600], high[600];
+	char *cache = path_in("z/cache003.map");
+	char *other = path_in("z/cache004.map");
+	char *not_cache = path_in("z/cache0003.map");
+	struct halo_guest_kstat *information = low_alloc(sizeof(*information));
+	struct halo_guest_iovec *vector = low_alloc(sizeof(*vector) * 2);
+	uint8_t *bytes = low_alloc(8192);
+	uint8_t *check = low_alloc(8192);
+	int64_t *position = low_alloc(sizeof(*position));
+	struct stat host_information;
+	long long fd, second;
+	int index, file;
+
+	snprintf(folder, sizeof(folder), "%s/z", directory);
+	CHECK(mkdir(folder, 0755) == 0);
+	snprintf(stored, sizeof(stored), "%s/cache001.map", folder);
+	snprintf(high, sizeof(high), "%s/CACHE999.MAP", folder);
+	snprintf(saved, sizeof(saved), "%s/savegame.bin", folder);
+	file = open(stored, O_CREAT | O_WRONLY, 0644);
+	CHECK(file >= 0 && write(file, "old map", 7) == 7);
+	close(file);
+	file = open(high, O_CREAT | O_WRONLY, 0644);
+	close(file);
+	file = open(saved, O_CREAT | O_WRONLY, 0644);
+	close(file);
+
+	/* not a cache file's name: the storage's */
+	CHECK(host_memory_file_path(not_cache) < 0);
+	CHECK(host_memory_file_path("cache003.map") < 0);
+	CHECK(host_memory_file_path("xz/cache003.map") < 0);
+	CHECK(stat(stored, &host_information) == 0);
+	CHECK(host_memory_file_path(cache) == 3);
+	/* (one named: the folder's stored cache files are gone, the save is not) */
+	CHECK(stat(stored, &host_information) != 0 && errno == ENOENT);
+	CHECK(stat(high, &host_information) != 0 && errno == ENOENT);
+	CHECK(stat(saved, &host_information) == 0);
+	/* (relative to the folder the guest works in, as the PS5's paths can be) */
+	CHECK(host_memory_file_path("z/cache003.map") == 3);
+
+	/* none yet: opening without O_CREAT fails, as stat does */
+	CHECK(call(GUEST_SYS_openat, guest_int(AT_FDCWD), guest_address(cache), GUEST_O_RDWR, 0, 0) == -ENOENT);
+	CHECK(call(GUEST_SYS_newfstatat, guest_int(AT_FDCWD), guest_address(cache), guest_address(information), 0, 0) ==
+		-ENOENT);
+	CHECK(call(GUEST_SYS_faccessat, guest_int(AT_FDCWD), guest_address(cache), 0, 0, 0) == -ENOENT);
+
+	fd = call(GUEST_SYS_openat, guest_int(AT_FDCWD), guest_address(cache),
+		GUEST_O_RDWR | GUEST_O_CREAT | GUEST_O_CLOEXEC, 0644, 0);
+	CHECK(fd >= HOST_MEMORY_FILE_DESCRIPTOR);
+	/* nothing on the storage */
+	CHECK(stat(cache, &host_information) != 0);
+	CHECK(call(GUEST_SYS_fcntl, fd, GUEST_F_SETFD, 1, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_fcntl, fd, GUEST_F_GETFL, 0, 0, 0) == GUEST_O_RDWR);
+	CHECK(call(GUEST_SYS_openat, guest_int(AT_FDCWD), guest_address(cache),
+		GUEST_O_RDWR | GUEST_O_CREAT | GUEST_O_EXCL, 0644, 0) == -EEXIST);
+
+	/* sized as the game sizes a slot, then written and read back */
+	CHECK(call(GUEST_SYS_ftruncate, fd, 3 * 1024 * 1024 + 5, 0, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_fstat, fd, guest_address(information), 0, 0, 0) == 0);
+	CHECK(information->st_size == 3 * 1024 * 1024 + 5 && S_ISREG(information->st_mode));
+	for (index = 0; index < 8192; index++)
+		bytes[index] = (uint8_t)(index * 13);
+	/* across a piece's end */
+	CHECK(call(GUEST_SYS_pwrite64, fd, guest_address(bytes), 8192, 1024 * 1024 - 100, 0) == 8192);
+	CHECK(call(GUEST_SYS_pread64, fd, guest_address(check), 8192, 1024 * 1024 - 100, 0) == 8192);
+	CHECK(memcmp(bytes, check, 8192) == 0);
+	/* never written: zeros; past the end: nothing */
+	CHECK(call(GUEST_SYS_pread64, fd, guest_address(check), 16, 2 * 1024 * 1024 + 7, 0) == 16);
+	CHECK(check[0] == 0 && check[15] == 0);
+	CHECK(call(GUEST_SYS_pread64, fd, guest_address(check), 16, 3 * 1024 * 1024 + 5, 0) == 0);
+
+	/* the position: _llseek, then write, readv */
+	CHECK(call(GUEST_SYS__llseek, fd, 0, 0, guest_address(position), GUEST_SEEK_END) == 0);
+	CHECK(*position == 3 * 1024 * 1024 + 5);
+	CHECK(call(GUEST_SYS__llseek, fd, 0, 10, guest_address(position), GUEST_SEEK_SET) == 0 && *position == 10);
+	CHECK(call(GUEST_SYS_write, fd, guest_address(bytes), 6, 0, 0) == 6);
+	CHECK(call(GUEST_SYS__llseek, fd, 0, 10, guest_address(position), GUEST_SEEK_SET) == 0);
+	memset(check, 0, 8);
+	vector[0].base = guest_address(check);
+	vector[0].length = 2;
+	vector[1].base = guest_address(check + 2);
+	vector[1].length = 4;
+	CHECK(call(GUEST_SYS_readv, fd, guest_address(vector), 2, 0, 0) == 6);
+	CHECK(memcmp(check, bytes, 6) == 0);
+	CHECK(call_positional(GUEST_SYS_preadv, (int)fd, vector, 2, 1024 * 1024 - 100) == 6);
+	CHECK(memcmp(check, bytes, 6) == 0);
+
+	/* a second open of the slot has its own position, the same bytes */
+	second = call(GUEST_SYS_openat, guest_int(AT_FDCWD), guest_address(cache), GUEST_O_RDONLY, 0, 0);
+	CHECK(second >= HOST_MEMORY_FILE_DESCRIPTOR && second != fd);
+	CHECK(call(GUEST_SYS_read, second, guest_address(check), 4, 0, 0) == 4 && check[0] == 0);
+	CHECK(call(GUEST_SYS_close, second, 0, 0, 0, 0) == 0);
+
+	/* emptied and sized again (platform_file_discard): the old bytes are gone */
+	CHECK(call(GUEST_SYS_ftruncate, fd, 0, 0, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_ftruncate, fd, 3 * 1024 * 1024 + 5, 0, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_pread64, fd, guest_address(check), 8, 1024 * 1024 - 100, 0) == 8);
+	CHECK(check[0] == 0 && check[7] == 0);
+
+	/* the posix.h helpers the guest imports */
+	{
+		struct posix_file_information posix_information;
+		posix_ulong low_half = 0, high_half = 0;
+
+		CHECK(host_memory_posix_fstat((int)fd, &posix_information) == 0);
+		CHECK(posix_information.size_low == 3 * 1024 * 1024 + 5 && posix_information.size_high == 0);
+		CHECK(host_memory_posix_stat(cache, &posix_information) == 0);
+		CHECK(host_memory_posix_truncate((int)fd, 4096, 0) == 0);
+		CHECK(host_memory_posix_seek((int)fd, 0, 0, SEEK_END, &low_half, &high_half) == 0);
+		CHECK(low_half == 4096 && high_half == 0);
+		CHECK(host_memory_posix_set_file_times(cache, 0, 0, 1000, 5) == 0);
+		CHECK(call(GUEST_SYS_newfstatat, guest_int(AT_FDCWD), guest_address(cache), guest_address(information), 0,
+			0) == 0);
+		CHECK(information->st_size == 4096 && information->mtime_seconds == 1000);
+		/* (another file goes to posix_files.c's: the stub here) */
+		CHECK(host_memory_posix_stat(saved, &posix_information) == -1 && errno == ENOSYS);
+	}
+
+	/* calls whose first argument is no descriptor are never taken for one */
+	CHECK(call(GUEST_SYS_getpid, fd, 0, 0, 0, 0) == getpid());
+
+	CHECK(call(GUEST_SYS_close, fd, 0, 0, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_close, fd, 0, 0, 0, 0) == -EBADF);
+	CHECK(call(GUEST_SYS_unlinkat, guest_int(AT_FDCWD), guest_address(cache), 0, 0, 0) == 0);
+	CHECK(call(GUEST_SYS_newfstatat, guest_int(AT_FDCWD), guest_address(cache), guest_address(information), 0, 0) ==
+		-ENOENT);
+	CHECK(call(GUEST_SYS_unlinkat, guest_int(AT_FDCWD), guest_address(other), 0, 0, 0) == -ENOENT);
+}
+
 int main(int argc, char **argv)
 {
 	char template[256];
@@ -773,6 +962,7 @@ int main(int argc, char **argv)
 	test_sysinfo();
 	test_sleeps();
 	test_futex_timeouts();
+	test_memory_files();
 
 	snprintf(command, sizeof(command), "rm -rf '%s'", directory);
 	if (system(command) != 0)

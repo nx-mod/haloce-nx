@@ -34,6 +34,9 @@ Per call:
   rlimit64 (prlimit64, and getrlimit, which becomes prlimit64), the signal
   mask of rt_sigprocmask (8 bytes), f_owner_ex;
 - memory mappings must stay below 4 GB (host_memory.c);
+- the game's map cache files (z/cacheNNN.map) are kept in the host's
+  memory, not on the storage: a call on one of their descriptors or paths
+  goes to host_memory_files.c first;
 - the standard output and error streams go to logcat (on Android; on Linux
   arm64, port/linux/host, they are the process's);
 - process exit, and calls that have no meaning for the guest (signal
@@ -49,6 +52,7 @@ _llseek's pointer.
 */
 
 #include "host.h"
+#include "host_memory_files.h"
 #include "halo_guest_syscall.h"
 
 #include <errno.h>
@@ -651,6 +655,22 @@ static long passthrough_number(long long number)
 long long host_syscall(long long number, long long a, long long b, long long c,
 	long long d, long long e, long long f)
 {
+	int handled;
+	long long result;
+
+	/* the game's map cache files, kept in memory (host_memory_files.c): a
+	call on one of their descriptors or paths */
+	result = host_memory_file_guest_descriptor_call(number, a, b, c, d, e, &handled);
+	if (handled)
+		return result;
+	if ((number == GUEST_SYS_openat || number == GUEST_SYS_newfstatat || number == GUEST_SYS_faccessat ||
+		number == GUEST_SYS_unlinkat || number == GUEST_SYS_utimensat) && b)
+	{
+		result = host_memory_file_guest_path_call(number, GUEST(const char *, b), a, b, c, d, &handled);
+		if (handled)
+			return result;
+	}
+
 	switch (number)
 	{
 	case GUEST_SYS_write:

@@ -425,6 +425,12 @@ static short cached_map_files_find_map(
 
 static struct cache_file_runtime_globals cache_file_globals;
 
+/* port: the cache files whose maps came from before the maps were last
+changed (cache_files_forget_cached_maps): a custom campaign mounted or let
+go, whose maps have the stock ones' names. Such a file is no map's until a
+map is copied into it again. */
+static boolean cached_map_file_stale[NUMBER_OF_CACHED_MAP_FILES];
+
 /* ---------- public code */
 
 void tags_header_register_vertex_and_index_buffers(
@@ -684,6 +690,7 @@ boolean cache_files_precache_map_begin(
 				sizeof(struct cache_file_header));
 			cache_file_globals.copy_in_progress = TRUE;
 			cache_file_globals.copying_to_map_file_index = map_file_index;
+			cached_map_file_stale[map_file_index] = FALSE; /* port */
 			strncpy(
 				cache_file_globals.copying_to_map_file_name,
 				cache_map_name,
@@ -1750,13 +1757,54 @@ static short cached_map_files_find_map(
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;
 		map_file_index++)
 	{
-		if (_stricmp(
-			map_name,
-			cached_map_file_get(map_file_index)->header.name) == 0)
+		/* port: (not a stale file's, cache_files_forget_cached_maps) */
+		if (!cached_map_file_stale[map_file_index] &&
+			_stricmp(
+				map_name,
+				cached_map_file_get(map_file_index)->header.name) == 0)
 		{
 			return map_file_index;
 		}
 	}
 
 	return NONE;
+}
+
+/* port: Forgets every map the cache files hold, so that each map is copied
+again from its file the next time it is played: the maps changed under the
+names (a custom campaign mounted or let go: its a10 is not the stock
+a10). A file no map is open from, and none is being copied into, is emptied
+at once (its memory given back: the hosts keep the cache files in memory,
+port/android/host/host_memory_files.c); the others keep their bytes for the
+map using them, and are no map's from now on (cached_map_files_find_map)
+until one is copied into them. */
+void cache_files_forget_cached_maps(
+	void)
+{
+	short map_file_index;
+	short emptied = 0;
+
+	for (map_file_index = 0;
+		map_file_index < NUMBER_OF_CACHED_MAP_FILES;
+		map_file_index++)
+	{
+		struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+
+		cached_map_file_stale[map_file_index] = TRUE;
+		if (map_file_index == cache_file_globals.open_map_file_index ||
+			(cache_file_globals.copy_in_progress &&
+				map_file_index == cache_file_globals.copying_to_map_file_index))
+		{
+			continue;
+		}
+		if (map_file->header.name[0])
+			emptied++;
+		memset(&map_file->header, 0, sizeof(map_file->header));
+		if (map_file->file != INVALID_HANDLE_VALUE)
+			platform_file_discard(map_file->file);
+	}
+	platform_log("map cache: the cached maps forgotten (%d emptied, the open map's and a copy's kept until replaced)",
+		emptied);
+
+	return;
 }

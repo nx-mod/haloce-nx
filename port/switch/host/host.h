@@ -88,27 +88,9 @@ void host_dk_frame_report(struct host_dk_frame_report *report);
 /* the host descriptor behind a guest one, or -1 (host_syscall.c) */
 int host_guest_fd(int guest_fd);
 
-/* the game's map cache files kept in memory (host_memory_files.c): a path's
-slot, or -1; an open gives a descriptor of HOST_MEMORY_FILE_DESCRIPTOR and
-up; the rest take one and answer as the system calls do, a negated errno
-on failure */
-#define HOST_MEMORY_FILE_DESCRIPTOR 0x40000000
-struct stat;
-struct timespec;
-int host_memory_file_path(const char *path);
-int host_memory_file_is(int descriptor);
-int host_memory_file_open(int slot, const char *path, int flags);
-int host_memory_file_close(int descriptor);
-long long host_memory_file_read(int descriptor, void *buffer, size_t count);
-long long host_memory_file_write(int descriptor, const void *buffer, size_t count);
-long long host_memory_file_pread(int descriptor, void *buffer, size_t count, long long offset);
-long long host_memory_file_pwrite(int descriptor, const void *buffer, size_t count, long long offset);
-long long host_memory_file_seek(int descriptor, long long offset, int whence);
-int host_memory_file_truncate(int descriptor, long long size);
-int host_memory_file_fstat(int descriptor, struct stat *out);
-int host_memory_file_stat(int slot, const char *path, struct stat *out);
-int host_memory_file_unlink(int slot, const char *path);
-int host_memory_file_set_times(int slot, const struct timespec *times);
+/* the game's map cache files kept in memory (host_memory_files.c, shared
+with Android's and the PS5's hosts) */
+#include "../../android/host/host_memory_files.h"
 
 /* logs, shows the message to the player and terminates */
 void host_fatal(const char *format, ...) __attribute__((format(printf, 1, 2), noreturn));

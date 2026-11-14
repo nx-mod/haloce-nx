@@ -621,13 +621,12 @@ static struct platform_file *file_from_handle(HANDLE handle)
 }
 
 /* The game is about to write a new map over one of its map cache files
-(source/cache/cache_files_windows.c). The Switch's host keeps those files in
-memory (port/switch/host/host_memory_files.c): the file is emptied and given
-its size back, so the old map's memory goes before the new map's is taken.
-A file on a disk is written over as it is. */
+(source/cache/cache_files_windows.c). The hosts keep those files in memory
+(port/android/host/host_memory_files.c, on the Switch, Android and the PS5):
+the file is emptied and given its size back, so the old map's memory goes
+before the new map's is taken. */
 void platform_file_discard(HANDLE handle)
 {
-#ifdef HALO_SWITCH
 	struct platform_file *file = file_from_handle(handle);
 	struct posix_file_information information;
 
@@ -636,9 +635,6 @@ void platform_file_discard(HANDLE handle)
 		posix_truncate(file->descriptor, 0, 0);
 		posix_truncate(file->descriptor, information.size_low, information.size_high);
 	}
-#else
-	(void)handle;
-#endif
 }
 
 HANDLE WINAPI CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mode,

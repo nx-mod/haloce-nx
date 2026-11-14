@@ -68,8 +68,9 @@ def test_host_syscall(tmp_path):
         [cc, "-std=gnu11", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
          "-Wno-sign-compare", "-Wno-missing-field-initializers", "-O1",
          f"-I{ROOT / 'port' / 'android' / 'include'}", f"-I{ROOT / 'port' / 'android' / 'host'}",
+         f"-I{ROOT / 'port' / 'linux' / 'src'}",
          str(ROOT / "port" / "android" / "tests" / "host_syscall_test.c"),
-         "-o", str(binary)],
+         "-o", str(binary), "-lpthread"],
         check=True,
     )
     result = subprocess.run([str(binary), str(tmp_path)], capture_output=True, text=True)

@@ -102,6 +102,8 @@ SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thre
                      "host_mcc_convert.c",
                      # (an MCC package's fingerprint on the host's threads)
                      "host_mcc_hash.c",
+                     # (the game's map cache files kept in memory)
+                     "host_memory_files.c",
                      # (the Steam Workshop screen's Steam client: steam_downloads.h)
                      "steam_cm.c", "steam_crypto.c", "steam_depot.c", "steam_downloads.c", "steam_net.c",
                      "steam_seal.c", "steam_unpack.c")
