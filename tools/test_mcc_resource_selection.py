@@ -10,9 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GAME = ROOT / 'port/linux/game'
 
 
-@pytest.fixture(scope='module')
-def resource_tool(tmp_path_factory):
-    work = tmp_path_factory.mktemp('resource-choice')
+def build_resource_tool(work, android=False):
     game = GAME
     for name in ('mcc_resources.h', 'mcc_package.h', 'mcc_validation.h', 'mcc_resource_check.inl', 'mcc_validation.inl'):
         (work / name).write_text((game / name).read_text())
@@ -31,6 +29,29 @@ def resource_tool(tmp_path_factory):
 #define SetEvent(h) ((void)(h))
 #define WaitForSingleObject(h,t) ((void)(h),(void)(t),WAIT_OBJECT_0)
 #define CloseHandle(h) ((void)(h))
+/* (the resource checksums' cache stamps files as Win32 does: by stat here,
+once however often this header is included) */
+#ifndef TEST_XTL_FILE_ATTRIBUTES
+#define TEST_XTL_FILE_ATTRIBUTES
+#include <sys/stat.h>
+typedef unsigned long DWORD;
+typedef struct { DWORD dwLowDateTime, dwHighDateTime; } FILETIME;
+typedef struct { DWORD dwFileAttributes; FILETIME ftCreationTime, ftLastAccessTime, ftLastWriteTime;
+    DWORD nFileSizeHigh, nFileSizeLow; } WIN32_FILE_ATTRIBUTE_DATA;
+#define GetFileExInfoStandard 0
+static __inline__ int GetFileAttributesExA(char const *path, int level, WIN32_FILE_ATTRIBUTE_DATA *data) {
+    struct stat status;
+    (void)level;
+    if (stat(path, &status)) return 0;
+    data->dwFileAttributes = S_ISDIR(status.st_mode) ? 16 : 128;
+    data->ftCreationTime.dwLowDateTime = data->ftLastWriteTime.dwLowDateTime = (DWORD)status.st_mtime;
+    data->ftCreationTime.dwHighDateTime = data->ftLastWriteTime.dwHighDateTime = 1;
+    data->ftLastAccessTime = data->ftLastWriteTime;
+    data->nFileSizeLow = (DWORD)status.st_size;
+    data->nFileSizeHigh = (DWORD)((unsigned long long)status.st_size >> 32);
+    return 1;
+}
+#endif
 ''')
     resources = (game / 'mcc_resources.c').read_text().replace('../../third_party/zlib/zlib_prefixed.h',
         (ROOT / 'port/third_party/zlib/zlib_prefixed.h').as_posix())
@@ -47,8 +68,25 @@ def resource_tool(tmp_path_factory):
         'if(denied && strstr(path,"mcc_maps/p/sounds.map")) {errno=EACCES;return NULL;}\n'
         'return fopen(path,mode); }\n#define fopen test_open\n#include "' +
         (game / 'mcc_package.c').as_posix() + '"\n')
+    if android:
+        # (the same driver as Android builds it: its host hash jobs in play)
+        (work / 'android.c').write_text('#define HALO_ANDROID 1\n#include "driver.c"\n')
+        return compile_tool(work, [work / 'android.c', package, GAME / 'mcc_sha256.c', work / 'crc.c'])
     return compile_tool(work, [work / 'driver.c', package, GAME / 'mcc_sha256.c',
                               work / 'crc.c'])
+
+
+@pytest.fixture(scope='module')
+def resource_tool(tmp_path_factory):
+    return build_resource_tool(tmp_path_factory.mktemp('resource-choice'))
+
+
+def test_early_failure_cancels_no_host_job(tmp_path):
+    # (a check failing before its host job is set must not cancel the host's job 0)
+    tool = build_resource_tool(tmp_path, android=True)
+    result = subprocess.run([str(tool), 'early_failure'], capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'none 0\n'
 
 
 @pytest.mark.parametrize('case', ['match', 'mismatch', 'override', 'unused', 'changed', 'cache', 'stage', 'both',
