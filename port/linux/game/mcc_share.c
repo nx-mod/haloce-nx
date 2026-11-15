@@ -432,7 +432,7 @@ static uint32_t mcc_share_upload_limit(
 	long kilobytes = config_integer("network.map_share_upload");
 
 	(void)user;
-	return (uint32_t)PIN(kilobytes, 16, 20480) * 1024 / 100 * (uint32_t)map_share_upload_percent();
+	return (uint32_t)PIN(kilobytes, 16, 256000) * 1024 / 100 * (uint32_t)map_share_upload_percent();
 }
 
 static uint64_t mcc_share_free_bytes(

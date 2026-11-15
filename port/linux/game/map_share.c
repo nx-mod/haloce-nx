@@ -186,8 +186,9 @@ enum
 	/* the kilobytes a second a machine sends, at least and at most: the
 	host 20 MB/s, a player helping it 10 MB/s */
 	MINIMUM_UPLOAD_KILOBYTES = 16,
-	MAXIMUM_HOST_UPLOAD_KILOBYTES = 20480,
-	MAXIMUM_SEED_UPLOAD_KILOBYTES = 10240,
+	/* (250 MB/s, both: docs/file_share_tcp_plan.md) */
+	MAXIMUM_HOST_UPLOAD_KILOBYTES = 256000,
+	MAXIMUM_SEED_UPLOAD_KILOBYTES = 256000,
 
 	/* network_server_manager.c's host state in game, transport_endpoint_winsock.c's
 	stream endpoint and hud_messaging.c's centred text (their enums are their

@@ -2331,7 +2331,13 @@ static void stream_tune(struct stream *stream, int bulk_count)
 	else if (stream->share < 1000)
 		stream->share = stream->share + 50 < 1000 ? stream->share + 50 : 1000;
 	/* (the cap in KCP messages a second, over twice the round trip) */
-	ideal = (kilobytes > 0 ? kilobytes : 1024) * 1024 / STREAM_CHUNK_SIZE * 2 * rtt / 1000;
+	/* (in 64 bits: 250 MB/s over a long round trip passes a long's range;
+	no more than the whole budget, which the window never passes anyway) */
+	{
+		long long wanted = (long long)(kilobytes > 0 ? kilobytes : 1024) * 1024 / STREAM_CHUNK_SIZE * 2 * rtt / 1000;
+
+		ideal = wanted < BULK_WINDOW_BUDGET ? (long)wanted : BULK_WINDOW_BUDGET;
+	}
 	budget = BULK_WINDOW_BUDGET / (bulk_count > 0 ? bulk_count : 1);
 	window = ideal < budget ? ideal : budget;
 	if (window > BULK_WINDOW_MAXIMUM)
