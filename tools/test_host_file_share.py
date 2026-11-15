@@ -198,9 +198,13 @@ def test_rate_in_a_game_leaves_the_game_and_five_percent(transfer):
 
 def test_rate_backs_off_when_the_players_pings_rise(transfer):
     steps = rate(transfer, "f 0 0 0 262144000\ns 10485760 300\nt 500\nf 1 1048576 40 262144000\nt 100\n"
-                           "s 9000000 0\nt 500\nf 1 1048576 80 262144000\ns 9000000 0\nt 500\n")
-    going = (9000000 * 1000 / 500 + MB) / 0.95
-    assert abs(float(steps[-1]["capacity"]) - 0.9 * min(going, 20 * MB)) < 2
+                           "s 9000000 0\nt 500\nf 1 1048576 80 262144000\ns 9000000 0\nt 500\n"
+                           "f 1 1048576 80 262144000\ns 9000000 0\nt 500\n")
+    # (one half second over the threshold is not enough; the second running cuts, from the most of the last two s)
+    assert float(steps[-2]["capacity"]) >= float(steps[-3]["capacity"])
+    going = (10485760 * 1000 / 500 + MB) / 0.95
+    assert abs(float(steps[-1]["capacity"]) - min(0.9 * going, float(steps[-2]["capacity"]))) < 2
+    assert float(steps[-1]["capacity"]) < float(steps[-2]["capacity"])
 
 
 def test_rate_in_a_game_with_the_line_unknown_starts_at_the_limit(transfer):
@@ -212,7 +216,7 @@ def test_rate_in_a_game_with_the_line_unknown_starts_at_the_limit(transfer):
 def test_rate_backs_off_below_what_was_going_out(transfer):
     """the pings rising with C far above what goes out: C a tenth below what went out, at once"""
     steps = rate(transfer, "f 1 0 40 262144000\nt 100\ns 1000000 0\nt 500\nf 1 0 90 262144000\n"
-                           "s 1000000 0\nt 500\n")
+                           "s 1000000 0\nt 500\nf 1 0 90 262144000\ns 1000000 0\nt 500\n")
     going = 1000000 * 1000 / 500 / 0.95
     assert abs(float(steps[-1]["capacity"]) - 0.9 * going) < 2
 
@@ -241,3 +245,14 @@ def test_rate_a_full_socket_never_lowers_the_line_in_a_game(transfer):
     steps = rate(transfer, "f 0 0 0 262144000\ns 5000000 300\nt 500\nf 1 0 30 262144000\nt 100\n"
                            "s 100000 400\nt 500\n")
     assert float(steps[-1]["capacity"]) >= float(steps[0]["capacity"])
+
+
+def test_rate_ignores_ping_jitter(transfer):
+    """internet pings jitter: one reading 30 ms over the least, or a half second's average over it once, is not
+    a queue (a 254 ms ping read 285 once and cut a download from 10.7 MB/s to 2.3); a long ping's margin is 15%"""
+    steps = rate(transfer, "f 1 0 254 262144000\nt 100\ns 3000000 0\nt 500\n"
+                           "f 1 0 300 262144000\nf 1 0 260 262144000\ns 3000000 0\nt 500\n"
+                           "f 1 0 290 262144000\ns 3000000 0\nt 500\nf 1 0 260 262144000\ns 3000000 0\nt 500\n")
+    capacities = [float(step["capacity"]) for step in steps]
+    assert all(later >= earlier for earlier, later in zip(capacities, capacities[1:]))
+

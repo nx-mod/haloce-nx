@@ -441,9 +441,10 @@ top speed:
   line takes); a full socket only raises it (a joiner that stalls, or TCP
   ramping up over a long path, backs the socket up too); the players' pings
   alone lower it (the host's round trips to its clients, which the guest
-  gives): 30 ms more than the least of the last minute while files go out,
-  and C is a tenth below what was going out; otherwise it goes up 10% a half
-  second while the allowance is used. With no player's ping known (nobody
+  gives, averaged over each half second): 30 ms (or 15% of a long one) more
+  than the least of the last minute for a second running while files go out,
+  and C is a tenth below the most that went out in the last two seconds;
+  otherwise it goes up 10% a half second while the allowance is used. With no player's ping known (nobody
   playing), nothing but the game's traffic holds it back. */
 
 enum {
@@ -482,7 +483,25 @@ struct fs_rate {
 	double budget;
 	/* the last half second's rate, for the log */
 	double last_rate;
+	/* the players' round trips given in the half second going on (their
+	 * average is the one compared), and how many half seconds in a row it
+	 * was too far above the least */
+	double round_trip_sum;
+	unsigned round_trip_samples;
+	int delayed_buckets;
 };
+
+/* (lock held) the guest's facts, a frame's */
+static void fs_rate_facts(struct fs_rate *rate, int in_game, double game, unsigned round_trip)
+{
+	rate->in_game = in_game != 0;
+	rate->game = game;
+	rate->round_trip = round_trip;
+	if (round_trip) {
+		rate->round_trip_sum += round_trip;
+		rate->round_trip_samples++;
+	}
+}
 
 static double fs_rate_measured(struct fs_rate const *rate)
 {
@@ -529,16 +548,10 @@ static void fs_rate_sent(struct fs_rate *rate, size_t bytes, unsigned long waite
 static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 {
 	unsigned long length = now - rate->bucket_at;
-	double bucket_rate, measured;
-	int limited, sending, delayed;
+	double bucket_rate, measured, recent = 0.0;
+	int limited, sending, delayed, i;
+	unsigned round_trip = 0;
 
-	if (rate->round_trip) {
-		if (!rate->base_round_trip || rate->round_trip < rate->base_round_trip ||
-			now - rate->base_at > FS_RATE_BASE_MILLISECONDS) {
-			rate->base_round_trip = rate->round_trip;
-			rate->base_at = now;
-		}
-	}
 	if (!rate->bucket_at || length > 10 * FS_RATE_BUCKET_MILLISECONDS) {
 		rate->bucket_at = now;
 		rate->bucket_bytes = 0.0;
@@ -554,6 +567,17 @@ static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 		rate->budget = fs_rate_allowance(rate);
 		return;
 	}
+	/* (the half second's round trip, its samples' average: one reading of
+	 * an internet ping jitters by tens of milliseconds) */
+	if (rate->round_trip_samples)
+		round_trip = (unsigned)(rate->round_trip_sum / rate->round_trip_samples + 0.5);
+	rate->round_trip_sum = 0.0;
+	rate->round_trip_samples = 0;
+	if (round_trip && (!rate->base_round_trip || round_trip < rate->base_round_trip ||
+		now - rate->base_at > FS_RATE_BASE_MILLISECONDS)) {
+		rate->base_round_trip = round_trip;
+		rate->base_at = now;
+	}
 	bucket_rate = rate->bucket_bytes * 1000.0 / (double)length;
 	limited = rate->bucket_waited * 10 >= length && rate->bucket_bytes > 0.0;
 	sending = rate->bucket_bytes > 0.0;
@@ -567,8 +591,26 @@ static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 	measured = fs_rate_measured(rate);
 	if (measured > 0.0)
 		rate->measured = 1;
-	delayed = rate->round_trip && rate->base_round_trip &&
-		rate->round_trip > rate->base_round_trip + FS_RATE_DELAY_MILLISECONDS;
+	/* (too far above the least: 30 ms, or 15% of a long one, for a second
+	 * running) */
+	{
+		unsigned margin = rate->base_round_trip * 15 / 100;
+
+		if (margin < FS_RATE_DELAY_MILLISECONDS)
+			margin = FS_RATE_DELAY_MILLISECONDS;
+		if (round_trip && rate->base_round_trip && round_trip > rate->base_round_trip + margin)
+			rate->delayed_buckets++;
+		else
+			rate->delayed_buckets = 0;
+	}
+	delayed = rate->delayed_buckets >= 2;
+	/* (the most that went out in the last two seconds) */
+	for (i = 1; i <= 4; i++) {
+		double past = rate->rates[(rate->next - i + FS_RATE_BUCKETS) % FS_RATE_BUCKETS];
+
+		if (past > recent)
+			recent = past;
+	}
 	if (!rate->in_game) {
 		/* (the line measured while nothing holds the sending back) */
 		if (measured > 0.0)
@@ -584,12 +626,16 @@ static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 		it) */
 		if (limited && bucket_rate + rate->game > rate->capacity)
 			rate->capacity = bucket_rate + rate->game;
-		/* (the players' pings up: a tenth below what was going out, not below
-		the estimate, which may be far above it) */
+		/* (the players' pings up for a second: a tenth below the most that
+		went out in the last two, not below the estimate, which may be far
+		above it, nor below one slow half second; another second before the
+		next cut) */
 		if (sending && delayed) {
-			double going = (bucket_rate + rate->game) / 0.95;
+			double going = 0.9 * (recent + rate->game) / 0.95;
 
-			rate->capacity = 0.9 * (going < rate->capacity ? going : rate->capacity);
+			if (going < rate->capacity)
+				rate->capacity = going;
+			rate->delayed_buckets = 0;
 		} else if (sending && bucket_rate >= 0.8 * rate->budget)
 			rate->capacity *= 1.1;
 		if (rate->capacity < FS_RATE_FLOOR + rate->game)
@@ -1051,9 +1097,7 @@ int host_fs_host_frame(int hosting, unsigned int limit)
 void host_fs_rate_facts(int in_game, unsigned int game_bytes, unsigned int round_trip)
 {
 	pthread_mutex_lock(&host.lock);
-	host.rate.in_game = in_game != 0;
-	host.rate.game = (double)game_bytes;
-	host.rate.round_trip = round_trip;
+	fs_rate_facts(&host.rate, in_game, (double)game_bytes, round_trip);
 	pthread_mutex_unlock(&host.lock);
 }
 
@@ -2130,9 +2174,7 @@ void host_file_share_test_rate(FILE *script)
 
 			if (fscanf(script, "%d %lf %u %lf", &in_game, &game, &round_trip, &cap) != 4)
 				break;
-			rate.in_game = in_game;
-			rate.game = game;
-			rate.round_trip = round_trip;
+			fs_rate_facts(&rate, in_game, game, round_trip);
 			rate.cap = cap;
 		} else if (kind == 's') {
 			double bytes;
