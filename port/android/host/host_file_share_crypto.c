@@ -548,6 +548,11 @@ void fs_sha256(unsigned char const *data, size_t size, unsigned char out[32])
 	host_sha256_end(&sha, out);
 }
 
+void fs_blake2b_256(void const *data, size_t size, unsigned char out[32])
+{
+	crypto_blake2b(out, 32, data, size);
+}
+
 void fs_hmac_sha256(unsigned char const *key, size_t key_size, unsigned char const *a, size_t a_size,
 	unsigned char const *b, size_t b_size, unsigned char out[32])
 {

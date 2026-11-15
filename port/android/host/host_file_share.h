@@ -61,4 +61,20 @@ int host_fs_fetch_start(void);
 int host_fs_fetch_status(unsigned int out);
 void host_fs_fetch_stop(void);
 
+/* ---------- the joiner, a Custom Edition map's pieces (map_share.c's swarm,
+the host one of its sources)
+
+begin: the host's file connection for a transfer (as fetch_begin); ask: a
+piece of a file (its number in the offer, its offset and length, at most 256
+KB, and its BLAKE2b hash: 32 bytes), 0 when FS_PIECE_SLOTS are asked already;
+take: a piece that came and was checked, copied to the guest's buffer (256
+KB), its file, offset, length and whether it matched (four 32-bit words at
+out): 1, or 0 for none; state: a host_fs_fetch_state (FAILED_EARLY before
+the host's READY); stop waits for the thread and forgets what was asked. */
+int host_fs_pieces_begin(unsigned int address, int port, unsigned int session, unsigned int token);
+int host_fs_pieces_ask(int file, unsigned int offset, unsigned int length, unsigned int hash);
+int host_fs_pieces_take(unsigned int buffer, unsigned int out);
+int host_fs_pieces_state(void);
+void host_fs_pieces_stop(void);
+
 #endif

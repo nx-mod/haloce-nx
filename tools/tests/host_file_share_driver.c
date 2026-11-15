@@ -63,6 +63,59 @@ int main(int argc, char **argv)
 	for (i = 0; i < COUNT; i++)
 		host_fs_serve_file(session, i, address_of(source[i]), sizes[i]);
 	host_fs_serve_ready(session);
+	if (!strcmp(mode, "pieces")) {
+		/* a map's pieces, as map_share.c's swarm asks them: every piece of the
+		 * 3 MB file, the fifth with a wrong hash; each taken and checked */
+		enum { PIECE = 256 * 1024 };
+		static unsigned char whole[3u << 20], piece[PIECE], hashes[16][32];
+		uint32_t out[4];
+		unsigned buffer_address = address_of(piece), out_address = address_of(out);
+		unsigned hash_addresses[16];
+		int count = (int)((sizes[3] + PIECE - 1) / PIECE), asked = 0, taken = 0, matched = 0, wrong = 0;
+		FILE *file = fopen(source[3], "rb");
+
+		if (!file || fread(whole, 1, sizes[3], file) != sizes[3])
+			return 5;
+		fclose(file);
+		for (i = 0; i < count; i++) {
+			uint32_t length = sizes[3] - (uint32_t)i * PIECE < PIECE ? sizes[3] - (uint32_t)i * PIECE : PIECE;
+
+			fs_blake2b_256(whole + (size_t)i * PIECE, length, hashes[i]);
+			hash_addresses[i] = address_of(hashes[i]);
+		}
+		hashes[4][0] ^= 1;
+		if (!host_fs_pieces_begin(0x0100007f, HOST_FILE_SHARE_PORT, session, address_of(token)))
+			return 6;
+		while (taken < count && polls++ < 3000) {
+			while (asked < count) {
+				uint32_t length = sizes[3] - (uint32_t)asked * PIECE < PIECE ? sizes[3] - (uint32_t)asked * PIECE : PIECE;
+
+				if (!host_fs_pieces_ask(3, (uint32_t)asked * PIECE, length, hash_addresses[asked]))
+					break;
+				asked++;
+			}
+			while (host_fs_pieces_take(buffer_address, out_address)) {
+				taken++;
+				if (out[0] != 3 || out[1] % PIECE)
+					wrong++;
+				else if (out[3]) {
+					matched++;
+					if (memcmp(piece, whole + out[1], out[2]))
+						wrong++;
+				} else if (out[1] != 4u * PIECE)
+					wrong++;
+			}
+			if (host_fs_pieces_state() == HOST_FS_FETCH_FAILED_EARLY || host_fs_pieces_state() == HOST_FS_FETCH_FAILED_LATE)
+				break;
+			pause_ms(5);
+		}
+		printf("pieces taken=%d matched=%d wrong=%d state=%d\n", taken, matched, wrong, host_fs_pieces_state());
+		host_fs_pieces_stop();
+		host_fs_serve_end(session);
+		host_fs_host_frame(0, 0);
+		pause_ms(300);
+		return 0;
+	}
 	if (!host_fs_fetch_begin(0x0100007f, HOST_FILE_SHARE_PORT, !strcmp(mode, "unknown-session") ? session + 1 : session,
 		address_of(joiner_token), COUNT))
 		return 3;

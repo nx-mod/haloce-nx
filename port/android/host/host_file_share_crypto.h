@@ -43,6 +43,9 @@ void fs_aead_wipe(struct fs_aead *aead);
 void fs_hmac_sha256(unsigned char const *key, size_t key_size, unsigned char const *a, size_t a_size,
 	unsigned char const *b, size_t b_size, unsigned char out[32]);
 void fs_sha256(unsigned char const *data, size_t size, unsigned char out[32]);
+/* BLAKE2b's 32-byte hash (Monocypher's): a Custom Edition map's pieces'
+ * (port/linux/game/map_share_files.c) */
+void fs_blake2b_256(void const *data, size_t size, unsigned char out[32]);
 
 /* X25519: a new key pair, and the shared secret (0 if it is all zeros: a
  * public key of low order) */

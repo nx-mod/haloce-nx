@@ -223,6 +223,22 @@ static void connection_close(struct connection *connection, char const *reason)
 	connection->used = FALSE;
 }
 
+/* (the host's file connection, map_share.c's: none here) */
+static void fs_source_end(short state)
+{
+	map_share_globals.fs.state = state;
+}
+
+static void host_file_connection_publish(long machine_index)
+{
+	(void)machine_index;
+}
+
+static void host_file_connection_end(struct host_machine *machine)
+{
+	(void)machine;
+}
+
 #include "under_test.inc"
 
 /* the download's file 0 of `piece_count` pieces, being fetched */

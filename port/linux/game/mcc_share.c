@@ -346,13 +346,23 @@ static struct {
     uint32_t session;
 } mcc_share_fs_published[MCC_SHARE_HOST_TRANSFERS];
 
-/* network_extensions.c's: the host's token (36 bytes: the session, the
-token); a client's data, which the host takes none of, is dropped */
+/* network_extensions.c's: the host's token for a transfer (37 bytes: the
+session, the token, and what it is for: 0 an MCC package, 1 a Custom Edition
+map, map_share.c's); a client's data, which the host takes none of, is
+dropped */
 void mcc_share_file_share_data(long machine_index, void const *payload, long size)
 {
-    if (machine_index!=NONE || size<36) return;
-    memcpy(&mcc_share_fs_token.session,payload,4);
-    memcpy(mcc_share_fs_token.token,(unsigned char const *)payload+4,32);
+    unsigned char const *bytes=payload;
+    uint32_t session;
+    if (machine_index!=NONE || size<37) return;
+    memcpy(&session,bytes,4);
+    if (bytes[36]==1) {
+        map_share_file_share_token(session,bytes+4);
+        return;
+    }
+    if (bytes[36]) return;
+    mcc_share_fs_token.session=session;
+    memcpy(mcc_share_fs_token.token,bytes+4,32);
     mcc_share_fs_token.valid=1;
 }
 
@@ -484,10 +494,11 @@ host's file connection, and the token sent to the joiner; 0 to try again
 next frame */
 static int mcc_share_fs_publish(struct mcc_share_host_transfer const *transfer)
 {
-    unsigned char payload[36];
+    unsigned char payload[37];
     int i;
     posix_random_bytes(payload+4,32);
     memcpy(payload,&transfer->session,4);
+    payload[36]=0;
     if (host_fs_serve_begin(transfer->session,MCC_SHARE_HOST_ADDRESS(payload+4),transfer->package.count)<0) return 0;
     for (i=0;i<transfer->package.count;i++)
         if (!host_fs_serve_file(transfer->session,i,MCC_SHARE_HOST_ADDRESS(transfer->package.files[i].path),
@@ -514,8 +525,9 @@ static void mcc_share_fs_host_update(void)
     struct network_game *game=network_game_get_game();
     int hosting=server && game && config_boolean("network.map_share") && mcc_level_name(game->map.name);
     int i,j;
-    host_fs_host_frame(hosting,mcc_share_upload_limit(NULL));
-    p2p_set_file_share_listening(hosting);
+    /* (the listener for MCC packages and Custom Edition maps alike) */
+    host_fs_host_frame(hosting || map_share_file_connection_wanted(),mcc_share_upload_limit(NULL));
+    p2p_set_file_share_listening(hosting || map_share_file_connection_wanted());
     for (j=0;j<MCC_SHARE_HOST_TRANSFERS;j++) mcc_share_fs_published[j].seen=0;
     for (i=0;hosting && i<MCC_SHARE_HOST_TRANSFERS;i++) {
         struct mcc_share_host_transfer *transfer=&mcc_share_globals.transfers[i];

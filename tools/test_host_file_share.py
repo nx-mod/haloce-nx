@@ -159,3 +159,12 @@ def test_stop_joins(transfer, tmp_path):
     """stopping waits for the joiner's thread, which lets its file go"""
     fields, out, err, _ = run(transfer, tmp_path, "stop", 200000)
     assert "stopped state=0" in out
+
+
+def test_pieces(transfer, tmp_path):
+    """a Custom Edition map's pieces, as map_share.c's swarm asks them of the host: every piece of a
+    3 MB file, each checked against its BLAKE2b hash on the joiner's host thread, the one given a
+    wrong hash reported as not matching"""
+    fields, out, err, _ = run(transfer, tmp_path, "pieces")
+    assert "pieces taken=12 matched=11 wrong=0 state=2" in out, out + err
+

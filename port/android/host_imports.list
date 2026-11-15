@@ -130,3 +130,8 @@ host_fs_fetch_file
 host_fs_fetch_start
 host_fs_fetch_status
 host_fs_fetch_stop
+host_fs_pieces_begin
+host_fs_pieces_ask
+host_fs_pieces_take
+host_fs_pieces_state
+host_fs_pieces_stop

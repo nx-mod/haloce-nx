@@ -302,5 +302,10 @@ int host_fs_fetch_file(int index, int file, unsigned int path, unsigned int size
 int host_fs_fetch_start(void);
 int host_fs_fetch_status(unsigned int out);
 void host_fs_fetch_stop(void);
+int host_fs_pieces_begin(unsigned int address, int port, unsigned int session, unsigned int token);
+int host_fs_pieces_ask(int file, unsigned int offset, unsigned int length, unsigned int hash);
+int host_fs_pieces_take(unsigned int buffer, unsigned int out);
+int host_fs_pieces_state(void);
+void host_fs_pieces_stop(void);
 
 #endif

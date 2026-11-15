@@ -321,6 +321,25 @@ fills the line. That is also when `C` is learned best.
      and PMULL)`, `file share: received N MB in S s (R MB/s)` on the joiner,
      `sent ...` on the host, and `mcc share: ... over the host's file
      connection` or why it fell back to the chunks.
+   **Custom Edition maps, built 2026-11-15** (the user chose the host as one of
+   the swarm's sources, over the host alone or the whole swarm on 5154):
+   - When the host offers its files (`host_offer`) to a machine with
+     `file_share_tcp`, it gives them to its file connection under a session of
+     its own (high bit set) and sends the token, marked for a Custom Edition
+     map (the data's 37th byte: 0 MCC, 1 CE).
+   - The joiner's connections' thread (`fs_source_update`) opens the host's
+     file connection in pieces mode (`host_fs_pieces_*`) and asks it up to 32
+     pieces at once, those no one was asked for, in order; its host thread
+     takes each in, checks it against its BLAKE2b hash, and the connections'
+     thread writes it as any other piece (`download_piece_had`): the `.part`
+     has one writer. Other players' connections go on; the host's own 5153
+     connection gives only the pieces' hashes while the file connection goes.
+   - A piece that does not match, or the connection lost, ends the file
+     connection for the download and gives what it was asked back to the
+     swarm.
+   - One listener serves both (`mcc_share.c` opens it for MCC or CE hosting).
+   - Tests: `tools/test_host_file_share.py`'s `test_pieces`; the map sharing
+     harness tests know the new structure.
 2. **The rate**: the `ACK`s, `C` and `G`, the in-game budget, the delay check.
    Test: a hosted server with players in a game while a joiner downloads; the
    players' ping must not rise by more than a few ms.

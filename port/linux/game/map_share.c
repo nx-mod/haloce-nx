@@ -84,6 +84,15 @@ a part file to open) it leaves for that thread.
 #include "mcc_share.h"
 #include "server_director.h"
 #include "../src/p2p.h"
+#include "../src/posix.h"
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+/* the host's file connection (port/android/host/host_file_share.c; its calls
+are host_imports.list's): the host one of the swarm's sources, encrypted, its
+pieces checked on the host's threads */
+#include "../../android/host/host_file_share.h"
+#define MAP_SHARE_FILE_CONNECTION 1
+#define MAP_SHARE_HOST_ADDRESS(pointer) ((unsigned int)(uintptr_t)(pointer))
+#endif
 
 #include <pthread.h>
 #include <xtl.h>
@@ -532,6 +541,38 @@ struct host_machine
 	server's event: once a request (host_request clears it), however often
 	the machine says it */
 	boolean end_said;
+	/* its files given to the host's file connection (MAP_SHARE_FILE_CONNECTION),
+	and that transfer's session */
+	boolean file_connection;
+	unsigned long file_connection_session;
+};
+
+/* the joiner's source on the host's file connection (fs_source_update) */
+enum
+{
+	_fs_source_off,
+	_fs_source_starting,
+	_fs_source_on,
+	/* failed, or a piece did not match: not tried again for this download */
+	_fs_source_failed,
+	MAXIMUM_FS_PIECES = 32,
+};
+
+struct fs_source
+{
+	/* the host's token for this download (network_extensions.c's data) */
+	boolean token_valid;
+	unsigned long session;
+	byte token[32];
+	short state;
+	/* the pieces asked of it */
+	short asked_count;
+	struct
+	{
+		short file;
+		long piece;
+	} asked[MAXIMUM_FS_PIECES];
+	byte *buffer;
 };
 
 struct map_share_globals
@@ -569,11 +610,19 @@ struct map_share_globals
 	still runs the connections itself (it could not be started) */
 	boolean thread_started;
 	boolean thread_running;
+	/* the joiner: the host's file connection as a source */
+	struct fs_source fs;
 };
 
 /* ---------- globals */
 
 static struct map_share_globals map_share_globals;
+
+/* (the host's file connection as a source: further down) */
+static void fs_source_end(short state);
+static void fs_source_update(void);
+static void host_file_connection_publish(long machine_index);
+static void host_file_connection_end(struct host_machine *machine);
 
 /* the lock both threads hold while they look at what they share
 (recursive: an entry point may reach another) */
@@ -1473,6 +1522,8 @@ static void download_end(
 	short index;
 
 	globals->failure[0] = 0;
+	fs_source_end(_fs_source_off);
+	globals->fs.token_valid = FALSE;
 	for (index = 0; index < MAXIMUM_CONNECTIONS; index++)
 	{
 		struct connection *connection = &globals->connections[index];
@@ -1627,6 +1678,9 @@ static boolean map_share_download_begin_unlocked(
 		csmemset(download, 0, sizeof(*download));
 		download->serial = ++serial;
 	}
+	/* (the host's token for this download comes with its offer) */
+	fs_source_end(_fs_source_off);
+	map_share_globals.fs.token_valid = FALSE;
 	download->state = _download_asking;
 	level_name_copy(download->level_name, level_name);
 	download->version = version;
@@ -2282,6 +2336,13 @@ static void connection_ask(
 
 	if (download->state != _download_transferring || !connection->hello_heard)
 		return;
+	/* (the host's pieces come over its file connection while it goes: this
+	connection gives the pieces' hashes) */
+	if (map_share_globals.fs.state == _fs_source_on && connection->source != NONE &&
+		connection->source < download->source_count && download->sources[connection->source].host)
+	{
+		return;
+	}
 	for (index = 0; index < MAXIMUM_CONNECTIONS; index++)
 		in_flight += map_share_globals.connections[index].used ? map_share_globals.connections[index].request_count : 0;
 	while (connection->request_count < REQUESTS_PER_CONNECTION && in_flight < MAXIMUM_PIECES_IN_FLIGHT &&
@@ -2346,6 +2407,267 @@ static void request_remove(
 	/* (the next is sent now: its time from here) */
 	if (!index && connection->request_count)
 		connection->requests[0].asked_at = system_milliseconds();
+}
+
+/* ---------- the host's file connection as one of the swarm's sources
+
+A SlipstreamCE host that offers a SlipstreamCE joiner (file_share_tcp agreed,
+network_extensions.c) its files gives them to its own file connection
+(port/android/host/host_file_share.c) and the joiner a token for it. The
+joiner asks pieces of it as of any source, MAXIMUM_FS_PIECES at once, in order
+(the host reads its disk ahead); its host thread takes them in, encrypted,
+and checks each against its BLAKE2b hash, and the connections' thread takes
+the pieces checked and writes them as it writes any piece
+(download_piece_had). Other players' connections go on as ever, and the
+host's own (port 5153) only gives the pieces' hashes while this goes. A piece
+that does not match, or the connection lost, ends it for the download: what
+it was asked goes back to the others. */
+
+#if defined(MAP_SHARE_FILE_CONNECTION)
+static unsigned long fs_swap_long(
+	unsigned long value)
+{
+	return ((value & 0xFF) << 24) | ((value & 0xFF00) << 8) | ((value >> 8) & 0xFF00) | ((value >> 24) & 0xFF);
+}
+
+/* what was asked of it given back, and it stopped (for this download, unless
+off: a new download's) */
+static void fs_source_end(
+	short state)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	short index;
+
+	if (globals->fs.state == _fs_source_starting || globals->fs.state == _fs_source_on)
+		host_fs_pieces_stop();
+	for (index = 0; index < globals->fs.asked_count; index++)
+	{
+		short file = globals->fs.asked[index].file;
+		long piece = globals->fs.asked[index].piece;
+
+		if (file < download->file_count && download->files[file].asked && download->files[file].asked[piece])
+			download->files[file].asked[piece]--;
+	}
+	globals->fs.asked_count = 0;
+	globals->fs.state = state;
+}
+
+/* (the connections' thread) the source's turn: started once the token is here,
+the pieces checked taken, and more asked */
+static void fs_source_update(
+	void)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	struct fs_source *fs = &globals->fs;
+	unsigned long out[4];
+	short file_index;
+	int state;
+
+	if (download->state != _download_transferring)
+	{
+		if (fs->state == _fs_source_starting || fs->state == _fs_source_on)
+			fs_source_end(_fs_source_off);
+		return;
+	}
+	if (fs->state == _fs_source_failed)
+		return;
+	if (fs->state == _fs_source_off)
+	{
+		unsigned long address = fs_swap_long(map_share_host_address());
+		unsigned short port = (unsigned short)(((P2P_FILE_SHARE_PORT & 0xFF) << 8) | (P2P_FILE_SHARE_PORT >> 8));
+
+		if (!fs->token_valid || !network_extension_host_has(NETWORK_CAPABILITY_FILE_SHARE_TCP, 1))
+			return;
+		if (!fs->buffer && !(fs->buffer = malloc(MAP_SHARE_PIECE_BYTES)))
+			return;
+		/* (a host over the internet play tunnel: its local stand-in) */
+		if (!address || p2p_outgoing(1, -1, &address, &port) < 0 ||
+			!host_fs_pieces_begin((unsigned int)address, ((port & 0xFF) << 8) | (port >> 8), fs->session,
+				MAP_SHARE_HOST_ADDRESS(fs->token)))
+		{
+			fs->state = _fs_source_failed;
+			error(_error_silent, "map sharing: the host's file connection cannot be reached: the swarm alone");
+			return;
+		}
+		fs->state = _fs_source_starting;
+		error(_error_silent, "map sharing: the host's file connection is one of the sources");
+	}
+	state = host_fs_pieces_state();
+	if (state == HOST_FS_FETCH_FAILED_EARLY || state == HOST_FS_FETCH_FAILED_LATE)
+	{
+		error(_error_silent, "map sharing: the host's file connection %s: the swarm alone",
+			state == HOST_FS_FETCH_FAILED_EARLY ? "could not be opened" : "was lost");
+		fs_source_end(_fs_source_failed);
+		return;
+	}
+	if (state == HOST_FS_FETCH_RECEIVING)
+		fs->state = _fs_source_on;
+	/* (the pieces it checked) */
+	while (host_fs_pieces_take(MAP_SHARE_HOST_ADDRESS(fs->buffer), MAP_SHARE_HOST_ADDRESS(out)))
+	{
+		short index;
+		long piece = (long)(out[1] / MAP_SHARE_PIECE_BYTES);
+
+		for (index = 0; index < fs->asked_count; index++)
+		{
+			if (fs->asked[index].file == (short)out[0] && fs->asked[index].piece == piece)
+				break;
+		}
+		if (index == fs->asked_count)
+			continue;
+		fs->asked_count--;
+		csmemmove(&fs->asked[index], &fs->asked[index + 1], (fs->asked_count - index) * sizeof(fs->asked[0]));
+		if ((short)out[0] >= download->file_count)
+			continue;
+		if (download->files[out[0]].asked[piece])
+			download->files[out[0]].asked[piece]--;
+		if (!out[3])
+		{
+			error(_error_silent, "map sharing: a piece from the host's file connection did not match: the swarm alone");
+			fs_source_end(_fs_source_failed);
+			return;
+		}
+		download_piece_had((short)out[0], piece, fs->buffer);
+	}
+	/* (more asked: the next pieces no one was asked for, in order; the last
+	ones again, once every piece has been asked of someone) */
+	while (fs->asked_count < MAXIMUM_FS_PIECES)
+	{
+		long chosen = NONE;
+		short again;
+
+		for (again = 0; again < 2 && chosen == NONE; again++)
+		{
+			if (again && download_unasked_pieces())
+				break;
+			for (file_index = 0; file_index < download->file_count && chosen == NONE; file_index++)
+			{
+				struct download_file *file = &download->files[file_index];
+				long piece;
+
+				if (file->state != _file_transferring || !file->piece_hashes)
+					continue;
+				for (piece = 0; piece < file->piece_count; piece++)
+				{
+					short index;
+
+					if ((file->have[piece >> 3] & (1 << (piece & 7))) || file->asked[piece] > again)
+						continue;
+					for (index = 0; index < fs->asked_count; index++)
+					{
+						if (fs->asked[index].file == file_index && fs->asked[index].piece == piece)
+							break;
+					}
+					if (index < fs->asked_count)
+						continue;
+					chosen = piece;
+					break;
+				}
+				if (chosen != NONE)
+					break;
+			}
+		}
+		if (chosen == NONE)
+			break;
+		{
+			struct download_file *file = &download->files[file_index];
+			unsigned long offset = (unsigned long)chosen * MAP_SHARE_PIECE_BYTES;
+
+			if (!host_fs_pieces_ask(file_index, offset, MIN(MAP_SHARE_PIECE_BYTES, file->size - offset),
+				MAP_SHARE_HOST_ADDRESS(file->piece_hashes + chosen * MAP_SHARE_HASH_BYTES)))
+			{
+				break;
+			}
+			fs->asked[fs->asked_count].file = file_index;
+			fs->asked[fs->asked_count].piece = chosen;
+			fs->asked_count++;
+			file->asked[chosen]++;
+		}
+	}
+}
+
+/* (the host) the machine's files given to the host's file connection, and
+it told its token; the last transfer's let go */
+static void host_file_connection_publish(
+	long machine_index)
+{
+	struct host_machine *machine = &map_share_globals.machines[machine_index];
+	byte payload[37];
+	unsigned long session;
+	short index;
+
+	if (machine->file_connection)
+		host_fs_serve_end(machine->file_connection_session);
+	machine->file_connection = FALSE;
+	if (!network_extension_agreed(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1) || !machine->file_count)
+		return;
+	posix_random_bytes(&session, sizeof(session));
+	/* (high bit set: never an MCC transfer's session) */
+	session |= 0x80000000UL;
+	posix_random_bytes(payload + 4, 32);
+	csmemcpy(payload, &session, 4);
+	payload[36] = 1;
+	if (host_fs_serve_begin(session, MAP_SHARE_HOST_ADDRESS(payload + 4), machine->file_count) < 0)
+		return;
+	for (index = 0; index < machine->file_count; index++)
+	{
+		struct map_share_file *file = map_share_file_get(machine->catalog_files[index]);
+		char native[MAP_SHARE_PATH_SIZE + 256];
+
+		if (!file)
+			break;
+		platform_translate_path(file->path, native, sizeof(native));
+		if (!host_fs_serve_file(session, index, MAP_SHARE_HOST_ADDRESS(native), file->size))
+			break;
+	}
+	if (index < machine->file_count || !host_fs_serve_ready(session) ||
+		!network_extensions_send_data(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, sizeof(payload)))
+	{
+		host_fs_serve_end(session);
+		csmemset(payload, 0, sizeof(payload));
+		return;
+	}
+	csmemset(payload, 0, sizeof(payload));
+	machine->file_connection = TRUE;
+	machine->file_connection_session = session;
+	error(_error_silent, "map sharing: machine #%ld may fetch from the host's file connection too", machine_index);
+}
+
+static void host_file_connection_end(
+	struct host_machine *machine)
+{
+	if (machine->file_connection)
+		host_fs_serve_end(machine->file_connection_session);
+	machine->file_connection = FALSE;
+}
+#else
+static void fs_source_end(short state) { map_share_globals.fs.state = state; }
+static void fs_source_update(void) {}
+static void host_file_connection_publish(long machine_index) { (void)machine_index; }
+static void host_file_connection_end(struct host_machine *machine) { (void)machine; }
+#endif
+
+/* (mcc_share.c's, from network_extensions.c's data for file_share_tcp) the
+host's token for this machine's download of a Custom Edition map */
+void map_share_file_share_token(
+	unsigned long session,
+	byte const *token)
+{
+	map_share_lock();
+	map_share_globals.fs.session = session;
+	csmemcpy(map_share_globals.fs.token, token, sizeof(map_share_globals.fs.token));
+	map_share_globals.fs.token_valid = TRUE;
+	map_share_unlock();
+}
+
+/* (the host) whether its file connection is wanted for Custom Edition maps:
+it hosts, and shares them (mcc_share.c opens the listener for both) */
+boolean map_share_file_connection_wanted(
+	void)
+{
+	return map_share_host_live() && config_boolean("network.map_share") != 0;
 }
 
 /* ---------- a connection's frames, as they come */
@@ -3316,6 +3638,8 @@ static void host_offer(
 	}
 	machine->offered = TRUE;
 	machine->asked = FALSE;
+	if (result == _offer_ok)
+		host_file_connection_publish(machine_index);
 	error(_error_silent, "map sharing: offered machine #%ld %s (%d files)%s", machine_index,
 		machine->request.level_name, (int)count, result == _offer_ok ? "" :
 		result == _offer_off ? ": not shared (network.map_share)" : ": unavailable");
@@ -3490,6 +3814,7 @@ static void host_update(
 		/* (left: another machine may take its slot) */
 		if (!address || address != machine->address)
 		{
+			host_file_connection_end(machine);
 			csmemset(machine, 0, sizeof(*machine));
 			continue;
 		}
@@ -3737,6 +4062,7 @@ static void map_share_update_unlocked(
 	{
 		connection_accept();
 		connections_update();
+		fs_source_update();
 		serve_blocks();
 	}
 }
@@ -3793,7 +4119,11 @@ static unsigned long __stdcall map_share_connections_thread(
 		map_share_unlock();
 		if (!readable.fd_count)
 		{
-			Sleep(CONNECTIONS_IDLE_SLEEP);
+			/* (the host's file connection may be the only source) */
+			map_share_lock();
+			fs_source_update();
+			map_share_unlock();
+			Sleep(busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_IDLE_SLEEP);
 			continue;
 		}
 		timeout.tv_sec = 0;
@@ -3802,6 +4132,7 @@ static unsigned long __stdcall map_share_connections_thread(
 		map_share_lock();
 		connection_accept();
 		connections_update();
+		fs_source_update();
 		serve_blocks();
 		map_share_unlock();
 	}

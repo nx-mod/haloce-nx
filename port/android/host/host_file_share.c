@@ -34,6 +34,9 @@
  *   WANT  1, 0, file (2), offset (4), length (4)    joiner: bytes of a file
  *   DATA  2, 0, file (2), offset (4), the bytes     host: what was wanted
  *   END   3, 0, 0, 0                                 either: nothing more
+ *   KEEP  5, 0, 0, 0                                 joiner: still there (a
+ *                                                    swarm's source may have
+ *                                                    nothing to ask a while)
  *   READY 4, 0, 0, 0                                 host: its first record,
  *                                                    before anything is written
  * (a joiner writes nothing before READY opens: with a wrong token or a
@@ -89,7 +92,8 @@ enum {
 	FS_DATA_HEADER = 8,
 	FS_WANT_SIZE = 12,
 	FS_FILES = 168,
-	FS_SERVES = 4,
+	/* (MCC transfers, and Custom Edition maps' joiners: a few at once) */
+	FS_SERVES = 16,
 	FS_HOST_CONNECTIONS = 8,
 	FS_PATH = 1024,
 	FS_SOCKET_BUFFER = 4 << 20,
@@ -107,6 +111,11 @@ enum {
 	FS_FRAME_DATA = 2,
 	FS_FRAME_END = 3,
 	FS_FRAME_READY = 4,
+	FS_FRAME_KEEP_ALIVE = 5,
+	/* (a Custom Edition map's: map_share.c's pieces, BLAKE2b's) */
+	FS_PIECE_BYTES = 256 * 1024,
+	FS_PIECE_SLOTS = 32,
+	FS_KEEP_ALIVE_MILLISECONDS = 10000,
 };
 
 static unsigned char const fs_magic[4] = { 'S', 'L', 'F', 'S' };
@@ -546,6 +555,10 @@ static void *host_connection_main(void *parameter)
 					ended = 1;
 					break;
 				}
+				if (frame[0] == FS_FRAME_KEEP_ALIVE) {
+					at += 4;
+					continue;
+				}
 				if (frame[0] != FS_FRAME_WANT || at + FS_WANT_SIZE > size || want_count >= FS_FILES * 2)
 					goto done;
 				wants[want_count].file = get16(frame + 2);
@@ -911,10 +924,59 @@ static void fetch_set(int state, int files_done, uint32_t current_bytes, uint64_
 	pthread_mutex_unlock(&fetch.lock);
 }
 
+/* the joiner's side of the handshake, up to the host's READY: the suite, or
+0 (why says) */
+static int joiner_open(struct fs_channel *channel, uint32_t address, unsigned port, uint32_t session,
+	unsigned char const token[32], unsigned char const *wants, size_t wants_size, volatile int const *stop,
+	char const **why)
+{
+	unsigned char hello[FS_HELLO_SIZE], reply[FS_REPLY_SIZE], secret[32];
+	int suite = 0;
+
+	*why = "the host could not be reached";
+	channel->socket = fs_connect(address, port, stop);
+	if (channel->socket < 0)
+		return 0;
+	memcpy(hello, fs_magic, 4);
+	hello[4] = FS_VERSION;
+	hello[5] = (unsigned char)fs_suites_here();
+	hello[6] = hello[7] = 0;
+	put32(hello + 8, session);
+	fs_x25519_keypair(secret, hello + 12);
+	fs_random(hello + 44, 32);
+	*why = "the host did not answer";
+	if (!fs_send_all(channel->socket, hello, sizeof(hello), stop) ||
+		!fs_receive_all(channel->socket, reply, sizeof(reply), FS_HELLO_MILLISECONDS, stop))
+		goto done;
+	*why = "the host refused the connection";
+	if (memcmp(reply, fs_magic, 4) || reply[4] != FS_VERSION || reply[6] != FS_RESULT_SERVED)
+		goto done;
+	*why = "the connection's keys could not be made";
+	if ((reply[5] != FS_SUITE_AES256_GCM && reply[5] != FS_SUITE_CHACHA20_POLY1305) ||
+		!fs_channel_keys(channel, 1, reply[5], secret, reply + 8, token, hello, reply))
+		goto done;
+	/* (what is wanted at once, before the READY) */
+	if (wants_size) {
+		memcpy(channel->plain, wants, wants_size);
+		*why = "the connection was lost";
+		if (!fs_channel_send(channel, wants_size, stop))
+			goto done;
+	}
+	/* (the host's READY: its keys are the token's) */
+	*why = "the host's connection did not prove it has the transfer's token";
+	if (fs_channel_receive(channel, FS_HELLO_MILLISECONDS, stop) != 4 || channel->plain[0] != FS_FRAME_READY)
+		goto done;
+	suite = reply[5];
+	fs_log("file share: receiving session %u from the host (%s)", (unsigned)session,
+		suite == FS_SUITE_AES256_GCM ? fs_crypto_aes_kind() : "ChaCha20-Poly1305");
+done:
+	fs_wipe(secret, sizeof(secret));
+	return suite;
+}
+
 static void *fetch_main(void *parameter)
 {
 	struct fs_channel channel;
-	unsigned char hello[FS_HELLO_SIZE], reply[FS_REPLY_SIZE], secret[32];
 	int index = 0, suite, failed = 1;
 	FILE *file = NULL;
 	struct host_sha256 sha;
@@ -932,52 +994,28 @@ static void *fetch_main(void *parameter)
 	fetch_set(HOST_FS_FETCH_CONNECTING, 0, 0, 0, NULL);
 	if (!fs_channel_buffers(&channel))
 		goto done;
-	channel.socket = fs_connect(fetch.address, fetch.port, &fetch.stop);
-	if (channel.socket < 0)
-		goto done;
-	memcpy(hello, fs_magic, 4);
-	hello[4] = FS_VERSION;
-	hello[5] = (unsigned char)fs_suites_here();
-	hello[6] = hello[7] = 0;
-	put32(hello + 8, fetch.session);
-	fs_x25519_keypair(secret, hello + 12);
-	fs_random(hello + 44, 32);
-	why = "the host did not answer";
-	if (!fs_send_all(channel.socket, hello, sizeof(hello), &fetch.stop) ||
-		!fs_receive_all(channel.socket, reply, sizeof(reply), FS_HELLO_MILLISECONDS, &fetch.stop))
-		goto done;
-	why = "the host refused the connection";
-	if (memcmp(reply, fs_magic, 4) || reply[4] != FS_VERSION || reply[6] != FS_RESULT_SERVED)
-		goto done;
-	suite = reply[5];
-	why = "the connection's keys could not be made";
-	if ((suite != FS_SUITE_AES256_GCM && suite != FS_SUITE_CHACHA20_POLY1305) ||
-		!fs_channel_keys(&channel, 1, suite, secret, reply + 8, fetch.token, hello, reply))
-		goto done;
-	fs_wipe(secret, sizeof(secret));
-	fs_log("file share: receiving session %u from the host (%s)", (unsigned)fetch.session,
-		suite == FS_SUITE_AES256_GCM ? fs_crypto_aes_kind() : "ChaCha20-Poly1305");
 	/* (every file wanted at once, whole: the host sends them in this order) */
 	{
+		unsigned char *wants = malloc((size_t)fetch.count * FS_WANT_SIZE);
 		size_t at = 0;
 		int i;
 
+		if (!wants)
+			goto done;
 		for (i = 0; i < fetch.count; i++) {
-			channel.plain[at] = FS_FRAME_WANT;
-			channel.plain[at + 1] = 0;
-			put16(channel.plain + at + 2, fetch.files[i].file);
-			put32(channel.plain + at + 4, 0);
-			put32(channel.plain + at + 8, fetch.files[i].size);
+			wants[at] = FS_FRAME_WANT;
+			wants[at + 1] = 0;
+			put16(wants + at + 2, fetch.files[i].file);
+			put32(wants + at + 4, 0);
+			put32(wants + at + 8, fetch.files[i].size);
 			at += FS_WANT_SIZE;
 		}
-		why = "the connection was lost";
-		if (!fs_channel_send(&channel, at, &fetch.stop))
+		suite = joiner_open(&channel, fetch.address, fetch.port, fetch.session, fetch.token, wants, at, &fetch.stop,
+			&why);
+		free(wants);
+		if (!suite)
 			goto done;
 	}
-	/* (the host's READY: its keys are the token's) */
-	why = "the host's connection did not prove it has the transfer's token";
-	if (fs_channel_receive(&channel, FS_HELLO_MILLISECONDS, &fetch.stop) != 4 || channel.plain[0] != FS_FRAME_READY)
-		goto done;
 	fetch_set(HOST_FS_FETCH_RECEIVING, 0, 0, 0, NULL);
 	while (index < fetch.count) {
 		struct fs_fetch_file *wanted = &fetch.files[index];
@@ -1039,7 +1077,6 @@ static void *fetch_main(void *parameter)
 done:
 	if (file)
 		fclose(file);
-	fs_wipe(secret, sizeof(secret));
 	fs_channel_free(&channel);
 	{
 		unsigned long elapsed = fs_milliseconds() - fetch.began;
@@ -1148,4 +1185,270 @@ void host_fs_fetch_stop(void)
 	pthread_mutex_lock(&fetch.lock);
 	fetch.state = HOST_FS_FETCH_IDLE;
 	pthread_mutex_unlock(&fetch.lock);
+}
+
+/* ---------- the joiner: a Custom Edition map's pieces */
+
+static struct {
+	pthread_mutex_t lock;
+	int running;
+	pthread_t thread;
+	volatile int stop;
+	uint32_t address;
+	unsigned port;
+	uint32_t session;
+	unsigned char token[32];
+	int state;
+	/* the pieces asked, in the order asked: free, asked (not sent), sent
+	 * (coming), done (checked: taken next) */
+	struct {
+		int state;
+		unsigned file;
+		uint32_t offset, length, received;
+		unsigned char hash[32];
+		unsigned char *buffer;
+		int matched;
+		unsigned long order;
+	} slots[FS_PIECE_SLOTS];
+	unsigned long next_order;
+	uint64_t received;
+	unsigned long began;
+} pieces = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+enum {
+	PIECE_FREE,
+	PIECE_ASKED,
+	PIECE_SENT,
+	PIECE_DONE,
+};
+
+static void pieces_set_state(int state)
+{
+	pthread_mutex_lock(&pieces.lock);
+	pieces.state = state;
+	pthread_mutex_unlock(&pieces.lock);
+}
+
+/* (lock held) the sent piece asked first, which the next data is of, or -1 */
+static int pieces_oldest_sent(void)
+{
+	int i, oldest = -1;
+
+	for (i = 0; i < FS_PIECE_SLOTS; i++)
+		if (pieces.slots[i].state == PIECE_SENT &&
+			(oldest < 0 || pieces.slots[i].order < pieces.slots[oldest].order))
+			oldest = i;
+	return oldest;
+}
+
+static void *pieces_main(void *parameter)
+{
+	struct fs_channel channel;
+	char const *why = "stopped";
+	int failed = 1, opened = 0;
+	unsigned long sent_at = fs_milliseconds();
+
+	(void)parameter;
+#if defined(__SWITCH__)
+	host_thread_place_on_helper_core();
+#endif
+	memset(&channel, 0, sizeof(channel));
+	channel.socket = -1;
+	if (!fs_channel_buffers(&channel) ||
+		!joiner_open(&channel, pieces.address, pieces.port, pieces.session, pieces.token, NULL, 0, &pieces.stop, &why))
+		goto done;
+	opened = 1;
+	pieces_set_state(HOST_FS_FETCH_RECEIVING);
+	while (!pieces.stop) {
+		size_t at = 0;
+		int i, ready;
+
+		/* (the pieces asked since, wanted in the order asked) */
+		pthread_mutex_lock(&pieces.lock);
+		for (;;) {
+			int first = -1;
+
+			for (i = 0; i < FS_PIECE_SLOTS; i++)
+				if (pieces.slots[i].state == PIECE_ASKED &&
+					(first < 0 || pieces.slots[i].order < pieces.slots[first].order))
+					first = i;
+			if (first < 0 || at + FS_WANT_SIZE > FS_RECORD)
+				break;
+			channel.plain[at] = FS_FRAME_WANT;
+			channel.plain[at + 1] = 0;
+			put16(channel.plain + at + 2, pieces.slots[first].file);
+			put32(channel.plain + at + 4, pieces.slots[first].offset);
+			put32(channel.plain + at + 8, pieces.slots[first].length);
+			at += FS_WANT_SIZE;
+			pieces.slots[first].state = PIECE_SENT;
+		}
+		pthread_mutex_unlock(&pieces.lock);
+		if (!at && fs_milliseconds() - sent_at > FS_KEEP_ALIVE_MILLISECONDS) {
+			channel.plain[0] = FS_FRAME_KEEP_ALIVE;
+			channel.plain[1] = channel.plain[2] = channel.plain[3] = 0;
+			at = 4;
+		}
+		if (at) {
+			why = "the connection was lost";
+			if (!fs_channel_send(&channel, at, &pieces.stop))
+				goto done;
+			sent_at = fs_milliseconds();
+		}
+		ready = fs_wait(channel.socket, 20, 0);
+		if (ready < 0)
+			goto done;
+		if (ready > 0) {
+			long size = fs_channel_receive(&channel, FS_IDLE_MILLISECONDS, &pieces.stop), data;
+			int slot;
+
+			why = pieces.stop ? "stopped" : "the connection was lost";
+			if (size < FS_DATA_HEADER || channel.plain[0] != FS_FRAME_DATA)
+				goto done;
+			data = size - FS_DATA_HEADER;
+			why = "the host sent something other than what was asked";
+			pthread_mutex_lock(&pieces.lock);
+			slot = pieces_oldest_sent();
+			if (slot < 0 || get16(channel.plain + 2) != pieces.slots[slot].file ||
+				get32(channel.plain + 4) != pieces.slots[slot].offset + pieces.slots[slot].received ||
+				(uint32_t)data > pieces.slots[slot].length - pieces.slots[slot].received) {
+				pthread_mutex_unlock(&pieces.lock);
+				goto done;
+			}
+			memcpy(pieces.slots[slot].buffer + pieces.slots[slot].received, channel.plain + FS_DATA_HEADER,
+				(size_t)data);
+			pieces.slots[slot].received += (uint32_t)data;
+			pieces.received += (uint64_t)data;
+			if (pieces.slots[slot].received == pieces.slots[slot].length) {
+				unsigned char digest[32];
+
+				pthread_mutex_unlock(&pieces.lock);
+				fs_blake2b_256(pieces.slots[slot].buffer, pieces.slots[slot].length, digest);
+				pthread_mutex_lock(&pieces.lock);
+				pieces.slots[slot].matched = fs_equal(digest, pieces.slots[slot].hash, 32);
+				pieces.slots[slot].state = PIECE_DONE;
+			}
+			pthread_mutex_unlock(&pieces.lock);
+		}
+	}
+	failed = 0;
+	channel.plain[0] = FS_FRAME_END;
+	channel.plain[1] = channel.plain[2] = channel.plain[3] = 0;
+	fs_channel_send(&channel, 4, NULL);
+done:
+	fs_channel_free(&channel);
+	{
+		unsigned long elapsed = fs_milliseconds() - pieces.began;
+
+		if (pieces.received)
+			fs_log("file share: received %.1f MB of a map's pieces in %.1f s (%.1f MB/s)%s%s",
+				pieces.received / 1048576.0, elapsed / 1000.0,
+				elapsed ? pieces.received / 1048576.0 / (elapsed / 1000.0) : 0.0, failed ? ": " : "",
+				failed ? why : "");
+		else if (failed)
+			fs_log("file share: no pieces received: %s", why);
+	}
+	if (failed)
+		pieces_set_state(opened ? HOST_FS_FETCH_FAILED_LATE : HOST_FS_FETCH_FAILED_EARLY);
+	return NULL;
+}
+
+int host_fs_pieces_begin(unsigned int address, int port, unsigned int session, unsigned int token_address)
+{
+	host_fs_pieces_stop();
+	if (!address || port <= 0 || port > 65535)
+		return 0;
+	pieces.address = address;
+	pieces.port = (unsigned)port;
+	pieces.session = session;
+	memcpy(pieces.token, GUEST_BYTES(token_address), 32);
+	pieces.stop = 0;
+	pieces.received = 0;
+	pieces.began = fs_milliseconds();
+	pieces.state = HOST_FS_FETCH_CONNECTING;
+	if (pthread_create(&pieces.thread, NULL, pieces_main, NULL) != 0) {
+		pieces.state = HOST_FS_FETCH_FAILED_EARLY;
+		return 0;
+	}
+	pieces.running = 1;
+	return 1;
+}
+
+int host_fs_pieces_ask(int file, unsigned int offset, unsigned int length, unsigned int hash_address)
+{
+	int i, asked = 0;
+
+	if (file < 0 || file > 0xffff || !length || length > FS_PIECE_BYTES)
+		return 0;
+	pthread_mutex_lock(&pieces.lock);
+	if (pieces.running && (pieces.state == HOST_FS_FETCH_CONNECTING || pieces.state == HOST_FS_FETCH_RECEIVING))
+		for (i = 0; i < FS_PIECE_SLOTS && !asked; i++) {
+			if (pieces.slots[i].state != PIECE_FREE)
+				continue;
+			if (!pieces.slots[i].buffer && !(pieces.slots[i].buffer = malloc(FS_PIECE_BYTES)))
+				break;
+			pieces.slots[i].state = PIECE_ASKED;
+			pieces.slots[i].file = (unsigned)file;
+			pieces.slots[i].offset = offset;
+			pieces.slots[i].length = length;
+			pieces.slots[i].received = 0;
+			pieces.slots[i].matched = 0;
+			pieces.slots[i].order = pieces.next_order++;
+			memcpy(pieces.slots[i].hash, GUEST_BYTES(hash_address), 32);
+			asked = 1;
+		}
+	pthread_mutex_unlock(&pieces.lock);
+	return asked;
+}
+
+int host_fs_pieces_take(unsigned int buffer_address, unsigned int out_address)
+{
+	int i, taken = 0;
+
+	pthread_mutex_lock(&pieces.lock);
+	for (i = 0; i < FS_PIECE_SLOTS && !taken; i++) {
+		uint32_t out[4];
+
+		if (pieces.slots[i].state != PIECE_DONE)
+			continue;
+		out[0] = pieces.slots[i].file;
+		out[1] = pieces.slots[i].offset;
+		out[2] = pieces.slots[i].length;
+		out[3] = (uint32_t)pieces.slots[i].matched;
+		if (pieces.slots[i].matched)
+			memcpy(GUEST_BYTES(buffer_address), pieces.slots[i].buffer, pieces.slots[i].length);
+		memcpy(GUEST_BYTES(out_address), out, sizeof(out));
+		pieces.slots[i].state = PIECE_FREE;
+		taken = 1;
+	}
+	pthread_mutex_unlock(&pieces.lock);
+	return taken;
+}
+
+int host_fs_pieces_state(void)
+{
+	int state;
+
+	pthread_mutex_lock(&pieces.lock);
+	state = pieces.state;
+	pthread_mutex_unlock(&pieces.lock);
+	return state;
+}
+
+void host_fs_pieces_stop(void)
+{
+	int i;
+
+	if (pieces.running) {
+		pieces.stop = 1;
+		pthread_join(pieces.thread, NULL);
+		pieces.running = 0;
+	}
+	pthread_mutex_lock(&pieces.lock);
+	for (i = 0; i < FS_PIECE_SLOTS; i++) {
+		free(pieces.slots[i].buffer);
+		memset(&pieces.slots[i], 0, sizeof(pieces.slots[i]));
+	}
+	fs_wipe(pieces.token, sizeof(pieces.token));
+	pieces.state = HOST_FS_FETCH_IDLE;
+	pthread_mutex_unlock(&pieces.lock);
 }
