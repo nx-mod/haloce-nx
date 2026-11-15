@@ -508,6 +508,8 @@ public class LauncherActivity extends Activity {
         }
         new Thread(() -> {
             String problem = GameFiles.run(dataRoot, base, (text, permille) -> report("Moving " + text, permille));
+            // (what is there now, for the result's screen)
+            long size = problem == null ? GameFiles.totalSize(dataRoot) : 0;
             handler.post(() -> {
                 getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 if (problem != null) {
@@ -515,9 +517,29 @@ public class LauncherActivity extends Activity {
                     return;
                 }
                 progress = null;
-                startAfterMigration();
+                moveDone("The game's files are now in " + (app ? "the app's storage" : base.getAbsolutePath()) + " ("
+                    + GameFiles.size(size) + ").");
             });
         }, "halo-game-files-move").start();
+    }
+
+    /** how long the result's screen waits before the game starts by itself */
+    private static final int MOVE_DONE_MILLISECONDS = 5000;
+
+    /** a move done (or undone): where the files are, then the game (CONTINUE, or by itself after a few seconds) */
+    private void moveDone(String text) {
+        LinearLayout layout = screen("The game's files moved", text);
+        boolean[] gone = { false };
+        Runnable proceed = () -> {
+            if (gone[0])
+                return;
+            gone[0] = true;
+            startAfterMigration();
+        };
+        Button proceedButton = button(layout, "Continue", v -> proceed.run());
+        setContentView(layout);
+        proceedButton.requestFocus();
+        handler.postDelayed(proceed, MOVE_DONE_MILLISECONDS);
     }
 
     /** a move that stopped: why, and TRY AGAIN, or MOVE THEM BACK (what had moved put back where it was) */
@@ -540,7 +562,7 @@ public class LauncherActivity extends Activity {
                         return;
                     }
                     progress = null;
-                    startAfterMigration();
+                    moveDone("The game's files that had moved are back where they were.");
                 });
             }, "halo-game-files-back").start();
         });
