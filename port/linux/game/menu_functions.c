@@ -9909,7 +9909,9 @@ chosen Workshop item's preview, over steam_picture (a text box: drawn by
 steam_picture_draw, from menu_functions_text_box_drawn) */
 
 #define STEAM_ROWS 11
-#define STEAM_DETAILS_LINES 8
+/* (as many as steam_details_text holds above the picture: more, and the last
+is cut short with "..." rather than lost under the box's edge) */
+#define STEAM_DETAILS_LINES 6
 #define STEAM_TEXTURE 256
 
 /* the text boxes measured, in the Mods screen's places (one screen is shown
