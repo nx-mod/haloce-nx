@@ -381,13 +381,18 @@ struct download_file
 	/* when they were asked for, and when the last of them came */
 	unsigned long hashes_started_at;
 	unsigned long hashes_asked_at;
-	/* the pieces had (a bit each), and asked for (a count each) */
+	/* the pieces had (a bit each: written), being written (a bit each:
+	the part files' writer's), and asked for (a count each) */
 	byte *have;
+	byte *writing;
 	byte *asked;
 	long have_count;
 	char part_path[MAP_SHARE_PATH_SIZE];
 	char final_path[MAP_SHARE_PATH_SIZE];
+	/* the part file: read (unbuffered, for the pieces served to others),
+	and written (the part files' writer's own) */
 	FILE *stream;
+	FILE *write_stream;
 };
 
 /* a machine the host named */
@@ -1496,6 +1501,279 @@ static void request_remove(
 	struct connection *connection,
 	short index);
 
+/* ---------- the part files' writer
+
+A piece checked goes to the part file on a thread of its own, not on the
+connections' thread under the lock, which the game's thread takes each frame:
+a write past a part file's end (pieces come from anywhere in it) has the
+Switch's card fill the gap first, which took 20 and 29 seconds once, and the
+game's connection to the host timed out meanwhile. A piece is had (served,
+counted, told to the others) once written (piece_writes_collect); while it is
+being written it is not asked again (piece_got), and while many are waiting
+no more are asked (piece_writes_busy). */
+enum
+{
+	MAXIMUM_PIECE_WRITES = 160,
+	/* (no more asked while this many wait: what is asked already fits) */
+	PIECE_WRITES_BUSY = 32,
+};
+
+enum piece_write_state
+{
+	_piece_write_free,
+	_piece_write_queued,
+	_piece_write_writing,
+	_piece_write_written,
+	_piece_write_failed,
+};
+
+struct piece_write
+{
+	short state;
+	short file;
+	/* (the download's: a write of the one before is let go) */
+	long serial;
+	long piece;
+	unsigned long sequence;
+	FILE *stream;
+	unsigned long offset;
+	unsigned long bytes;
+	byte *data;
+	/* the stream closed by the writer once this is written (its file
+	closed meanwhile) */
+	boolean close_after;
+};
+
+static struct
+{
+	/* 0 not yet, 1 running, -1 it could not be started (written where they
+	come, as before) */
+	short started;
+	pthread_mutex_t lock;
+	pthread_cond_t wake;
+	unsigned long sequence;
+	struct piece_write writes[MAXIMUM_PIECE_WRITES];
+} piece_writer;
+
+static void *piece_writer_thread(
+	void *unused)
+{
+	(void)unused;
+	pthread_mutex_lock(&piece_writer.lock);
+	for (;;)
+	{
+		struct piece_write *write = NULL;
+		boolean written;
+		short index;
+
+		/* (the oldest first) */
+		for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+		{
+			struct piece_write *candidate = &piece_writer.writes[index];
+
+			if (candidate->state == _piece_write_queued && (!write || candidate->sequence < write->sequence))
+				write = candidate;
+		}
+		if (!write)
+		{
+			pthread_cond_wait(&piece_writer.wake, &piece_writer.lock);
+			continue;
+		}
+		write->state = _piece_write_writing;
+		pthread_mutex_unlock(&piece_writer.lock);
+		written = fseek(write->stream, (long)write->offset, SEEK_SET) == 0 &&
+			fwrite(write->data, 1, write->bytes, write->stream) == write->bytes && fflush(write->stream) == 0;
+		pthread_mutex_lock(&piece_writer.lock);
+		free(write->data);
+		write->data = NULL;
+		if (write->close_after)
+		{
+			fclose(write->stream);
+			write->state = _piece_write_free;
+			continue;
+		}
+		write->state = written ? _piece_write_written : _piece_write_failed;
+	}
+	return NULL;
+}
+
+static boolean piece_writer_start(
+	void)
+{
+	pthread_t thread;
+
+	if (piece_writer.started)
+		return piece_writer.started > 0;
+	piece_writer.started = -1;
+	if (pthread_mutex_init(&piece_writer.lock, NULL) != 0)
+		return FALSE;
+	if (pthread_cond_init(&piece_writer.wake, NULL) != 0 ||
+		pthread_create(&thread, NULL, piece_writer_thread, NULL) != 0)
+	{
+		error(_error_silent, "map sharing: the part files' writer could not be started: pieces written as they come");
+		return FALSE;
+	}
+	pthread_detach(thread);
+	piece_writer.started = 1;
+	return TRUE;
+}
+
+/* whether a piece is had or being written: not to be asked for */
+static boolean piece_got(
+	struct download_file const *file,
+	long piece)
+{
+	byte bit = (byte)(1 << (piece & 7));
+
+	return (file->have[piece >> 3] & bit) || (file->writing && (file->writing[piece >> 3] & bit));
+}
+
+/* whether enough pieces wait to be written that no more are to be asked */
+static boolean piece_writes_busy(
+	void)
+{
+	short waiting = 0;
+	short index;
+
+	if (piece_writer.started <= 0)
+		return FALSE;
+	pthread_mutex_lock(&piece_writer.lock);
+	for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+	{
+		if (piece_writer.writes[index].state == _piece_write_queued ||
+			piece_writer.writes[index].state == _piece_write_writing)
+		{
+			waiting++;
+		}
+	}
+	pthread_mutex_unlock(&piece_writer.lock);
+	return waiting >= PIECE_WRITES_BUSY;
+}
+
+/* a piece given to the writer (its data copied): FALSE when it cannot be
+(no writer, its queue full, no memory), and it is to be written here */
+static boolean piece_write_queue(
+	struct download_file *file,
+	short file_index,
+	long piece,
+	unsigned long offset,
+	byte const *data,
+	unsigned long bytes)
+{
+	struct piece_write *write = NULL;
+	byte *copy;
+	short index;
+
+	if (!file->write_stream || !file->writing || !piece_writer_start())
+		return FALSE;
+	copy = malloc(bytes);
+	if (!copy)
+		return FALSE;
+	csmemcpy(copy, data, bytes);
+	pthread_mutex_lock(&piece_writer.lock);
+	for (index = 0; index < MAXIMUM_PIECE_WRITES && !write; index++)
+	{
+		if (piece_writer.writes[index].state == _piece_write_free)
+			write = &piece_writer.writes[index];
+	}
+	if (!write)
+	{
+		pthread_mutex_unlock(&piece_writer.lock);
+		free(copy);
+		return FALSE;
+	}
+	write->state = _piece_write_queued;
+	write->file = file_index;
+	write->serial = map_share_globals.download.serial;
+	write->piece = piece;
+	write->sequence = ++piece_writer.sequence;
+	write->stream = file->write_stream;
+	write->offset = offset;
+	write->bytes = bytes;
+	write->data = copy;
+	write->close_after = FALSE;
+	pthread_cond_signal(&piece_writer.wake);
+	pthread_mutex_unlock(&piece_writer.lock);
+	file->writing[piece >> 3] |= (byte)(1 << (piece & 7));
+	return TRUE;
+}
+
+/* a part file's writing stream closed: its writes waiting let go, and one
+being written closed by the writer once done */
+static void piece_writes_close(
+	FILE *stream)
+{
+	boolean deferred = FALSE;
+	short index;
+
+	if (!stream)
+		return;
+	if (piece_writer.started > 0)
+	{
+		pthread_mutex_lock(&piece_writer.lock);
+		for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+		{
+			struct piece_write *write = &piece_writer.writes[index];
+
+			if (write->state == _piece_write_free || write->stream != stream)
+				continue;
+			if (write->state == _piece_write_writing)
+			{
+				write->close_after = TRUE;
+				deferred = TRUE;
+				continue;
+			}
+			free(write->data);
+			write->data = NULL;
+			write->state = _piece_write_free;
+		}
+		pthread_mutex_unlock(&piece_writer.lock);
+	}
+	if (!deferred)
+		fclose(stream);
+}
+
+static void download_piece_written(short file_index, long piece);
+
+/* (under the lock) the pieces written since: had */
+static void piece_writes_collect(
+	void)
+{
+	struct download *download = &map_share_globals.download;
+	short index;
+
+	if (piece_writer.started <= 0)
+		return;
+	for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+	{
+		struct piece_write *write = &piece_writer.writes[index];
+		struct download_file *file;
+		short state;
+
+		pthread_mutex_lock(&piece_writer.lock);
+		state = write->state;
+		if (state == _piece_write_written || state == _piece_write_failed)
+			write->state = _piece_write_free;
+		pthread_mutex_unlock(&piece_writer.lock);
+		if (state != _piece_write_written && state != _piece_write_failed)
+			continue;
+		if (write->serial != download->serial || write->file < 0 || write->file >= download->file_count)
+			continue;
+		file = &download->files[write->file];
+		if (!file->writing || write->stream != file->write_stream || write->piece >= file->piece_count)
+			continue;
+		file->writing[write->piece >> 3] &= (byte)~(1 << (write->piece & 7));
+		if (state == _piece_write_failed)
+		{
+			if (!map_share_globals.failure[0])
+				snprintf(map_share_globals.failure, sizeof(map_share_globals.failure),
+					"The map could not be written (is the disk full?).");
+			continue;
+		}
+		download_piece_written(write->file, write->piece);
+	}
+}
+
 /* a download's file closed, not had whole: its part file deleted if it
 holds none of the file (made for an offer alone, it would be a host's to
 fill the disk with, a new name each time), else kept to be taken up again, a
@@ -1511,6 +1789,8 @@ static void download_file_close(
 		fclose(file->stream);
 		file->stream = NULL;
 	}
+	piece_writes_close(file->write_stream);
+	file->write_stream = NULL;
 	/* (one being checked, or not opened yet, is not this download's to
 	delete: it may hold what an earlier one had) */
 	if (file->state != _file_transferring || !file->part_path[0])
@@ -1579,6 +1859,7 @@ static void download_end(
 		free(file->piece_hashes);
 		free(file->hashes_coming);
 		free(file->have);
+		free(file->writing);
 		free(file->asked);
 	}
 	csmemset(download, 0, sizeof(*download));
@@ -1748,6 +2029,19 @@ static boolean map_share_holds_players_unlocked(
 /* the download's file made anew for writing: its part file empty, each
 piece written at its place as it comes (not the file's size at once: the
 offer alone, the host's word, would take the disk) */
+/* the part file there opened to be read (unbuffered: what the writer's
+stream writes is read at once) and written (the writer's) */
+static boolean download_file_streams(
+	struct download_file *file)
+{
+	file->stream = fopen(file->part_path, "r+b");
+	if (!file->stream)
+		return FALSE;
+	setvbuf(file->stream, NULL, _IONBF, 0);
+	file->write_stream = fopen(file->part_path, "r+b");
+	return TRUE;
+}
+
 static boolean download_file_create(
 	struct download_file *file)
 {
@@ -1756,8 +2050,7 @@ static boolean download_file_create(
 	if (!stream)
 		return FALSE;
 	fclose(stream);
-	file->stream = fopen(file->part_path, "r+b");
-	if (!file->stream)
+	if (!download_file_streams(file))
 		return FALSE;
 	file->state = _file_transferring;
 	return TRUE;
@@ -1855,8 +2148,9 @@ static void download_offered(
 		}
 		snprintf(file->part_path, sizeof(file->part_path), "%s.part", file->final_path);
 		file->have = calloc((unsigned long)(file->piece_count + 7) / 8, 1);
+		file->writing = calloc((unsigned long)(file->piece_count + 7) / 8, 1);
 		file->asked = calloc((unsigned long)file->piece_count, 1);
-		if (!file->have || !file->asked)
+		if (!file->have || !file->writing || !file->asked)
 		{
 			download->file_count = index + 1;
 			download_fail("There is not enough memory to download the map.");
@@ -2014,20 +2308,21 @@ static void download_reach_sources(
 	}
 }
 
-/* a piece had: written, told to every connection about its file */
+/* a piece had: given to the part files' writer (download_piece_written once
+written) */
 static void download_piece_had(
 	short file_index,
 	long piece,
 	byte const *data)
 {
-	struct map_share_globals *globals = &map_share_globals;
-	struct download *download = &globals->download;
-	struct download_file *file = &download->files[file_index];
+	struct download_file *file = &map_share_globals.download.files[file_index];
 	unsigned long offset = (unsigned long)piece * MAP_SHARE_PIECE_BYTES;
 	unsigned long bytes = MIN(MAP_SHARE_PIECE_BYTES, file->size - offset);
-	short index;
 
-	if (file->have[piece >> 3] & (1 << (piece & 7)))
+	if (piece_got(file, piece))
+		return;
+	/* (on the writer's thread; here only when it cannot take it) */
+	if (piece_write_queue(file, file_index, piece, offset, data, bytes))
 		return;
 	if (!file->stream || fseek(file->stream, (long)offset, SEEK_SET) != 0 ||
 		fwrite(data, 1, bytes, file->stream) != bytes)
@@ -2038,6 +2333,22 @@ static void download_piece_had(
 				"The map could not be written (is the disk full?).");
 		return;
 	}
+	download_piece_written(file_index, piece);
+}
+
+/* a piece written: had, told to every connection about its file */
+static void download_piece_written(
+	short file_index,
+	long piece)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	struct download_file *file = &download->files[file_index];
+	unsigned long bytes = MIN(MAP_SHARE_PIECE_BYTES, file->size - (unsigned long)piece * MAP_SHARE_PIECE_BYTES);
+	short index;
+
+	if (file->have[piece >> 3] & (1 << (piece & 7)))
+		return;
 	file->have[piece >> 3] |= (byte)(1 << (piece & 7));
 	file->have_count++;
 	download->done_bytes += bytes;
@@ -2213,6 +2524,9 @@ static void download_finish(
 			fclose(file->stream);
 			file->stream = NULL;
 		}
+		/* (every piece written: nothing of it left with the writer) */
+		piece_writes_close(file->write_stream);
+		file->write_stream = NULL;
 		if (!MoveFileA(file->part_path, file->final_path))
 		{
 			download_unfinish(index);
@@ -2270,7 +2584,7 @@ static long piece_choose(
 	long start;
 	long step;
 
-	if (!file->piece_count)
+	if (!file->piece_count || piece_writes_busy())
 		return NONE;
 	/* (from a random place, so the machines downloading ask for different
 	pieces of the same rarity) */
@@ -2281,7 +2595,7 @@ static long piece_choose(
 		short count = 0;
 		short index;
 
-		if ((file->have[piece >> 3] & (1 << (piece & 7))) || (!again && file->asked[piece]) ||
+		if (piece_got(file, piece) || (!again && file->asked[piece]) ||
 			(again && file->asked[piece] >= 2))
 		{
 			continue;
@@ -2344,7 +2658,7 @@ static boolean download_unasked_pieces(
 		}
 		for (piece = 0; piece < file->piece_count; piece++)
 		{
-			if (!(file->have[piece >> 3] & (1 << (piece & 7))) && !file->asked[piece])
+			if (!piece_got(file, piece) && !file->asked[piece])
 				return TRUE;
 		}
 	}
@@ -2568,7 +2882,7 @@ static void fs_source_update(
 	}
 	/* (more asked: the next pieces no one was asked for, in order; the last
 	ones again, once every piece has been asked of someone) */
-	while (fs->asked_count < MAXIMUM_FS_PIECES)
+	while (fs->asked_count < MAXIMUM_FS_PIECES && !piece_writes_busy())
 	{
 		long chosen = NONE;
 		short again;
@@ -2588,7 +2902,7 @@ static void fs_source_update(
 				{
 					short index;
 
-					if ((file->have[piece >> 3] & (1 << (piece & 7))) || file->asked[piece] > again)
+					if (piece_got(file, piece) || file->asked[piece] > again)
 						continue;
 					for (index = 0; index < fs->asked_count; index++)
 					{
@@ -3471,6 +3785,7 @@ static void download_update(
 			download_fail("The host did not answer the request for the map.");
 		return;
 	}
+	piece_writes_collect();
 	/* (met by the connections' thread) */
 	if (map_share_globals.failure[0])
 	{
@@ -3503,8 +3818,8 @@ static void download_update(
 
 			/* (a part file as long as the furthest piece written: the pieces
 			it reaches, the last of them perhaps cut short and not taken) */
-			file->stream = piece_hashes && piece_count <= file->piece_count && size <= file->size ?
-				fopen(file->part_path, "r+b") : NULL;
+			if (!piece_hashes || piece_count > file->piece_count || size > file->size || !download_file_streams(file))
+				file->stream = NULL;
 			for (piece = 0; file->stream && piece < piece_count; piece++)
 			{
 				if (!csmemcmp(piece_hashes + piece * MAP_SHARE_HASH_BYTES, file->piece_hashes + piece * MAP_SHARE_HASH_BYTES,
@@ -4185,6 +4500,7 @@ static unsigned long __stdcall map_share_connections_thread(
 		{
 			/* (the host's file connection may be the only source) */
 			map_share_lock();
+			piece_writes_collect();
 			fs_source_update();
 			map_share_unlock();
 			Sleep(busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_IDLE_SLEEP);
@@ -4194,6 +4510,7 @@ static unsigned long __stdcall map_share_connections_thread(
 		timeout.tv_usec = (busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_QUIET_WAIT) * 1000;
 		select(0, &readable, writeable.fd_count ? &writeable : NULL, NULL, &timeout);
 		map_share_lock();
+		piece_writes_collect();
 		connection_accept();
 		connections_update();
 		fs_source_update();

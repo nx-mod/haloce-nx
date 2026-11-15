@@ -183,6 +183,18 @@ static boolean custom_edition_cache_present(char const *level_name, unsigned lon
 	return fake_playable;
 }
 
+/* (the part files' writer: nothing waits with it here) */
+static void piece_writes_close(FILE *stream)
+{
+	if (stream)
+		fclose(stream);
+}
+
+static boolean piece_writes_busy(void)
+{
+	return FALSE;
+}
+
 static void download_fail(char const *reason)
 {
 	(void)reason;

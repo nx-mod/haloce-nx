@@ -35,7 +35,7 @@ NEGATIVE_CONTROLS = {
 }
 
 FUNCTIONS = ("get_long", "remote_piece_had", "remote_pieces_forget", "download_file_close", "request_remove",
-             "download_end", "download_unfinish", "download_finish", "piece_choose", "frame_state", "frame_have",
+             "download_end", "download_unfinish", "download_finish", "piece_got", "piece_choose", "frame_state", "frame_have",
              "frame_refuse")
 
 
