@@ -1324,6 +1324,83 @@ int main(int argc,char **argv)
         return 0;
     }
 
+    /* the files written in place by another writer (the host's file
+     * connection, host_file_share.c): each file's .part named by the stage,
+     * written there, taken whole; lost after one was taken (every .part
+     * gone); given up before any was (the host's chunks from the start) */
+    if (!strcmp(argv[1],"external_file") || !strcmp(argv[1],"external_file_late") ||
+        !strcmp(argv[1],"external_file_abort")) {
+        char path[400],part[512];
+        unsigned char *data;
+        unsigned bytes;
+        int file;
+        W.join.env.transfer_elsewhere=env_elsewhere;
+        W.elsewhere=1;
+        CHECK(mcc_share_client_begin(&W.join,LEVEL,W.digest));
+        for (i=0;i<200 && W.join.state!=MCC_SHARE_CLIENT_TRANSFERRING;i++) step();
+        CHECK(W.join.state==MCC_SHARE_CLIENT_TRANSFERRING);
+        for (i=0;i<5;i++) step();
+        CHECK(!W.file_requests[0]);
+        /* (the paths, before anything is written: any file's, from current on) */
+        CHECK(mcc_share_stage_external_path(&W.join.stage,3,part,sizeof(part)) && strstr(part,".part"));
+        if (!strcmp(argv[1],"external_file_abort")) {
+            for (file=0;file<2;file++) {
+                snprintf(path,sizeof(path),"%smcc_maps/solar_flare/%s",H,names[file]);
+                data=read_file(path,&bytes);CHECK(data);
+                CHECK(mcc_share_stage_external_path(&W.join.stage,file,part,sizeof(part)));
+                CHECK(write_file(part,data,file ? bytes/2 : bytes));
+                free(data);
+            }
+            mcc_share_client_external_abort(&W.join);
+            CHECK(mcc_share_stage_external_path(&W.join.stage,0,part,sizeof(part)));
+            CHECK(!read_file(part,&bytes));
+            mcc_share_client_external_abort(&W.join);
+            W.elsewhere=0;
+            CHECK(run_until_finished(2000) && W.finished_ok && W.file_requests[0]);
+            for (i=0;i<4;i++) {
+                char a[400],b[400];
+                snprintf(a,sizeof(a),"%smcc_maps/solar_flare/%s",H,names[i]);
+                snprintf(b,sizeof(b),"%smcc_maps/solar_flare/%s",J,names[i]);
+                CHECK(same_file(a,b));
+            }
+            return 0;
+        }
+        for (file=0;file<4;file++) {
+            snprintf(path,sizeof(path),"%smcc_maps/solar_flare/%s",H,names[file]);
+            data=read_file(path,&bytes);CHECK(data);
+            CHECK(mcc_share_stage_external_path(&W.join.stage,file,part,sizeof(part)));
+            if (!strcmp(argv[1],"external_file_late") && file==1) {
+                /* half of this one, the next's begun, then the connection lost */
+                CHECK(write_file(part,data,bytes/2));
+                CHECK(mcc_share_stage_external_path(&W.join.stage,2,part,sizeof(part)));
+                CHECK(write_file(part,data,7));
+                free(data);
+                mcc_share_client_external_fail(&W.join,"lost");
+                CHECK(W.finished && !W.finished_ok && staging_gone());
+                return 0;
+            }
+            CHECK(write_file(part,data,bytes));
+            mcc_share_client_external_progress(&W.join,bytes/2);
+            CHECK(mcc_share_client_percent(&W.join)>=0);
+            CHECK(mcc_share_client_external_file(&W.join)==1);
+            CHECK(W.join.external_bytes==0);
+            free(data);
+        }
+        CHECK(W.join.state==MCC_SHARE_CLIENT_VERIFYING);
+        W.host.transfers[0].request_file=W.host.transfers[0].package.count;
+        W.host.transfers[0].request_offset=0;
+        CHECK(run_until_finished(2000) && W.finished_ok);
+        for (i=0;i<5;i++) step();
+        CHECK(W.host_completions==1 && !W.file_requests[0]);
+        for (i=0;i<4;i++) {
+            char a[400],b[400];
+            snprintf(a,sizeof(a),"%smcc_maps/solar_flare/%s",H,names[i]);
+            snprintf(b,sizeof(b),"%smcc_maps/solar_flare/%s",J,names[i]);
+            CHECK(same_file(a,b));
+        }
+        return 0;
+    }
+
     CASE("window") {
         char path[400];
         unsigned char *data;

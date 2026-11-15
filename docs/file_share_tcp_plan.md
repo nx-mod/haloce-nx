@@ -288,6 +288,39 @@ fills the line. That is also when `C` is learned best.
    frames, rates unlimited), the capability, and MCC files fetched with it
    and reported with `HAVE`; the old path when it fails. Test between two
    phones on the LAN: the transfer near the Wi-Fi's speed.
+
+   **Built 2026-11-15** (awaiting the device test, the Switch and a phone), as
+   follows where it differs from the above:
+   - It replaces `mcc_fast.c` (commit f1ce8261a, 2026-11-14: the same port,
+     plain, in the guest), whose session hooks it keeps
+     (`transfer_elsewhere`).
+   - The joiner's host thread writes each file to the `.part` its stage names
+     (`mcc_share_stage_external_path`), hashes it as it comes (the CPU's
+     SHA-256), and the stage takes it whole (`mcc_share_stage_external_done`):
+     the guest neither reads nor hashes the files. No `HAVE`: the host's
+     transfer counts the connection's bytes as its progress and is marked
+     fully asked for once every file was sent, then the joiner's `DONE(1)` and
+     the fingerprint check as before.
+   - No address check: the token is the joiner's proof. The host sends a
+     `READY` record first, and the joiner writes nothing before it opens, so a
+     wrong token fails before any file is touched (the host's chunks then).
+   - Over the internet the joiner's host thread connects to p2p.c's stand-in
+     for the host (`p2p_outgoing`), so the tunnel carries it with map
+     sharing's KCP settings, as it did `mcc_fast`'s; the host's p2p.c takes the
+     stream while the host's listener is up (`p2p_set_file_share_listening`).
+     That is stage 3's fallback, already there.
+   - The rate is the upload limit times `network.map_upload_in_game` in a
+     game, as before (stage 2 replaces it).
+   - Tests: `tools/test_host_file_share.py` (the ciphers against Python's
+     `cryptography`; a host and a joiner over loopback: every byte, the rate,
+     a wrong token, an unknown session, a bad hash, stopping),
+     `tools/test_mcc_share.py`'s `external_file*`,
+     `tools/test_network_extensions.py`'s data message. The ARM AES-GCM was
+     checked on the Z Fold against Python too.
+   - The log says what happened: `file share: receiving session ... (ARMv8 AES
+     and PMULL)`, `file share: received N MB in S s (R MB/s)` on the joiner,
+     `sent ...` on the host, and `mcc share: ... over the host's file
+     connection` or why it fell back to the chunks.
 2. **The rate**: the `ACK`s, `C` and `G`, the in-game budget, the delay check.
    Test: a hosted server with players in a game while a joiner downloads; the
    players' ping must not rise by more than a few ms.

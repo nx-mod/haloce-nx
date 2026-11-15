@@ -919,6 +919,8 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         LINUX_DIR / "src" / "server_json.c",
         # the app reads debug.sample_seconds from config.toml (host_main.c)
         TOML_DIR / "tomlc17.c",
+        # the file connection's X25519 and ChaCha20-Poly1305 (host_file_share_crypto.c)
+        MONOCYPHER_DIR / "monocypher.c",
     ]
     for source in host_sources:
         obj = host_obj_dir / (source.name + ".o")
@@ -928,7 +930,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         # signed values as the guest's -fwrapv defines, host_mcc_convert.c)
         n.build(outputs=obj, rule="android_host_cc", inputs=source,
                 variables={"cflags": host_cflags + (" -w" if source.name == "steam_unpack.c" else "") +
-                           (" -fwrapv" if source.name == "host_mcc_convert.c" else "")},
+                           (" -fwrapv" if source.name == "host_mcc_convert.c" else "") +
+                           (f" -I{MONOCYPHER_DIR}" if source.name in ("host_file_share_crypto.c", "monocypher.c")
+                            else "")},
                 implicit=[build_stamp] if source.name == "host_vk_probe.c" else None)
         host_objects.append(obj)
     # internet play's UPnP (posix_upnp.c, with port/third_party/miniupnpc),

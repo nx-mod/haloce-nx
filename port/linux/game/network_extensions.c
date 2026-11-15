@@ -57,6 +57,9 @@ enum
 	EXTENSIONS_FORMAT = 1,
 	EXTENSIONS_KIND_ANNOUNCEMENT = 0,
 	EXTENSIONS_KIND_ANSWER = 1,
+	/* a capability's own data: the key's length and the key, then its bytes
+	(network_extensions_send_data) */
+	EXTENSIONS_KIND_DATA = 2,
 	EXTENSIONS_FLAG_REQUIRED = 1 << 0,
 	MAXIMUM_KEY_LENGTH = 63,
 	MAXIMUM_TEXT_LENGTH = 127,
@@ -90,11 +93,25 @@ struct capability
 	boolean (*required)(void);
 };
 
+/* mcc_share.c's: a capability's data from the host (machine_index NONE) or a
+client */
+void mcc_share_file_share_data(long machine_index, void const *payload, long size);
+
 static struct capability const capabilities[] =
 {
 	{ NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS, 1,
 		"You need a client with support for custom OG Xbox multiplayer maps.", custom_xbox_multiplayer_maps_required },
+	{ NETWORK_CAPABILITY_FILE_SHARE_TCP, 1, "", NULL },
 };
+
+/* each capability's data handler (EXTENSIONS_KIND_DATA), or NULL */
+static void (*const data_handlers[])(long machine_index, void const *payload, long size) =
+{
+	NULL,
+	mcc_share_file_share_data,
+};
+typedef char data_handlers_match[sizeof(data_handlers) / sizeof(data_handlers[0]) ==
+	sizeof(capabilities) / sizeof(capabilities[0]) ? 1 : -1];
 
 #define CAPABILITY_COUNT ((long)(sizeof(capabilities) / sizeof(capabilities[0])))
 
@@ -459,6 +476,78 @@ boolean network_extensions_host_machine_held(
 	return required && (!host.machines[machine_index].answered || machine_missing(machine_index, required) != NONE);
 }
 
+/* a capability's data (EXTENSIONS_KIND_DATA), from the host (machine_index
+NONE) or a client: handed to its handler where the capability is agreed;
+FALSE if the message is not of that kind */
+static boolean data_handle(
+	long machine_index,
+	void const *data,
+	long size)
+{
+	byte const *bytes = data;
+	long key_length, index;
+	boolean agreed;
+
+	/* (the type byte that ends the packet is not the message's) */
+	size--;
+	if (size < EXTENSIONS_MAGIC_LENGTH + 3 || memcmp(bytes, EXTENSIONS_MAGIC, EXTENSIONS_MAGIC_LENGTH) ||
+		bytes[EXTENSIONS_MAGIC_LENGTH] != EXTENSIONS_FORMAT || bytes[EXTENSIONS_MAGIC_LENGTH + 1] != EXTENSIONS_KIND_DATA)
+	{
+		return FALSE;
+	}
+	key_length = bytes[EXTENSIONS_MAGIC_LENGTH + 2];
+	if (key_length < 1 || key_length > MAXIMUM_KEY_LENGTH || EXTENSIONS_MAGIC_LENGTH + 3 + key_length > size)
+		return TRUE;
+	index = capability_index((char const *)bytes + EXTENSIONS_MAGIC_LENGTH + 3, key_length);
+	if (index == NONE || !data_handlers[index])
+		return TRUE;
+	agreed = machine_index == NONE ?
+		network_extension_host_has(capabilities[index].key, 1) :
+		network_extension_agreed(machine_index, capabilities[index].key, 1);
+	if (agreed)
+		data_handlers[index](machine_index, bytes + EXTENSIONS_MAGIC_LENGTH + 3 + key_length,
+			size - (EXTENSIONS_MAGIC_LENGTH + 3 + key_length));
+	return TRUE;
+}
+
+boolean network_extensions_send_data(
+	long machine_index,
+	char const *key,
+	void const *payload,
+	long size)
+{
+	byte data[MAXIMUM_MESSAGE_BYTES];
+	byte buffer[MAXIMUM_MESSAGE_BYTES + 16];
+	long key_length = key ? (long)strlen(key) : 0;
+	long index = capability_index(key, key_length);
+	long at;
+	void *message;
+	unsigned short message_size;
+
+	if (index == NONE || size < 0 || EXTENSIONS_MAGIC_LENGTH + 3 + key_length + size + 1 > (long)sizeof(data) ||
+		(machine_index == NONE ? !network_extension_host_has(key, 1) : !network_extension_agreed(machine_index, key, 1)))
+	{
+		return FALSE;
+	}
+	memcpy(data, EXTENSIONS_MAGIC, EXTENSIONS_MAGIC_LENGTH);
+	at = EXTENSIONS_MAGIC_LENGTH;
+	data[at++] = EXTENSIONS_FORMAT;
+	data[at++] = EXTENSIONS_KIND_DATA;
+	data[at++] = (byte)key_length;
+	memcpy(data + at, key, (size_t)key_length);
+	at += key_length;
+	memcpy(data + at, payload, (size_t)size);
+	at += size;
+	data[at++] = NETWORK_EXTENSIONS_PACKET_TYPE;
+	message = create_message(EXTENSIONS_MESSAGE_TYPE_PACKET, data, (unsigned long)at, buffer, sizeof(buffer));
+	if (!message)
+		return FALSE;
+	message_size = (unsigned short)GET_MESSAGE_SIZE(*(unsigned short *)message);
+	return machine_index == NONE ?
+		network_distributed_client_send_reliably(message, message_size) :
+		network_distributed_server_send_to_machine_reliably(machine_index, message, message_size);
+}
+
 void network_extensions_host_handle(
 	long machine_index,
 	void const *data,
@@ -466,6 +555,12 @@ void network_extensions_host_handle(
 {
 	struct peer_capabilities read;
 	boolean was_held = network_extensions_host_machine_held(machine_index);
+
+	if (machine_index >= 0 && machine_index < MAXIMUM_MACHINES && host.machines[machine_index].present &&
+		data_handle(machine_index, data, size))
+	{
+		return;
+	}
 
 	if (machine_index < 0 || machine_index >= MAXIMUM_MACHINES || !host.machines[machine_index].present ||
 		!extensions_read(data, size, EXTENSIONS_KIND_ANSWER, &read))
@@ -542,6 +637,8 @@ void network_extensions_client_handle(
 {
 	struct peer_capabilities read;
 
+	if (data_handle(NONE, data, size))
+		return;
 	if (!extensions_read(data, size, EXTENSIONS_KIND_ANNOUNCEMENT, &read))
 		return;
 	client.capabilities = read;

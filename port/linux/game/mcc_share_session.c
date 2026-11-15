@@ -635,6 +635,7 @@ static void client_idle(struct mcc_share *share)
     share->have_pending=0;
     share->state=MCC_SHARE_CLIENT_IDLE;
     share->outstanding=0;
+    share->external_bytes=0;
 }
 
 static int client_send(struct mcc_share *share, uint8_t op, uint8_t file, uint8_t flags,
@@ -949,6 +950,37 @@ void mcc_share_client_external_fail(struct mcc_share *share, char const *message
     if (share->state==MCC_SHARE_CLIENT_TRANSFERRING) client_fail(share,message);
 }
 
+int mcc_share_client_external_file(struct mcc_share *share)
+{
+    enum mcc_share_stage_result result;
+    if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING) return 0;
+    result=mcc_share_stage_external_done(&share->stage);
+    share->external_bytes=0;
+    share->progress_at=share_now(share);
+    if (result==MCC_SHARE_STAGE_ALL_DONE) {
+        share->state=MCC_SHARE_CLIENT_VERIFYING;
+        return 1;
+    }
+    if (result!=MCC_SHARE_STAGE_FILE_DONE) {
+        client_fail(share,"The files from the host could not be written. Nothing was installed.");
+        return -1;
+    }
+    return 1;
+}
+
+void mcc_share_client_external_progress(struct mcc_share *share, uint32_t bytes)
+{
+    if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING) return;
+    if (bytes!=share->external_bytes) share->progress_at=share_now(share);
+    share->external_bytes=bytes;
+}
+
+void mcc_share_client_external_abort(struct mcc_share *share)
+{
+    mcc_share_stage_external_abort(&share->stage);
+    share->external_bytes=0;
+}
+
 void mcc_share_client_response(struct mcc_share *share, void const *message, unsigned bytes)
 {
     struct mcc_share_response head;
@@ -1034,7 +1066,7 @@ int mcc_share_client_percent(struct mcc_share const *share)
     if (share->state==MCC_SHARE_CLIENT_IDLE) return -1;
     if (share->state==MCC_SHARE_CLIENT_VERIFYING) return 100;
     if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING || !share->stage.total) return 0;
-    return (int)(((uint64_t)share->stage.done*100u)/share->stage.total);
+    return (int)(((uint64_t)(share->stage.done+share->external_bytes)*100u)/share->stage.total);
 }
 
 static void client_update(struct mcc_share *share)

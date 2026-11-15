@@ -26,7 +26,8 @@ CASES = ["list", "admit", "manifest", "redirect", "stage_cancel", "stage_hash_an
          "verify_success", "verify_recheck", "verify_heartbeat", "verify_cancel", "verify_disconnect", "verify_timeout",
          "verify_refused", "verify_invalid", "verify_metadata_failure", "verify_receipt_failure",
          "verify_install_failure", "verify_bind_failure", "window", "hashed_elsewhere", "hashed_elsewhere_fails",
-         "external", "external_early", "external_late"]
+         "external", "external_early", "external_late", "external_file", "external_file_late",
+         "external_file_abort"]
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +91,11 @@ def test_share(share_tool, tmp_path, case):
     # files coming another way are not asked of the host as chunks
     ("    if (share->env.transfer_elsewhere && share->env.transfer_elsewhere(share->env.user)) {",
      "    if (0) {", "external"),
+    # another writer's .part files are deleted when the download fails, or it gives up
+    ("    if (stage->external) stage_external_parts_delete(stage);\n", "", "external_file_late"),
+    ("        stage_external_parts_delete(stage);\n    stage->external=0;", "    stage->external=0;", "external_file_abort"),
+    # a file another writer has is taken only once it is whole and renamed
+    ("    stage->owned[stage->current]=1;\n    stage->done+=file->size;", "    stage->done+=file->size;", "external_file_late"),
 ])
 def test_negative_controls(tmp_path, before, after, case):
     """Each selected check must detect its intended fault in the real code."""

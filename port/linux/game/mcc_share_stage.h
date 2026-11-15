@@ -130,6 +130,9 @@ struct mcc_share_stage {
     void (*cancel_check)(void *user);
     void *check_user;
     int owns_directory, owns_partial, verified, direct_active;
+    /* Files written by another writer (the host's file connection): each
+     * file's .part from current on may exist, and is deleted on failure. */
+    int external;
     unsigned char owned[MCC_SHARE_STAGE_FILES];
     /* Locally generated only, after verification; never network manifest entries. */
     unsigned char companion_owned[MCC_SHARE_STAGE_COMPANIONS];
@@ -170,6 +173,19 @@ enum mcc_share_stage_result mcc_share_stage_verify(struct mcc_share_stage *stage
 /* After successful verification, publish the complete directory through the
  * platform strategy. Existing installations are never replaced. */
 enum mcc_share_stage_result mcc_share_stage_install(struct mcc_share_stage *stage);
+/* Another writer (the host's own file connection, host_file_share.c) writes
+ * the files in place: the game path of file index's .part (its folders
+ * made), for it to create exclusively; native staging only. Marks the stage
+ * external, so that a failure deletes every .part from current on. */
+int mcc_share_stage_external_path(struct mcc_share_stage *stage, int index, char *path, unsigned size);
+/* The current file was written whole by that writer, which checked its size
+ * and SHA-256 as it wrote: renamed from .part and counted, as
+ * mcc_share_stage_write does with the last bytes (FILE_DONE or ALL_DONE). */
+enum mcc_share_stage_result mcc_share_stage_external_done(struct mcc_share_stage *stage);
+/* That writer gave up before the current file was taken: its .part files
+ * from current on deleted, and the stage written by mcc_share_stage_write
+ * again. */
+void mcc_share_stage_external_abort(struct mcc_share_stage *stage);
 /* Delete only this transfer's owned files/directories. */
 void mcc_share_stage_cancel(struct mcc_share_stage *stage);
 /* The metadata validator may discard an unsupported optional preview before

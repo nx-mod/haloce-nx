@@ -91,6 +91,7 @@ ANDROID_DIR = Path("port/android")
 LINUX_DIR = Path("port/linux")
 LINUX_HOST_DIR = LINUX_DIR / "host"
 TOMLC17_DIR = Path("port/third_party/tomlc17")
+MONOCYPHER_DIR = Path("port/third_party/monocypher")
 # the Android host library's files the PS5's host uses as they are
 # (port/ps5/PS5.md, phase 2); the rest are replaced by port/ps5/host's
 # (and the server browser's requests to the master servers, host_https.c, on
@@ -106,7 +107,9 @@ SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thre
                      "host_memory_files.c",
                      # (the Steam Workshop screen's Steam client: steam_downloads.h)
                      "steam_cm.c", "steam_crypto.c", "steam_depot.c", "steam_downloads.c", "steam_net.c",
-                     "steam_seal.c", "steam_unpack.c")
+                     "steam_seal.c", "steam_unpack.c",
+                     # (files over a connection of their own: host_file_share.h)
+                     "host_file_share.c", "host_file_share_crypto.c")
 # and the Vulkan renderer's host half (port/ps5/PS5.md, phase 4), less
 # host_vk_driver.c (port/ps5/host/host_vk_driver_ps5.c is the console's) and
 # the probe, host_vk_probe.c
@@ -716,6 +719,8 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
                     *(root / LINUX_DIR / "src" / name for name in POSIX_FILES), root / TOMLC17_DIR / "tomlc17.c",
                     # (the map lists' IMPORT's JSON reader: host_mcc_import.c)
                     root / LINUX_DIR / "src" / "server_json.c",
+                    # (the file connection's X25519 and ChaCha20-Poly1305: host_file_share_crypto.c)
+                    root / MONOCYPHER_DIR / "monocypher.c",
                     guest["host_table_c"], import_stubs]
     for source in host_sources:
         obj = obj_dir / (source.name + ".o")
@@ -732,6 +737,8 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
         # signed values as the guest's -fwrapv defines)
         if source.name == "host_mcc_convert.c":
             cflags += " -fwrapv"
+        if source.name in ("host_file_share_crypto.c", "monocypher.c"):
+            cflags += f" -I{root / MONOCYPHER_DIR}"
         if source.name == "tomlc17.c":
             # (the SDK's math.h: its isnan's _Generic names volatile types,
             # which an lvalue never has; the warning is the header's, in a

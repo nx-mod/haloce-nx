@@ -452,6 +452,25 @@ static void sha_end(struct sha const *source, unsigned char digest[32])
 	}
 }
 
+/* the host's piecewise SHA-256 (host_mcc_hash.h) */
+typedef char host_sha256_layout[sizeof(struct host_sha256) == sizeof(struct sha) ? 1 : -1];
+
+void host_sha256_begin(struct host_sha256 *sha)
+{
+	pthread_once(&hash_once, hash_setup);
+	sha_begin((struct sha *)sha);
+}
+
+void host_sha256_add(struct host_sha256 *sha, void const *data, size_t size)
+{
+	sha_add((struct sha *)sha, data, size);
+}
+
+void host_sha256_end(struct host_sha256 const *sha, unsigned char digest[32])
+{
+	sha_end((struct sha const *)sha, digest);
+}
+
 /* the fingerprint's header of a file: its type and its size */
 static void sha_file_header(struct sha *sha, unsigned type, uint64_t size)
 {

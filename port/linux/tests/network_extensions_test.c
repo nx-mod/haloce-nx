@@ -140,6 +140,19 @@ void error(int priority, char const *format, ...)
 
 /* ---------- helpers */
 
+/* mcc_share.c's handler of file_share_tcp's data, as the test has it: what
+it was last handed */
+static long data_from = -2;
+static long data_size = -1;
+static byte data_bytes[64];
+
+void mcc_share_file_share_data(long machine_index, void const *payload, long size)
+{
+	data_from = machine_index;
+	data_size = size;
+	memcpy(data_bytes, payload, (size_t)(size < 64 ? size : 64));
+}
+
 static void host_reset(void)
 {
 	memset(&host, 0, sizeof(host));
@@ -218,7 +231,7 @@ static void test_announcement_bytes(void)
 	data = message_data(sent_to_machine);
 	size = message_data_size(sent_to_machine_size);
 	CHECK(!memcmp(data, "SLXT", 4));
-	CHECK(data[4] == 1 && data[5] == 0 && data[6] == 1);
+	CHECK(data[4] == 1 && data[5] == 0 && data[6] == 2);
 	CHECK(data[7] == strlen(NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS));
 	CHECK(!memcmp(data + 8, NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS, data[7]));
 	CHECK(data[8 + data[7]] == 1 && data[9 + data[7]] == 0);
@@ -228,7 +241,16 @@ static void test_announcement_bytes(void)
 	CHECK(data[11 + data[7]] == strlen(capabilities[0].missing_notice));
 	CHECK(!memcmp(data + 12 + data[7], capabilities[0].missing_notice, data[11 + data[7]]));
 	CHECK(data[size - 1] == NETWORK_EXTENSIONS_PACKET_TYPE);
-	CHECK(size == 12 + data[7] + data[11 + data[7]] + 1);
+	/* the second, file_share_tcp: version 1, not required, no text */
+	{
+		long at = 12 + data[7] + data[11 + data[7]];
+
+		CHECK(data[at] == strlen(NETWORK_CAPABILITY_FILE_SHARE_TCP));
+		CHECK(!memcmp(data + at + 1, NETWORK_CAPABILITY_FILE_SHARE_TCP, data[at]));
+		CHECK(data[at + 1 + data[at]] == 1 && data[at + 2 + data[at]] == 0);
+		CHECK(data[at + 3 + data[at]] == 0 && data[at + 4 + data[at]] == 0);
+		CHECK(size == at + 5 + data[at] + 1);
+	}
 	required_setting = "";
 }
 
@@ -489,6 +511,61 @@ static void test_client_leaves_without_required(void)
 	aborted = 0;
 }
 
+/* a capability's data (kind 2): sent only where it is agreed, and handed to
+its handler only where it is (the token of the host's file connection) */
+static void test_data_where_agreed(void)
+{
+	byte answer[512], announcement[512], payload[36];
+	char const *keys[] = { NETWORK_CAPABILITY_FILE_SHARE_TCP };
+	unsigned short versions[] = { 1 };
+	byte flags[] = { 0 };
+	long answer_size = message_build(answer, 1, keys, versions, flags, 1);
+	long announcement_size = message_build(announcement, 0, keys, versions, flags, 1);
+	byte data_message[512];
+	long data_message_size;
+
+	memset(payload, 0xA5, sizeof(payload));
+	payload[0] = 7;
+	host_reset();
+	network_extensions_client_reset();
+	machine_remote[3] = TRUE;
+	network_extensions_host_machine_accepted(3);
+	/* (a machine that has not answered with it: nothing sent) */
+	CHECK(!network_extensions_send_data(3, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, sizeof(payload)));
+	network_extensions_host_handle(3, answer, answer_size);
+	CHECK(network_extension_agreed(3, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1));
+	sent_to_machine_size = 0;
+	CHECK(network_extensions_send_data(3, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, sizeof(payload)));
+	CHECK(sent_to_machine_size > 0 && sent_to_machine_index == 3);
+	CHECK(!network_extensions_send_data(4, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, sizeof(payload)));
+	CHECK(!network_extensions_send_data(3, "no_such_capability", payload, sizeof(payload)));
+	data_message_size = message_data_size(sent_to_machine_size);
+	memcpy(data_message, message_data(sent_to_machine), (size_t)data_message_size);
+	/* the client: dropped before the host announced it */
+	data_size = -1;
+	network_extensions_client_handle(data_message, data_message_size);
+	CHECK(data_size == -1);
+	network_extensions_client_handle(announcement, announcement_size);
+	CHECK(network_extension_host_has(NETWORK_CAPABILITY_FILE_SHARE_TCP, 1));
+	sent_to_host_size = 0;
+	network_extensions_client_handle(data_message, data_message_size);
+	CHECK(data_from == NONE && data_size == (long)sizeof(payload) && !memcmp(data_bytes, payload, sizeof(payload)));
+	/* (data is not answered, as an announcement is) */
+	CHECK(sent_to_host_size == 0);
+	/* the host: a client's data, handed on with the machine */
+	CHECK(network_extensions_send_data(NONE, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, 5));
+	data_size = -1;
+	network_extensions_host_handle(3, message_data(sent_to_host), message_data_size(sent_to_host_size));
+	CHECK(data_from == 3 && data_size == 5);
+	/* (from a machine that never answered with it: dropped) */
+	machine_remote[6] = TRUE;
+	network_extensions_host_machine_accepted(6);
+	data_size = -1;
+	network_extensions_host_handle(6, message_data(sent_to_host), message_data_size(sent_to_host_size));
+	CHECK(data_size == -1);
+	network_extensions_client_reset();
+}
+
 int main(void)
 {
 	test_announcement_bytes();
@@ -502,6 +579,7 @@ int main(void)
 	test_machine_gone_forgotten();
 	test_custom_map_game_requires();
 	test_client_leaves_without_required();
+	test_data_where_agreed();
 	if (failures)
 	{
 		printf("%d failures\n", failures);

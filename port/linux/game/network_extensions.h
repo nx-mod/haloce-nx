@@ -24,6 +24,9 @@ build without it logs and drops.
 
 /* the capabilities of this build (network_extensions.c's table) */
 #define NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS "custom_xbox_multiplayer_maps"
+/* files over a connection of their own (port/android/host/host_file_share.c,
+docs/file_share_tcp_plan.md) */
+#define NETWORK_CAPABILITY_FILE_SHARE_TCP "file_share_tcp"
 
 /* ---------- prototypes/NETWORK_EXTENSIONS.C */
 
@@ -74,5 +77,16 @@ boolean network_extension_host_has(
 	unsigned short version);
 boolean network_extension_host_requires(
 	char const *key);
+
+/* ---------- data for a capability (kind 2: the key, then its bytes)
+
+Sent only where the capability is agreed: the host to a machine that answered
+with it, a client to a host that announced it; received the same way, and
+handed to the capability's own handler (network_extensions.c's table). */
+boolean network_extensions_send_data(
+	long machine_index,
+	char const *key,
+	void const *payload,
+	long size);
 
 #endif
