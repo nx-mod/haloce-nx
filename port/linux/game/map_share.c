@@ -558,7 +558,9 @@ enum
 	_fs_source_on,
 	/* failed, or a piece did not match: not tried again for this download */
 	_fs_source_failed,
-	MAXIMUM_FS_PIECES = 32,
+	/* (as many as host_file_share.c's FS_PIECE_SLOTS: four for each of its
+	sixteen connections) */
+	MAXIMUM_FS_PIECES = 64,
 };
 
 struct fs_source

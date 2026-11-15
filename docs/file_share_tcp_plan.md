@@ -375,6 +375,19 @@ fills the line. That is also when `C` is learned best.
    connection. Tests: `test_direct_first`, `test_direct_falls_back`.
 4. **The Switch's 4 connections** a source; its buffers only if they fall
    short of about 40 MB/s.
+
+   **Built 2026-11-15, for every platform** (one internet joiner: 3.2 MB/s
+   over one connection on a 265 Mbit/s upload and a 322 Mbit/s download; CUBIC
+   halves a connection's window at each loss): a joiner opens 16 connections
+   to the host (4 on the Switch), all through the one port; the first proves
+   the token, the others open after it. A map's pieces are shared between
+   them; an MCC package's files go in 1 MB ranges, put back in order in memory
+   and written and hashed in order (one writer, the hash as it comes). A
+   connection that drops gives its piece or range back. The host takes 32
+   connections at once, 16 a transfer, one allowance for all. BBR is asked
+   for where the sender's kernel allows it (the S21 FE's, not the Z Fold's);
+   socket buffers fall back from 4 MB until the system takes one (a BSD
+   stack refuses a size past its limit and keeps its small default).
 5. **Later**: CE maps (`map_share.c`) over the same connection between
    SlipstreamCE machines; other players as sources (the host hands out a
    token for each pair, as it does the sources' list now); no record
