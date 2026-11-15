@@ -497,8 +497,9 @@ static const struct config_setting config_settings[] =
 	{ "input.stick_vertical_sensitivity", _config_real, "0", "HALO_STICK_VERTICAL_SENSITIVITY", _environment_value,
 		_platform_all,
 		"How fast the controller's right stick turns the view up and down, 1 to\n"
-		"10: 40 to 260 degrees a second, as Look Sensitivity's left and right.\n"
-		"0 for the game's own, half of Look Sensitivity's turn." },
+		"15: 40 degrees a second and about 24.4 more a step (10 is 260, the top of\n"
+		"the Xbox's Look Sensitivity left and right; 15 about 382). 0 for the\n"
+		"game's own, half of Look Sensitivity's turn." },
 	{ "input.left_stick_dead_zone", _config_integer, "-1", "HALO_LEFT_STICK_DEAD_ZONE", _environment_value, _platform_all,
 		"How far the controller's left stick moves before it moves the player,\n"
 		"in percent of its travel (0 to 50): lower for finer control, higher for\n"

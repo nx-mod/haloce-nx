@@ -191,12 +191,13 @@ short halo_stick_dead_range(short stick)
 }
 
 /* the right stick's turn up and down, in degrees a second, of each setting
-of input.stick_vertical_sensitivity (1 to 10): Look Sensitivity's left and
-right range, 40 to 260, in even steps; 0 is the game's, half of left and
-right's (player_ui.c) */
+of input.stick_vertical_sensitivity (1 to 15): 1 to 10 Look Sensitivity's
+left and right range on the Xbox, 40 to 260, in even steps, and 11 to 15 on
+in the same steps (to about 382); 0 is the game's, half of left and right's
+(player_ui.c) */
 #define STICK_PITCH_RATE_SLOWEST 40.0f
-#define STICK_PITCH_RATE_FASTEST 260.0f
-#define STICK_PITCH_RATE_STEPS 10
+#define STICK_PITCH_RATE_AT_10 260.0f
+#define STICK_PITCH_RATE_STEPS 15
 
 float halo_stick_pitch_rate(short gamepad_index, float pitch_rate)
 {
@@ -215,8 +216,7 @@ float halo_stick_pitch_rate(short gamepad_index, float pitch_rate)
 		/* (read_at 0 is never read: config_changes() + 1) */
 		players[player].read_at = config_changes() + 1;
 		players[player].rate = step < 1 || step > STICK_PITCH_RATE_STEPS ? 0.0f :
-			STICK_PITCH_RATE_SLOWEST + (STICK_PITCH_RATE_FASTEST - STICK_PITCH_RATE_SLOWEST) *
-			(float)(step - 1) / (STICK_PITCH_RATE_STEPS - 1);
+			STICK_PITCH_RATE_SLOWEST + (STICK_PITCH_RATE_AT_10 - STICK_PITCH_RATE_SLOWEST) * (float)(step - 1) / 9.0f;
 	}
 	return players[player].rate > 0.0f ? players[player].rate : pitch_rate;
 }

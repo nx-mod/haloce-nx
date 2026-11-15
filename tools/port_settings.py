@@ -348,13 +348,15 @@ SCREENS = {
         # (27: ten rows, the last clear of the help at 350)
         "spacing": 27,
         "rows": [
-            ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 11)],
+            # (1 to 15: 1 to 10 the Xbox's, 11 to 15 on in its steps, player_ui.c's tables)
+            ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 16)],
              "How fast the right stick turns the view left\nand right.", None),
             # (the profile's own settings.toml's, as Gyro Aim's: SAME is the
             # game's, half of Look Sensitivity's; 1 to 10 are 40 to 260
-            # degrees a second, xinput_sdl.c's halo_stick_pitch_rate)
+            # degrees a second, and 11 to 15 on in the same steps,
+            # xinput_sdl.c's halo_stick_pitch_rate)
             ("VERTICAL SENSITIVITY:", "input.stick_vertical_sensitivity",
-             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 11)],
+             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 16)],
              "How fast the right stick turns the view up\nand down. SAME: half of Look Sensitivity's.", None),
             ("INVERT LOOK:", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("INVERT FLIGHT:", "profile.flight_inversion", YES_NO,
