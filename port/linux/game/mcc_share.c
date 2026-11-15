@@ -427,12 +427,15 @@ static int mcc_share_fs_elsewhere(void *user)
             mcc_share_fs_tried=1;
             return 0;
         }
-        if (!mcc_share_fs_token.valid || mcc_share_fs_token.session!=mcc_share_globals.session) {
+        /* (the token, and the host's address, which a connection only just
+           made may not have yet) */
+        if (!mcc_share_fs_token.valid || mcc_share_fs_token.session!=mcc_share_globals.session ||
+            !mcc_share_fs_host_address()) {
             unsigned long now=system_milliseconds();
             if (!mcc_share_fs_waiting_since) mcc_share_fs_waiting_since=now?now:1;
             if (now-mcc_share_fs_waiting_since<MCC_SHARE_TOKEN_WAIT_MS) return 1;
             mcc_share_fs_tried=1;
-            error(_error_silent,"mcc share: no token from the host for its file connection: its chunks instead");
+            error(_error_silent,"mcc share: no token or address from the host for its file connection: its chunks instead");
             return 0;
         }
         mcc_share_fs_tried=1;

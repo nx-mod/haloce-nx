@@ -806,7 +806,8 @@ static unsigned long map_share_host_address(
 		cached_connection = NULL;
 		return 0;
 	}
-	if (connection == cached_connection && now - cached_time < 1000)
+	/* (none known yet, early in a join: asked again, not kept) */
+	if (connection == cached_connection && now - cached_time < 1000 && cached_address)
 		return cached_address;
 	csmemset(&reliable, 0, sizeof(reliable));
 	network_connection_get_address(connection, &reliable, &unreliable);
@@ -1920,6 +1921,10 @@ static boolean source_address(
 
 	if (source->host)
 	{
+		/* (an offer that came as the client joined, before its connection had
+		the host's address: asked again until it has) */
+		if (!source->address)
+			source->address = map_share_host_address();
 		*address = source->address;
 		return *address != 0;
 	}
@@ -2480,10 +2485,14 @@ static void fs_source_update(
 
 		if (!fs->token_valid || !network_extension_host_has(NETWORK_CAPABILITY_FILE_SHARE_TCP, 1))
 			return;
+		/* (the host's address not known yet, early in a join: asked again next
+		turn) */
+		if (!address)
+			return;
 		if (!fs->buffer && !(fs->buffer = malloc(MAP_SHARE_PIECE_BYTES)))
 			return;
 		/* (a host over the internet play tunnel: its local stand-in) */
-		if (!address || p2p_outgoing(1, -1, &address, &port) < 0 ||
+		if (p2p_outgoing(1, -1, &address, &port) < 0 ||
 			!host_fs_pieces_begin((unsigned int)address, ((port & 0xFF) << 8) | (port >> 8), fs->session,
 				MAP_SHARE_HOST_ADDRESS(fs->token)))
 		{
