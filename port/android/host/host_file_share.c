@@ -400,15 +400,17 @@ game its traffic and 5% of the line: 0.95 * C - G, where G is the game's own
 bytes a second (its datagrams, counted by the guest: xnet.c) and C the line's
 top speed:
 
-- measured: the bytes the connections sent in each half second in which the
-  socket, not the pacing, held them back for a tenth of it or more (the line
-  was full); C takes the highest of the last ten seconds of those;
-- kept honest in a game by the players' pings (the host's round trips to its
-  clients, which the guest gives): 30 ms more than the least of the last minute
-  while files go out, and C comes down a tenth; otherwise, while the
-  connections use what they are allowed, it creeps up 2% a half second (25%
-  while nothing has measured the line yet, from 1 MB/s above the game's
-  traffic: a game is never flooded to find out). */
+- measured outside a game: the bytes the connections sent in each half second
+  in which the socket, not the pacing, held them back for a tenth of it or
+  more (the line was full); C takes the highest of the last ten seconds;
+- in a game, optimistic: not known yet, C is the whole limit (as fast as the
+  line takes); a full socket only raises it (a joiner that stalls, or TCP
+  ramping up over a long path, backs the socket up too); the players' pings
+  alone lower it (the host's round trips to its clients, which the guest
+  gives): 30 ms more than the least of the last minute while files go out,
+  and C is a tenth below what was going out; otherwise it goes up 10% a half
+  second while the allowance is used. With no player's ping known (nobody
+  playing), nothing but the game's traffic holds it back. */
 
 enum {
 	FS_RATE_BUCKET_MILLISECONDS = 500,
@@ -417,7 +419,6 @@ enum {
 	FS_RATE_BASE_MILLISECONDS = 60000,
 	FS_RATE_LOG_MILLISECONDS = 5000,
 	FS_RATE_FLOOR = 256 * 1024,
-	FS_RATE_PROBE_START = 1024 * 1024,
 	FS_RATE_TRICKLE = 16 * 1024,
 };
 
@@ -458,6 +459,12 @@ static double fs_rate_measured(struct fs_rate const *rate)
 		if (rate->limited[i] && rate->rates[i] > best)
 			best = rate->rates[i];
 	return best;
+}
+
+/* C for the allowance to be the whole limit (none: as much as the line takes) */
+static double fs_rate_full(struct fs_rate const *rate)
+{
+	return rate->cap > 0.0 ? rate->cap / 0.95 + rate->game : 1e12;
 }
 
 static double fs_rate_allowance(struct fs_rate const *rate)
@@ -502,13 +509,15 @@ static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 		rate->bucket_at = now;
 		rate->bucket_bytes = 0.0;
 		rate->bucket_waited = 0;
-		rate->budget = fs_rate_allowance(rate);
 		if (rate->in_game && !rate->capacity)
-			rate->budget = FS_RATE_PROBE_START;
+			rate->capacity = fs_rate_full(rate);
+		rate->budget = fs_rate_allowance(rate);
 		return;
 	}
 	if (length < FS_RATE_BUCKET_MILLISECONDS) {
-		rate->budget = rate->in_game && !rate->capacity ? FS_RATE_PROBE_START : fs_rate_allowance(rate);
+		if (rate->in_game && !rate->capacity)
+			rate->capacity = fs_rate_full(rate);
+		rate->budget = fs_rate_allowance(rate);
 		return;
 	}
 	bucket_rate = rate->bucket_bytes * 1000.0 / (double)length;
@@ -531,14 +540,24 @@ static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
 		if (measured > 0.0)
 			rate->capacity = measured;
 	} else {
+		/* (the line not known: as fast as the limit lets, until the pings say
+		otherwise) */
 		if (!rate->capacity)
-			rate->capacity = FS_RATE_PROBE_START + rate->game / 0.95;
-		if (limited && bucket_rate + rate->game < rate->capacity)
+			rate->capacity = fs_rate_full(rate);
+		/* (a full socket raises C, never lowers it: a joiner that stalls a
+		moment, or TCP still ramping up over a long path, backs the socket up
+		too, and said 0.3 MB/s of a line that carried 2.5; the pings alone lower
+		it) */
+		if (limited && bucket_rate + rate->game > rate->capacity)
 			rate->capacity = bucket_rate + rate->game;
-		else if (sending && delayed)
-			rate->capacity *= 0.9;
-		else if (sending && bucket_rate >= 0.8 * rate->budget)
-			rate->capacity *= rate->measured ? 1.02 : 1.25;
+		/* (the players' pings up: a tenth below what was going out, not below
+		the estimate, which may be far above it) */
+		if (sending && delayed) {
+			double going = (bucket_rate + rate->game) / 0.95;
+
+			rate->capacity = 0.9 * (going < rate->capacity ? going : rate->capacity);
+		} else if (sending && bucket_rate >= 0.8 * rate->budget)
+			rate->capacity *= 1.1;
 		if (rate->capacity < FS_RATE_FLOOR + rate->game)
 			rate->capacity = FS_RATE_FLOOR + rate->game;
 		if (rate->cap > 0.0 && rate->capacity > rate->cap / 0.95 + rate->game)

@@ -199,13 +199,22 @@ def test_rate_in_a_game_leaves_the_game_and_five_percent(transfer):
 def test_rate_backs_off_when_the_players_pings_rise(transfer):
     steps = rate(transfer, "f 0 0 0 262144000\ns 10485760 300\nt 500\nf 1 1048576 40 262144000\nt 100\n"
                            "s 9000000 0\nt 500\nf 1 1048576 80 262144000\ns 9000000 0\nt 500\n")
-    assert float(steps[-1]["capacity"]) == 0.9 * 20 * MB
+    going = (9000000 * 1000 / 500 + MB) / 0.95
+    assert abs(float(steps[-1]["capacity"]) - 0.9 * min(going, 20 * MB)) < 2
 
 
-def test_rate_probes_in_a_game_with_the_line_unknown(transfer):
-    steps = rate(transfer, "f 1 0 30 262144000\nt 100\ns 600000 0\nt 500\ns 700000 0\nt 500\n")
-    assert float(steps[0]["budget"]) == MB
-    assert float(steps[1]["capacity"]) == 1.25 * MB and float(steps[2]["capacity"]) == 1.25 * 1.25 * MB
+def test_rate_in_a_game_with_the_line_unknown_starts_at_the_limit(transfer):
+    """optimistic: as fast as the limit lets until the players' pings say otherwise"""
+    steps = rate(transfer, "f 1 0 30 10485760\nt 100\ns 600000 0\nt 500\n")
+    assert float(steps[0]["budget"]) == 10485760 and float(steps[1]["budget"]) == 10485760
+
+
+def test_rate_backs_off_below_what_was_going_out(transfer):
+    """the pings rising with C far above what goes out: C a tenth below what went out, at once"""
+    steps = rate(transfer, "f 1 0 40 262144000\nt 100\ns 1000000 0\nt 500\nf 1 0 90 262144000\n"
+                           "s 1000000 0\nt 500\n")
+    going = 1000000 * 1000 / 500 / 0.95
+    assert abs(float(steps[-1]["capacity"]) - 0.9 * going) < 2
 
 
 def test_rate_trickles_when_the_game_takes_the_line(transfer):
@@ -224,3 +233,11 @@ def test_direct_first(transfer, tmp_path):
     fields, out, err, _ = run(transfer, tmp_path, "direct-works")
     assert fields["state"] == "3" and "connected directly" in err and out.count(" same") == 7
 
+
+def test_rate_a_full_socket_never_lowers_the_line_in_a_game(transfer):
+    """a joiner stalling (or TCP ramping up over a long path) backs the socket up too: in a game a full
+    socket raises C, the players' pings alone lower it (an internet joiner's download was held to 0.3
+    MB/s of a 2.5 MB/s line)"""
+    steps = rate(transfer, "f 0 0 0 262144000\ns 5000000 300\nt 500\nf 1 0 30 262144000\nt 100\n"
+                           "s 100000 400\nt 500\n")
+    assert float(steps[-1]["capacity"]) >= float(steps[0]["capacity"])
