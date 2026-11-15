@@ -15,7 +15,7 @@ struct observer_result const *observer_get_camera(short i) {return &cameras[i];}
 /* a replay's playback: no local player, and the replay's own camera */
 static int replaying;
 static struct observer_result replay_camera;
-int network_replay_playing(void) {return replaying;}
+int network_replay_viewing(void) {return replaying;}
 struct observer_result const *network_replay_camera(void) {return &replay_camera;}
 static int weapon_on, vehicle_on, projectile_on, prong_on, lookups, generation;
 static const char *names[64];

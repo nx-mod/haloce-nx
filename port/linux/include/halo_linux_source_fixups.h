@@ -7,6 +7,13 @@ The port's functions that the game's sources call, declared for them.
 #ifndef __HALO_LINUX_SOURCE_FIXUPS_H
 #define __HALO_LINUX_SOURCE_FIXUPS_H
 
+/* Discard measured listener motion at camera cuts and lifecycle boundaries
+(source/sound/sound_manager.c). NONE resets every local listener. */
+void sound_listener_motion_reset(short local_player_index);
+
+/* MCC weapon-deletion notification (port/linux/game/mcc_first_person.inl). */
+void mcc_first_person_weapon_deleted(long weapon_index);
+
 /* frames between the 30 Hz ticks (port/linux/game/render_interpolation.c);
 the platform layer reads the display.interpolation setting */
 struct observer_result;
@@ -152,6 +159,16 @@ run is one; its start, before the game's (shell_xbox.c); its frames' pace
 (main.c); the game's fatal error ended with (main.c); and the console's
 output, which it logs and captures for its commands' replies (terminal.c) */
 int halo_server_mode(void);
+/* ... whether this run is a dedicated server process, with no window, sound
+or player (halo_server_mode is also the player's app hosting from its
+menus: server_mode.h) */
+int halo_server_headless(void);
+/* ... whether the player's app hosts from its menus (network_client_manager.c:
+no player of its own joins) */
+int halo_server_hosting(void);
+/* ... and whether it is stopping, as the host asked: its own client's
+"the host went down" is no error then (ui_widget.c) */
+int halo_server_host_stopping(void);
 void server_mode_start(void);
 void server_mode_pace_frame(void);
 void server_fatal(char const *text);
@@ -174,12 +191,22 @@ float halo_stick_pitch_rate(short gamepad_index, float pitch_rate);
 /* the overlay menu (port/linux/game/overlay_menu.c): while it is open the
 menus' pointer is its own, and it is drawn over the screen (interface.c) */
 #include "halo_overlay_menu.h"
+/* (the host's screen, hosting from the menus: host_dashboard.c) */
+#include "halo_host_dashboard.h"
 /* TRUE when B steps out of a custom-map folder or the Map screen's
 difficulties and the screen stays (port/linux/game/menu_functions.c) */
 unsigned char menu_port_back(void *widget);
 /* TRUE when a list's d-pad up and down are its own handlers', not a step
 through its rows (the server browser's sort: port/linux/game/menu_functions.c) */
 unsigned char ui_widget_port_dpad_updown_taken(void *widget);
+/* TRUE when the pointer steps a list's rows with the stick's up and down,
+not the d-pad's, which the list takes for something else: the server
+browser's, whose d-pad sorts (port/linux/game/menu_functions.c) */
+unsigned char ui_widget_port_pointer_steps_with_stick(void *widget);
+/* the items a list of the port's keeps past its rows, ahead (forward) or
+behind, which a step at its end scrolls in: a touch drag goes on through
+them (port/linux/game/menu_functions.c) */
+short ui_widget_port_list_hidden(void *widget, unsigned char forward);
 /* the Switch GPU, waited on before a map's memory goes
 (port/switch/guest/d3d8_dk.c) */
 #ifdef HALO_SWITCH

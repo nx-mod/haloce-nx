@@ -50,8 +50,8 @@ NEGATIVE_CONTROLS = {
 }
 
 FUNCTIONS = ("get_long", "elapsed", "address_internet", "address_private", "source_address_allowed", "hashes_source",
-             "frame_hashes", "host_machine_valid", "host_machine_downloading", "map_share_machine_downloading",
-             "map_share_machine_needs_map", "level_name_copy", "host_offer", "host_request", "host_asked",
+             "frame_hashes", "host_machine_valid", "host_machine_downloading", "map_share_machine_downloading_unlocked",
+             "map_share_machine_needs_map_unlocked", "level_name_copy", "host_offer", "host_request", "host_asked",
              "host_update", "host_progress")
 
 

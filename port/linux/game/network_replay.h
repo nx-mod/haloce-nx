@@ -134,6 +134,10 @@ boolean network_replay_watch(char const *path, char *why, long why_size);
 older one whose messages are this one's but for the kinds
 network_replay_skips_message leaves out (port/linux/network_format.txt) */
 boolean network_replay_network_version_playable(unsigned long network_version);
+/* whether a whole game record (struct network_game) of size bytes is taken:
+this build's, or, while a replay plays, a build's from before the game had
+its MCC identities (network_replay_playback.c) */
+boolean network_replay_game_size_taken(unsigned long size);
 
 /* whether a distributed message of the kind is not read from the replay
 being played: one whose layout changed since its network version
@@ -142,6 +146,24 @@ boolean network_replay_skips_message(byte type);
 
 /* whether a replay is being played (or its game loaded) */
 boolean network_replay_playing(void);
+
+/* whether a watched view is up, with no local player: a replay's playback,
+or the host of a server hosted from the menus watching its game live
+(network_replay_live_begin). What the view sees is drawn and heard as a
+player's would be: the watched player's arms through their eyes, the
+effects and lights where the camera is, the listener at it, and no HUD */
+boolean network_replay_viewing(void);
+
+/* the host watching its own game live (port/linux/game/host_dashboard.c):
+the playback's cameras and players, its views (Y), whom it watches (A, X),
+the scores (Back), but nothing of a file's (no seek, speed, pause or end).
+Begun on the player given (NONE: the first); FALSE if there is no game to
+watch, or a replay plays. Each frame its controls are read (FALSE: B, back
+to the host's screen), and it ends */
+boolean network_replay_live_begin(long player_index);
+boolean network_replay_live_update(void);
+void network_replay_live_end(void);
+boolean network_replay_live(void);
 
 /* a skip ahead's held frame (render.c, rasterizer_xbox_screen_effect.c):
 whether the frame being drawn is the one to hold (its 3D view copied, and
@@ -164,7 +186,8 @@ the windows: each asks network_replay_camera for it) */
 void network_replay_playback_frame(void);
 
 /* the view, for the frame's first window (main.c) and the sound's listener
-(sound_manager.c); NULL when no replay plays, or before it has one */
+(sound_manager.c); NULL when no view is up (network_replay_viewing), or
+before it has one */
 struct observer_result const *network_replay_camera(void);
 
 /* the player watched in a replay's playback (a datum index), NONE when no

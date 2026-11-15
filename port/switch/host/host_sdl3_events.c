@@ -50,6 +50,20 @@ void host_event_to_sdl3(const struct host_event *event, void *sdl3_event)
 			SDL_EVENT_WINDOW_FOCUS_LOST;
 		result.window.timestamp = event->timestamp_ns;
 		break;
+	case _host_event_finger_down:
+	case _host_event_finger_motion:
+	case _host_event_finger_up:
+		result.tfinger.type = event->kind == _host_event_finger_down ? SDL_EVENT_FINGER_DOWN :
+			event->kind == _host_event_finger_motion ? SDL_EVENT_FINGER_MOTION : SDL_EVENT_FINGER_UP;
+		result.tfinger.timestamp = event->timestamp_ns;
+		result.tfinger.touchID = (SDL_TouchID)event->touch_id;
+		result.tfinger.fingerID = (SDL_FingerID)event->finger_id;
+		result.tfinger.x = event->x;
+		result.tfinger.y = event->y;
+		result.tfinger.dx = event->dx;
+		result.tfinger.dy = event->dy;
+		result.tfinger.pressure = event->pressure;
+		break;
 	}
 	memcpy(sdl3_event, &result, sizeof(result));
 }

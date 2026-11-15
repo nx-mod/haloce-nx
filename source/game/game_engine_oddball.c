@@ -1542,3 +1542,31 @@ boolean game_engine_oddball_read_network_state(
 	oddball_events.transfers = state.transfers;
 	return TRUE;
 }
+
+/* port: (game_engine.h, the Proving Grounds bots) a ball's object, and who
+holds it */
+long game_engine_oddball_ball(
+	short index)
+{
+	struct object_iterator iterator;
+
+	if (!VALID_INDEX(index, MAXIMUM_ODDBALLS))
+		return NONE;
+	object_iterator_new(&iterator, _object_mask_weapon, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct weapon_datum *weapon = weapon_get(iterator.index);
+
+		if (weapon_is_flag(iterator.index) && weapon->object.owner_team_index == index)
+			return iterator.index;
+	}
+	return NONE;
+}
+
+long game_engine_oddball_carrier(
+	short index)
+{
+	if (!VALID_INDEX(index, MAXIMUM_ODDBALLS))
+		return NONE;
+	return oddball_globals.current_ball_owner[index];
+}

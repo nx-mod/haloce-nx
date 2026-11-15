@@ -45,6 +45,7 @@ combiners' arithmetic).
 #include "xgpu.h"
 #include "dk_shaders.h"
 #include "port_config.h"
+#include "mcc_environment_shader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -355,7 +356,7 @@ static struct range output_mapping_range(unsigned long flags, struct range range
 
 /* ---------- one general combiner stage */
 
-static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage, struct ranges *ranges)
+static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage, struct ranges *ranges, BOOL mcc_bump)
 {
 	DWORD combiner_count = state[D3DRS_PSCOMBINERCOUNT];
 	BOOL unique_c0 = (combiner_count & 0x1000) != 0;
@@ -390,7 +391,15 @@ static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage
 
 		ab = range_multiply(a, b);
 		cd = range_multiply(c, d);
-		if (!alpha && (flags & 0x02))
+		/* (MCC's environment lightmap pass: its bump attenuation in place of
+		the dot product, as nv2a_psh.c's, max(0, 1 + A.B - B.z);
+		mcc_environment_shader.h) */
+		if (mcc_bump && !alpha && inputs == 0x484B0A01 && (flags & 0x02))
+		{
+			mcc_environment_shader_emit(text);
+			ab = range_make(0.0f, ab.high * 3.0f + 2.0f);
+		}
+		else if (!alpha && (flags & 0x02))
 		{
 			xgpu_text_append(text, "\t\tvec3 cAB = vec3(dot(cA, cB));\n");
 			ab = range_scale(ab, 3.0f, 0.0f);
@@ -927,7 +936,7 @@ char *nv2a_dk_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		"\tvec4 r1 = vec4(0.0);\n");
 
 	for (stage = 0; stage < (int)combiner_count; stage++)
-		combiner_stage(&text, state, stage, &ranges);
+		combiner_stage(&text, state, stage, &ranges, key->mcc_bump_attenuation);
 
 	if (final_abcd == 0 && final_efg == 0)
 	{

@@ -80,7 +80,9 @@ def test_the_sources_parse():
     rules = rule_table()
     assert len(rules) > 40
     assert rules["vehicle_set"]["alias"] == "vehicles" and rules["vehicle_set"]["table"] == "universal"
-    assert rules["team_vehicles"]["choices"] == ["gametype", "pc", "custom"]
+    # (the first three as they were, so that older files keep their meaning; then the vehicle options' sets)
+    assert rules["team_vehicles"]["choices"][:3] == ["gametype", "pc", "custom"]
+    assert rules["blue_team_vehicles"]["choices"] == rules["team_vehicles"]["choices"]
     assert rules["time_limit"] == {"kind": "integer", "alias": "time", "table": "options", "minimum": 0,
                                    "maximum": 1440}
     assert engine_tables() == ["ctf", "slayer", "king", "oddball", "race"]

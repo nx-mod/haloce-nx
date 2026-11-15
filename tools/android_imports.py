@@ -77,7 +77,8 @@ def main():
         # (and folder listings, only to be counted for the card's report)
         translated = {"hostposix_fstat", "hostposix_seek", "hostposix_truncate", "hostposix_stat",
                       "hostposix_set_file_times", "hostposix_directory_open", "hostposix_directory_next",
-                      "hostposix_find_entry_case_insensitive"} if translate_descriptors else set()
+                      "hostposix_find_entry_case_insensitive", "hostposix_mcc_share_open",
+                      "hostposix_mcc_share_close"} if translate_descriptors else set()
 
         def symbol(n):
             if n in translated:

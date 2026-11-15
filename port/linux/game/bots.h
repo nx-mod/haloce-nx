@@ -43,6 +43,10 @@ int bots_game_allowed(void);
 /* the network player for bot number `bot_index` (0 up): its machine,
 controller, name and no team or colour yet */
 void bots_network_player(long bot_index, struct network_player *player);
+/* whether the game hosted here appears in the server browser; and a bot's name, "BOT-" before it in such a game
+(eleven characters at most) */
+int bots_server_listed(void);
+void bots_name(long bot_index, int listed, wchar_t *name, long count);
 
 /* the game tick (players_update_before_game): every bot's controls this
 tick, into the actions of the players by their index; nothing outside a

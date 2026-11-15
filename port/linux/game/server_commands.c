@@ -27,6 +27,9 @@ password's command is never logged nor answered with the password.
 #include "network_link.h"
 #include "server_director.h"
 #include "server_gametypes.h"
+#include "bots.h" /* port: port/linux/game/bots.c */
+#include "bots_common.h"
+#include "bots_combat.h"
 
 #include "../src/p2p.h" /* port: port/linux/src/p2p.c */
 #include "../src/server_console.h" /* port: port/linux/src/server_console.c */
@@ -46,7 +49,7 @@ password's command is never logged nor answered with the password.
 void platform_log(char const *format, ...);
 void platform_translate_path(char const *xbox_path, char *host_path, unsigned long host_path_size);
 
-#if HALO_SERVER_BUILD
+#if HALO_HOST_BUILD
 
 enum
 {
@@ -87,11 +90,13 @@ int server_commands_role(
 /* a line of the command's reply: whole into the capture its line is run
 with (server_console_output), whatever its length (sv_status --json's);
 else the console's, whose lines hold 254 characters, a piece at a time */
+typedef char server_say_text[SERVER_COMMAND_OUTPUT_SIZE];
+static server_say_text *say_text_heap;
+#define text SERVER_HEAP(server_say_text, say_text_heap)
 static void say(
 	char const *format,
 	...)
 {
-	static char text[SERVER_COMMAND_OUTPUT_SIZE];
 	va_list arguments;
 
 	va_start(arguments, format);
@@ -115,6 +120,7 @@ static void say(
 		while (at < length);
 	}
 }
+#undef text
 
 /* ---------- words */
 
@@ -361,7 +367,9 @@ static long find_player(
 
 /* ---------- bans.txt */
 
-static char ban_lines[MAXIMUM_BAN_LINES][BAN_LINE_SIZE];
+typedef char server_ban_lines[MAXIMUM_BAN_LINES][BAN_LINE_SIZE];
+static server_ban_lines *ban_lines_heap;
+#define ban_lines SERVER_HEAP(server_ban_lines, ban_lines_heap)
 
 /* bans.txt's lines (empty ones left out); how many, and whether that is
 all of it */
@@ -416,12 +424,14 @@ static boolean ban_field(
 
 /* bans.txt written again from the lines, but for the one left out (put in
 place whole) */
+typedef char server_bans_text[MAXIMUM_BAN_LINES * BAN_LINE_SIZE];
+static server_bans_text *bans_text_heap;
+#define text SERVER_HEAP(server_bans_text, bans_text_heap)
 static boolean write_bans(
 	long count,
 	long left_out)
 {
 	/* (the lines and their ends: as big as the lines read can be) */
-	static char text[MAXIMUM_BAN_LINES * BAN_LINE_SIZE];
 	char path[1024];
 	unsigned long size = 0;
 	long index;
@@ -442,6 +452,7 @@ static boolean write_bans(
 	}
 	return posix_server_write_file(path, text, size) != 0;
 }
+#undef text
 
 void server_commands_bans_json(
 	struct server_json *json)
@@ -570,8 +581,8 @@ static boolean command_status(char const *line, long count, char **words)
 	}
 	if (next)
 		say("next: %s on %s", next->gametype, next->map_name);
-	say("listing: %s%s", !config_boolean("network.online") ? "internet play off (LAN only)" :
-		config_boolean("server.public") ? "public" : "by invite only", config_string("server.password")[0] ?
+	say("listing: %s%s", !server_director_online() ? "LAN only" :
+		server_director_public() ? "public" : "by invite only", config_string("server.password")[0] ?
 		", with a password" : "");
 	if (server_commands.role >= _server_role_admin && p2p_invite_link(invite, sizeof(invite)) && invite[0])
 		say("invite: %s", invite);
@@ -697,7 +708,7 @@ static boolean command_gametypes(char const *line, long count, char **words)
 	for (index = 0; (name = server_gametype_builtin_name(index)) != NULL; index++)
 		length += snprintf(text + length, sizeof(text) - (size_t)length, "%s%s", index ? ", " : "", name);
 	say("built in: %s", text);
-	say("and gametypes/<name>.toml files, and file=<name> for gametypes/<name>.gametype");
+	say("and gametypes/<name>.toml files, file=<name> for gametypes/<name>.gametype, and saved=<name> for Edit Gametypes'");
 	return TRUE;
 }
 
@@ -731,9 +742,10 @@ static boolean command_bans(char const *line, long count, char **words)
 /* the settings sv_set may change: a prefix ends with a "." */
 static char const *const settable_settings[] =
 {
-	"server.name", "server.max_players", "server.min_players", "server.password", "server.public",
+	"server.name", "server.max_players", "server.min_players", "server.password", "server.public", "server.listing",
 	"server.rotation_fallback", "server.lobby_seconds", "server.postgame_seconds", "server.empty_seconds",
-	"server.idle_minutes", "server.team_start", "server.motd", "server.frame_rate", "server.web_password",
+	"server.idle_minutes", "server.team_start", "server.team_switch",
+	"server.team_switch_cooldown_seconds", "server.motd", "server.frame_rate", "server.web_password",
 	"server.web_moderator_password", "server.log_format", "server.log_addresses", "server.status_file",
 	"server.auto_update", "server.coop_difficulty", "server.region", "server.master_publish",
 	"server.master_publish_address", "server.metrics", "server.chat_filter", "server.chat_filter_slurs",
@@ -745,6 +757,7 @@ static char const *const settable_settings[] =
 	"network.text_chat", "network.voice_lobby", "network.voice_mode", "network.voice_kbps", "network.votekick",
 	"network.vote_end_game", "network.votekick_threshold", "network.votekick_percent", "network.votekick_minutes", "network.votekick_ban_minutes", "network.map_share", "network.map_share_upload",
 	"network.public_address", "network.coop_friendly_fire", "network.coop_player_collisions",
+	"network.vehicle_riding", "server.vehicle_riding_override_gametype",
 	"network.coop_ally_friendly_fire", "network.coop_team_wipe", "network.shield_effects", "network.fire_origins",
 };
 
@@ -802,6 +815,7 @@ static struct
 	{ "server.idle_minutes", NULL, "0", NULL },
 	{ "server.frame_rate", NULL, "30", "120" },
 	{ "server.team_start", "one|both|skip", NULL, NULL },
+	{ "server.team_switch_cooldown_seconds", NULL, "0", "3600" },
 	{ "server.log_format", "text|json", NULL, NULL },
 	{ "server.auto_update", "off|check|install", NULL, NULL },
 	{ "server.coop_difficulty", "easy|normal|hard|impossible", NULL, NULL },
@@ -1128,9 +1142,11 @@ static boolean command_version(char const *line, long count, char **words)
 	return TRUE;
 }
 
+typedef struct server_log_line server_log_lines[200];
+static server_log_lines *log_lines_heap;
+#define lines SERVER_HEAP(server_log_lines, log_lines_heap)
 static boolean command_log(char const *line, long count, char **words)
 {
-	static struct server_log_line lines[200];
 	long wanted = 20;
 	unsigned long latest = server_log_latest();
 	unsigned long next, missed;
@@ -1148,6 +1164,7 @@ static boolean command_log(char const *line, long count, char **words)
 		say("%s: %s", lines[index].category, lines[index].text);
 	return TRUE;
 }
+#undef lines
 
 static boolean command_masters(char const *line, long count, char **words)
 {
@@ -1270,6 +1287,202 @@ static void moderation_event(
 	server_json_free(&json);
 }
 
+/* ---------- bots (bots.c, bots_common.h): a server's are its owner's, added
+and dropped here (the Host Server screen's BOTS runs these) */
+
+/* a bot's kind, by its word */
+static short bot_kind_named(
+	char const *word)
+{
+	if (!csstrcasecmp(word, "birchwood") || !csstrcasecmp(word, "bw"))
+		return _bots_kind_birchwood;
+	if (!csstrcasecmp(word, "provinggrounds") || !csstrcasecmp(word, "pg"))
+		return _bots_kind_proving_grounds;
+	return NONE;
+}
+
+static short bot_skill_named(
+	char const *word)
+{
+	short skill;
+
+	for (skill = 0; skill < NUMBER_OF_BOTS_SKILLS; skill++)
+	{
+		if (!csstrcasecmp(word, bots_skill_name(skill)))
+			return skill;
+	}
+	return NONE;
+}
+
+static char const *bot_kind_name(
+	short kind)
+{
+	return kind == _bots_kind_proving_grounds ? "provinggrounds" : "birchwood";
+}
+
+/* the random numbers of the group levels' picks (the owner's command's, no
+game's: seeded by the clock) */
+static float bot_random01(
+	void)
+{
+	static unsigned long state;
+
+	if (!state)
+		state = (unsigned long)posix_server_unix_seconds() * 2654435761UL | 1UL;
+	state ^= state << 13;
+	state &= 0xFFFFFFFFUL;
+	state ^= state >> 17;
+	state ^= state << 5;
+	state &= 0xFFFFFFFFUL;
+	return (float)(state & 0xFFFFFF) / (float)0x1000000;
+}
+
+/* a word's part before its colon */
+static char const *bot_word_head(
+	char const *word,
+	char *head)
+{
+	long index;
+
+	for (index = 0; word[index] && word[index] != ':' && index < 15; index++)
+		head[index] = word[index];
+	head[index] = 0;
+	return head;
+}
+
+static boolean command_bots(char const *line, long count, char **words)
+{
+	long bot_indices[BOTS_MAXIMUM], teams[BOTS_MAXIMUM];
+	char names[BOTS_MAXIMUM][16];
+	long bots = network_game_server_port_bot_roster(bot_indices, teams, names, BOTS_MAXIMUM), index;
+
+	if (!bots)
+	{
+		say("no bots (sv_bot_add adds them)");
+		return TRUE;
+	}
+	for (index = 0; index < bots; index++)
+	{
+		say("%3ld %-12s team %ld  %s  %s", bot_indices[index] + 1, names[index], teams[index],
+			bot_kind_name(bots_bot_joined_kind(bot_indices[index])), bots_skill_name(bots_bot_own_skill(bot_indices[index])));
+	}
+	return TRUE;
+}
+
+/* sv_bot_add [count] [kind] [skill] [team]: the words in any order - a
+count (1 to 63), a kind (birchwood, provinggrounds), a level (recruit to
+legendary, or default: bots.skill's), random (any level), normal or
+normal:<level> (about the level, normal's without one), a team (red, blue,
+auto) */
+static boolean command_bot_add(char const *line, long count, char **words)
+{
+	long index, bots = 1, added = 0;
+	short kind = bots_kind(), level = NONE, pick = _bots_skill_pick_fixed;
+	long team = NONE;
+	char said[96] = "";
+	char head[16];
+
+	for (index = 1; index < count; index++)
+	{
+		char const *word = words[index];
+
+		if (isdigit((unsigned char)word[0]))
+			bots = strtol(word, NULL, 10);
+		else if (bot_kind_named(word) != NONE)
+			kind = bot_kind_named(word);
+		else if (!csstrcasecmp(word, "default"))
+			level = NONE;
+		else if (bot_skill_named(word) != NONE)
+			level = bot_skill_named(word);
+		else if (!csstrcasecmp(word, "random"))
+			pick = _bots_skill_pick_random;
+		else if (!csstrcasecmp(word, "normal"))
+			pick = _bots_skill_pick_normal;
+		else if (strchr(word, ':') && strchr(word, ':') - word == 6 && !csstrcasecmp(bot_word_head(word, head), "normal") &&
+			bot_skill_named(strchr(word, ':') + 1) != NONE)
+		{
+			pick = _bots_skill_pick_normal;
+			level = bot_skill_named(strchr(word, ':') + 1);
+		}
+		else if (!csstrcasecmp(word, "red"))
+			team = 0;
+		else if (!csstrcasecmp(word, "blue"))
+			team = 1;
+		else if (!csstrcasecmp(word, "auto"))
+			team = NONE;
+		else
+		{
+			say("sv_bot_add: what is \"%s\"? (sv_bot_add [count] [birchwood|provinggrounds] "
+				"[recruit..legendary|default|random|normal:<level>] [red|blue|auto])", word);
+			return FALSE;
+		}
+	}
+	if (bots < 1 || bots > BOTS_MAXIMUM)
+	{
+		say("sv_bot_add: 1 to %d bots at once", BOTS_MAXIMUM);
+		return FALSE;
+	}
+	for (index = 0; index < bots; index++)
+	{
+		short skill = level;
+
+		if (pick != _bots_skill_pick_fixed)
+		{
+			float a = bot_random01();
+
+			skill = bots_combat_skill_pick(pick, level >= 0 ? level : bots_skill(), a, bot_random01());
+		}
+		if (!network_game_server_port_host_bot_add(kind, skill, team, said, (long)sizeof(said)))
+			break;
+		say("%s (%s, %s)", said, bot_kind_name(kind), bots_skill_name(skill));
+		added++;
+	}
+	if (added < bots)
+		say("sv_bot_add: %s%s", added ? "no more: " : "", said);
+	if (added)
+		server_log(_server_log_info, "bots", "%ld bots added (%s)", added, server_role_name(server_commands.role));
+	return added > 0;
+}
+
+/* sv_bot_drop <bot|all>: a bot by its number (sv_bots) or name, or all */
+static boolean command_bot_drop(char const *line, long count, char **words)
+{
+	long bot_indices[BOTS_MAXIMUM], teams[BOTS_MAXIMUM];
+	char names[BOTS_MAXIMUM][16];
+	long bots = network_game_server_port_bot_roster(bot_indices, teams, names, BOTS_MAXIMUM), index, dropped = 0;
+	boolean all;
+	char said[96] = "";
+
+	if (count < 2)
+	{
+		say("sv_bot_drop: give a bot's number (sv_bots), its name, or all");
+		return FALSE;
+	}
+	all = !csstrcasecmp(words[1], "all");
+	for (index = 0; index < bots; index++)
+	{
+		if (!all && csstrcasecmp(words[1], names[index]) &&
+			!(isdigit((unsigned char)words[1][0]) && strtol(words[1], NULL, 10) == bot_indices[index] + 1))
+		{
+			continue;
+		}
+		if (network_game_server_port_host_bot_drop(bot_indices[index], said, (long)sizeof(said)))
+		{
+			say("%s", said);
+			dropped++;
+		}
+		if (!all)
+			break;
+	}
+	if (!dropped)
+	{
+		say("sv_bot_drop: %s", said[0] ? said : "no such bot (sv_bots lists them)");
+		return FALSE;
+	}
+	server_log(_server_log_info, "bots", "%ld bots dropped (%s)", dropped, server_role_name(server_commands.role));
+	return TRUE;
+}
+
 static boolean command_kick(char const *line, long count, char **words)
 {
 	struct network_game *game = server_game();
@@ -1284,6 +1497,16 @@ static boolean command_kick(char const *line, long count, char **words)
 	slot = find_player("kick", words[1]);
 	if (slot == NONE)
 		return FALSE;
+	/* (a bot: dropped, its machine no machine to kick) */
+	if (bots_machine_is_bot(game->players[slot].machine_index))
+	{
+		char said[96];
+		boolean dropped = network_game_server_port_host_bot_drop(game->players[slot].machine_index - BOTS_FIRST_MACHINE,
+			said, (long)sizeof(said));
+
+		say("%s", said);
+		return dropped;
+	}
 	server_status_player_name(slot, name, sizeof(name));
 	if (!network_game_server_kick_machine_of_player(game->players[slot].machine_index, FALSE))
 		return FALSE;
@@ -1836,9 +2059,10 @@ static boolean command_rotation_add(char const *line, long count, char **words)
 	return set;
 }
 
+static struct server_rotation *rotation_del_heap;
+#define rotation SERVER_HEAP(struct server_rotation, rotation_del_heap)
 static boolean command_rotation_del(char const *line, long count, char **words)
 {
-	static struct server_rotation rotation;
 	static char text[SERVER_ROTATION_MAXIMUM_TEXT + 1];
 	long index;
 
@@ -1859,6 +2083,7 @@ static boolean command_rotation_del(char const *line, long count, char **words)
 	}
 	return TRUE;
 }
+#undef rotation
 
 static boolean command_rotation_begin(char const *line, long count, char **words)
 {
@@ -2072,6 +2297,11 @@ static struct server_command const server_command_table[] =
 	{ "sv_masters", NULL, _server_role_viewer, "", "the master servers and their answers", command_masters },
 	{ "sv_publisher", NULL, _server_role_viewer, "", "the publisher key's id and public key", command_publisher },
 	{ "say", "sv_say", _server_role_moderator, "<text>", "a notice on every machine", command_say },
+	{ "sv_bots", NULL, _server_role_viewer, "", "the bots, their kinds and levels", command_bots },
+	{ "sv_bot_add", NULL, _server_role_admin, "[count] [birchwood|provinggrounds] "
+		"[recruit..legendary|default|random|normal:<level>] [red|blue|auto]",
+		"adds bots, in the lobby or a game (random: any level; normal: about the level)", command_bot_add },
+	{ "sv_bot_drop", NULL, _server_role_admin, "<bot|all>", "drops a bot (sv_bots), or all", command_bot_drop },
 	{ "tell", NULL, _server_role_moderator, "<player> <text>", "a notice on a player's machine", command_tell },
 	{ "kick", "sv_kick", _server_role_moderator, "<player>", "drops a player's machine (it may join again)",
 		command_kick },

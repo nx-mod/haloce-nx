@@ -21,6 +21,9 @@ static struct { boolean active, shift_active, caps_active, symbols_active;
     wchar_t *text_buffer, *cursor; unsigned long time_of_last_event;
     long caret_bitmap_index; wchar_t saved_text[MAXIMUM_VIRTUAL_KEYBOARD_SAVED_TEXT_LENGTH];
 } virtual_keyboard_globals;
+/* a menu's free text (virtual_keyboard_launch_text): none here, so that Done
+keeps a profile's rules */
+static struct { boolean active, masked; wchar_t caption[64]; } virtual_keyboard_free_text;
 static boolean unique = TRUE, clean = TRUE, keyboard_available = TRUE;
 static int processed, errors;
 #define VIRTUAL_KEYBOARD_TAG 1

@@ -12,6 +12,25 @@ this run is a dedicated server (port/linux/src/server_mode.c).
 
 #include "../src/server_mode.h" /* port: port/linux/src/server_mode.c */
 
+#include <stdlib.h>
+
+/* a table of the server's on the heap at its first use, by the name it had
+as a static: SERVER_HEAP(type, slot) is the table, slot its pointer (a
+static, NULL to begin with). The guest images have no room for the
+server's tables as statics (tools/guest_image_check.py), and most runs
+never use them */
+static inline void *server_heap(void **slot, unsigned long size)
+{
+	if (!*slot)
+	{
+		*slot = calloc(1, size);
+		if (!*slot)
+			abort();
+	}
+	return *slot;
+}
+#define SERVER_HEAP(type, slot) (*(type *)server_heap((void **)&(slot), sizeof(type)))
+
 struct server_json;
 struct server_entry;
 struct server_rotation;
@@ -99,6 +118,14 @@ void server_director_reload(void);
 /* the server stops: its game ended, every machine told, the listings
 withdrawn; then the process ends with the code */
 void server_director_quit(int exit_code, char const *why);
+/* hosting from the menus (host_dashboard.c): begun, the director hosting
+the rotation (a playlist's, map:gametype entries separated by commas; NULL
+or empty for server.rotation's) from the next frame; FALSE with why if
+none of its rounds can be played, it already hosts, or this run is a
+dedicated server's. Stopped, its game ended and every machine told, then
+back to the main menu */
+boolean server_director_host_begin(char const *rotation, char *reason, long reason_size);
+void server_director_host_stop(void);
 /* the settings the game takes from server.* applied now (the name, the
 most players, the listing) */
 void server_director_apply_settings(void);
@@ -168,6 +195,22 @@ char const *server_status_state_name(short state);
 boolean server_status_scores_changed(void);
 /* the network game's player at slot (its name in ASCII into name): TRUE */
 boolean server_status_player_name(long slot, char *name, long size);
+/* the slot's player's datum in the game being played (the host's screen
+watches them: network_replay_live_begin); NONE outside one */
+long server_status_player_datum(long slot);
+/* whether the host muted the slot's player (mute) */
+boolean server_status_player_muted(long slot);
+/* the bot number (0 up) of the player in the slot, NONE for a player who is none; and the server's game's type
+(game_engine.h's; NONE while it hosts none) and whether it has teams */
+long server_status_player_bot(long slot);
+/* the team of the player in the slot (0 red, 1 blue) in a team game, NONE otherwise */
+long server_status_player_team(long slot);
+long server_status_game_engine(boolean *teams);
+/* a stock map's title (bloodgulch: "Blood Gulch"), else its name */
+char const *server_map_title(char const *name);
+/* the slot's player for the host's screen (host_dashboard.c): its name, its
+score and its ping (milliseconds, NONE outside a game); FALSE if none */
+boolean server_status_player_row(long slot, char *name, long size, long *score, long *ping);
 /* the team scores of a team game (two), else FALSE */
 boolean server_status_team_scores(long *red, long *blue);
 

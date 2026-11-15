@@ -21,6 +21,8 @@ and presenting go there; a draw and a visibility test do nothing yet.
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#include "loading_widescreen.h"
+#include "mcc_environment_shader.h"
 #include "posix.h"
 #include "dk_commands.h"
 #include "dk_shaders.h"
@@ -1372,11 +1374,61 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 
 /* ---------- the menus' pointer */
 
+/* a point of the window (the touchscreen's: touch_input.c gives its pixels)
+in the menus' 640x480, as the menus draw: the picture letterboxed into the
+display at its own shape, and centred in its width (d3d8_vk.c's) */
+static void ui_point_from_window(float window_x, float window_y, short *x, short *y)
+{
+	int window_width, window_height, pixel_width, pixel_height, width, height, left, top;
+	float buffer_width, buffer_height, screen_x, screen_y;
+
+	*x = *y = -1;
+	halo_screen_width();
+	buffer_width = (float)screen_width * screen_scale[0];
+	buffer_height = (float)SCREEN_HEIGHT * screen_scale[1];
+	platform_video_window_size(&window_width, &window_height);
+	platform_video_drawable_size(&pixel_width, &pixel_height);
+	if (window_width <= 0 || window_height <= 0 || buffer_width <= 0.0f || buffer_height <= 0.0f)
+		return;
+	width = pixel_width;
+	height = (int)((float)pixel_width * buffer_height / buffer_width);
+	if (height > pixel_height)
+	{
+		height = pixel_height;
+		width = (int)((float)pixel_height * buffer_width / buffer_height);
+	}
+	if (width <= 0 || height <= 0)
+		return;
+	left = (pixel_width - width) / 2;
+	top = (pixel_height - height) / 2;
+	screen_x = (window_x * pixel_width / window_width - left) * (float)screen_width / (float)width;
+	screen_y = (window_y * pixel_height / window_height - top) * (float)SCREEN_HEIGHT / (float)height;
+	*x = (short)floorf(screen_x - (float)(screen_width - 640) / 2.0f);
+	*y = (short)floorf(screen_y);
+}
+
+/* the menus' pointer: the touchscreen's taps and drags, handheld
+(port/linux/src/touch_input.c; the host's fingers, host_sdl2.c), as
+d3d8_vk.c gives Android's: the menus' rows, and the game's keyboard's keys */
 int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
 {
-	(void)pointer;
+	struct platform_ui_pointer state;
+
 	platform_menus_set_active(menus_active != 0);
-	return 0;
+	platform_ui_pointer_set_active(menus_active != 0);
+	if (!menus_active || !platform_ui_pointer_read(&state))
+		return 0;
+	memset(pointer, 0, sizeof(*pointer));
+	ui_point_from_window(state.x, state.y, &pointer->x, &pointer->y);
+	ui_point_from_window(state.click_x, state.click_y, &pointer->click_x, &pointer->click_y);
+	pointer->moved = state.moved != FALSE;
+	pointer->left_clicks = (unsigned char)(state.left_clicks < 255 ? state.left_clicks : 255);
+	pointer->right_clicks = (unsigned char)(state.right_clicks < 255 ? state.right_clicks : 255);
+	pointer->wheel_steps = (signed char)(state.wheel_steps < -8 ? -8 : state.wheel_steps > 8 ? 8 : state.wheel_steps);
+	pointer->touch = state.touch != FALSE;
+	pointer->downs = (unsigned char)(state.downs < 255 ? state.downs : 255);
+	ui_point_from_window(state.down_x, state.down_y, &pointer->down_x, &pointer->down_y);
+	return 1;
 }
 
 /* menu_files.c says when it deletes a menu picture's GL texture, for the
@@ -1563,6 +1615,16 @@ static void front_buffer_take(void)
 	if (width > back_buffer.pixel_width)
 		width = back_buffer.pixel_width;
 	left = (back_buffer.pixel_width - width) / 2;
+	/* The widescreen loading screen (display.widescreen_loading) draws the
+	effect across the whole width: all of it is captured back into the
+	feedback texture, as d3d8_gl.c's front_buffer_take does. Its centre alone,
+	drawn again across the width, stretched each frame's trail sideways by
+	the screen's width over 640, and the picture smeared. */
+	if (loading_widescreen_active())
+	{
+		left = 0;
+		width = back_buffer.pixel_width;
+	}
 	command = stream_command(DK_COMMAND_BLIT, sizeof(*command));
 	command->source = back_buffer;
 	command->destination = front;
@@ -2049,6 +2111,18 @@ void WINAPI D3DDevice_SetTexture(DWORD stage, D3DBaseTexture *texture)
 {
 	if (stage < D3DTSS_MAXSTAGES)
 		device.textures[stage] = texture;
+}
+
+/* a registered MCC header no stage may keep once its registration goes: the
+next draw would ask the texture cache for an image that is gone (as
+d3d8_gl.c's; port/linux/src/mcc_texture_bridge.c) */
+void xgpu_mcc_texture_unbind(DWORD const *resource)
+{
+	unsigned long stage;
+
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+		if ((DWORD const *)device.textures[stage] == resource)
+			device.textures[stage] = NULL;
 }
 
 void WINAPI D3DDevice_SetPalette(DWORD stage, D3DPalette *palette)
@@ -3195,6 +3269,8 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key, float texture_scal
 	key->combiner_state[D3DRS_PSFINALCOMBINERCONSTANT0] = 0;
 	key->combiner_state[D3DRS_PSFINALCOMBINERCONSTANT1] = 0;
 	key->texture_modes = D3D__RenderState[D3DRS_PSTEXTUREMODES];
+	/* (MCC's environment lightmap pass: mcc_environment_shader.h) */
+	key->mcc_bump_attenuation = (unsigned char)mcc_environment_shader_active();
 	if (texture_clip[2] != 0.0f)
 		key->texture_modes |= NV2A_PIXEL_KEY_CLIP | ((unsigned long)texture_clip_stage << NV2A_PIXEL_KEY_CLIP_STAGE_SHIFT) |
 			(texture_clip_3d ? NV2A_PIXEL_KEY_CLIP_3D : 0) | (texture_clip_black ? NV2A_PIXEL_KEY_CLIP_BLACK : 0);

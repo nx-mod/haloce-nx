@@ -469,6 +469,9 @@ symbols in this file:
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "networking/network_server_message_handler.h"
+#include "mcc_ui_network.h" /* port: port/linux/game/mcc_ui_network.h */
+#include "mcc_load_network.h" /* port: bounded MCC conversion progress */
+#include "mcc_share.h" /* port: port/linux/game/mcc_share.c */
 #include "network_link.h" /* port: port/linux/game/network_link.c */
 #include "saved games/player_profile.h"
 #include "text/unicode.h"
@@ -479,6 +482,8 @@ symbols in this file:
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "server_director.h" /* port: port/linux/game/server_director.c */
 #include "bots.h" /* port: port/linux/game/bots.c */
+#include "bots_common.h" /* port: port/linux/game/bots_common.h: bots.kind */
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
@@ -1169,9 +1174,57 @@ boolean network_game_server_kick_player(
 	return TRUE;
 }
 
+/* port: the players of a machine that is not in the game (whose machine
+left with them still in it: nothing else takes them out), out of the game
+as a leaving machine's go; FALSE if it has none, or is in the game, or the
+game is a split screen one (whose bots have machines of their own) */
+static boolean network_game_server_remove_players_of_gone_machine(
+	struct network_game_server *server,
+	long machine_index)
+{
+	boolean removed = FALSE;
+	long index;
+
+	if (!VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
+		network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[machine_index]) ||
+		network_game_is_splitscreen_local())
+	{
+		return FALSE;
+	}
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player player = server->game.players[index];
+
+		if (!network_player_is_valid(&player) || player.machine_index != machine_index)
+			continue;
+		if (server->state == _network_game_server_state_ingame)
+		{
+			struct message_server_remove_player_ingame remove_player;
+			void *message;
+
+			remove_player.player = player;
+			remove_player.reason = game_time_get() + NETWORK_GAME_PLAYER_QUIT_DELAY;
+			message = create_network_game_message(_message_server_remove_player_ingame, &remove_player,
+				sizeof(remove_player));
+			if (message && !network_game_server_send_message_to_all_machines(server, message))
+				network_event("some machines missed the quit of a player whose machine had gone");
+		}
+		if (network_game_remove_player(&server->game, &player))
+			removed = TRUE;
+	}
+	if (removed)
+	{
+		network_event("the players of machine #%ld, which had gone, taken out of the game", machine_index);
+		if (network_game_server_lobby_is_open(server) && !network_game_server_send_game_data_pregame(server))
+			network_event("some machines missed the lobby without the players of a machine that had gone");
+	}
+	return removed;
+}
+
 /* port: the host's Kick and Ban on the scoreboard (game_engine.c): the
 machine of the player at the network machine index it has, kicked or
-banned as the commands do; FALSE (said) for none, or the host's own */
+banned as the commands do; FALSE (said) for none, or the host's own. A kick
+of a player whose machine has gone takes the player out */
 boolean network_game_server_kick_machine_of_player(
 	long machine_index,
 	boolean ban)
@@ -1188,6 +1241,17 @@ boolean network_game_server_kick_machine_of_player(
 		!network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[machine_index]) ||
 		network_game_server_client_machine_is_local(server, &server->client_machines[machine_index]))
 	{
+		/* port: a machine that left while its players were held for a map
+		download: kick takes the players out, ban has nothing to ban */
+		if (!ban && network_game_server_remove_players_of_gone_machine(server, machine_index))
+			return TRUE;
+		if (ban && VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) &&
+			!network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[machine_index]) &&
+			network_game_server_machine_has_players(server, machine_index))
+		{
+			console_warning("ban: the player's machine has left the game, and has nothing to ban (kick takes the player out)");
+			return FALSE;
+		}
 		console_warning("%s: not a player of the host's own machine, nor one not joined", ban ? "ban" : "kick");
 		return FALSE;
 	}
@@ -1372,6 +1436,9 @@ void network_game_server_dispose(
 	struct network_game_server *server)
 {
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x120, server);
+
+	/* port: this server's MCC validation, pending map and restarts end with it */
+	mcc_ui_network_server_dispose(server);
 
 	/* port: a won co-op round's next level belongs to this server alone */
 	network_game_server_cooperative_next_map[0] = 0;
@@ -1571,6 +1638,9 @@ started (the console's add_bot and drop_bot then: network_game_server_port_bot_a
 and in a system link game as in a local one (its clients drive the bots
 with the input the host relays: bots.c), and in a private internet game,
 but not in a public one, which the server browser lists (bots_game_allowed) */
+static boolean network_game_server_port_host_bot_join(struct network_game_server *server, long wanted_index,
+	short kind, short skill, long team_index, char *said, long said_size);
+
 static void network_game_server_port_bots(
 	struct network_game_server *server)
 {
@@ -1584,9 +1654,132 @@ static void network_game_server_port_bots(
 
 	if (server->state != _network_game_server_state_pregame || server->sent_start_game_message)
 		return;
+	/* port: a server's bots are its owner's (sv_bot_add, the Host Server
+	screen's BOTS: network_game_server_port_host_bot_add), not bots.count's;
+	a lobby of a game bots do not play lets them go */
+	if (halo_server_mode())
+	{
+		/* (in a game the server browser lists, their names say they are
+		bots, "BOT-Johnson": named again as the listing changes) */
+		boolean listed = bots_server_listed();
+
+		/* (the roster's bots back in each lobby: a round's start lets every
+		player of no machine go - the owner's bots, sv_bot_add's, join again
+		as they were, their kind, level and team) */
+		if (bots_game_type_played(server->game.variant.game_engine_index))
+		{
+			for (bot_index = 0; bot_index < BOTS_MAXIMUM; bot_index++)
+			{
+				char said[96];
+
+				if (!bots_on_roster(bot_index))
+					continue;
+				for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+				{
+					if (network_player_is_valid(&server->game.players[slot]) &&
+						server->game.players[slot].machine_index == BOTS_FIRST_MACHINE + bot_index)
+					{
+						break;
+					}
+				}
+				if (slot == MAXIMUM_NETWORK_PLAYER_COUNT &&
+					!network_game_server_port_host_bot_join(server, bot_index, bots_bot_joined_kind(bot_index),
+						bots_bot_own_skill(bot_index), bots_bot_team_asked(bot_index), said, (long)sizeof(said)))
+				{
+					break;
+				}
+			}
+		}
+
+		for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+		{
+			struct network_player *player = &server->game.players[slot];
+			wchar_t name[NUMBEROF(player->name)];
+
+			if (!network_player_is_valid(player) || !bots_machine_is_bot(player->machine_index))
+				continue;
+			bots_name(player->machine_index - BOTS_FIRST_MACHINE, listed, name, (long)NUMBEROF(name));
+			if (memcmp(name, player->name, sizeof(name)))
+			{
+				csmemcpy(player->name, name, sizeof(name));
+				changed = TRUE;
+			}
+		}
+		/* (a team game's: each bot asked for a team on it, the rest even
+		with the players, in the bots' order; a gametype changed from free for
+		all to teams so sorts them before it starts) */
+		if (server->game.variant.universal_variant.teams)
+		{
+			for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+			{
+				struct network_player *player = &server->game.players[slot];
+
+				if (!network_player_is_valid(player))
+					continue;
+				if (!bots_machine_is_bot(player->machine_index) ||
+					bots_bot_team_asked(player->machine_index - BOTS_FIRST_MACHINE) != NONE)
+				{
+					long team = bots_machine_is_bot(player->machine_index) ?
+						bots_bot_team_asked(player->machine_index - BOTS_FIRST_MACHINE) : player->team_index;
+
+					if (team != player->team_index)
+					{
+						player->team_index = (char)team;
+						changed = TRUE;
+					}
+					if (VALID_INDEX(team, NUMBER_OF_MULTIPLAYER_TEAMS))
+						team_counts[team]++;
+				}
+			}
+			for (bot_index = 0; bot_index < BOTS_MAXIMUM; bot_index++)
+			{
+				for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+				{
+					struct network_player *player = &server->game.players[slot];
+					long team;
+
+					if (!network_player_is_valid(player) || player->machine_index != BOTS_FIRST_MACHINE + bot_index ||
+						bots_bot_team_asked(bot_index) != NONE)
+					{
+						continue;
+					}
+					team = team_counts[1] < team_counts[0] ? 1 : 0;
+					if (team != player->team_index)
+					{
+						player->team_index = (char)team;
+						changed = TRUE;
+					}
+					team_counts[team]++;
+				}
+			}
+		}
+		if (changed && !network_game_server_send_game_data_pregame(server))
+			network_event("network_game_server_port_bots() failed to send updated game settings to clients");
+		changed = FALSE;
+		if (!bots_game_type_played(server->game.variant.game_engine_index))
+		{
+			for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+			{
+				struct network_player leaving = server->game.players[slot];
+
+				if (network_player_is_valid(&leaving) && bots_machine_is_bot(leaving.machine_index) &&
+					network_game_remove_player(&server->game, &leaving))
+				{
+					changed = TRUE;
+				}
+			}
+			if (changed && !network_game_server_send_game_data_pregame(server))
+				network_event("network_game_server_port_bots() failed to send updated game settings to clients");
+		}
+		return;
+	}
+	/* port: (Oddball and Race too when bots.kind is Proving Grounds, whose
+	bots play them: bots_common.h) */
 	if (bots_game_allowed() && (server->game.variant.game_engine_index == game_engine_slayer ||
 		server->game.variant.game_engine_index == game_engine_ctf ||
-		server->game.variant.game_engine_index == game_engine_king))
+		server->game.variant.game_engine_index == game_engine_king ||
+		(bots_kind() == _bots_kind_proving_grounds && (server->game.variant.game_engine_index == game_engine_oddball ||
+			server->game.variant.game_engine_index == game_engine_race))))
 	{
 		wanted = PIN(bots_wanted_count(), 0, BOTS_MAXIMUM);
 	}
@@ -1696,9 +1889,13 @@ static struct network_game_server *network_game_server_port_bot_game(
 	}
 	if (server->game.variant.game_engine_index != game_engine_slayer &&
 		server->game.variant.game_engine_index != game_engine_ctf &&
-		server->game.variant.game_engine_index != game_engine_king)
+		server->game.variant.game_engine_index != game_engine_king &&
+		!(bots_kind() == _bots_kind_proving_grounds && (server->game.variant.game_engine_index == game_engine_oddball ||
+			server->game.variant.game_engine_index == game_engine_race)))
 	{
-		snprintf(said, said_size, "bots play only Slayer, Capture the Flag and King of the Hill");
+		snprintf(said, said_size, bots_kind() == _bots_kind_proving_grounds ?
+			"bots play only Slayer, Capture the Flag, King of the Hill, Oddball and Race" :
+			"bots play only Slayer, Capture the Flag and King of the Hill (Oddball and Race: bots.kind provinggrounds)");
 		return NULL;
 	}
 	if (team_index == NONE && game_engine_has_teams())
@@ -1835,6 +2032,227 @@ boolean network_game_server_port_bot_drop(
 	return TRUE;
 }
 
+/* port: a server's bots (sv_bot_add, sv_bot_drop; the Host Server screen's
+BOTS): in its lobby, as network_game_server_port_bots adds them (the lobby's
+game data sent again), or in its game, as a player joining or quitting it
+does; any gametype bots play (Oddball and Race as Proving Grounds,
+whatever kind is asked: bots_common.h) */
+static struct network_game_server *network_game_server_port_host_bot_game(
+	char *said,
+	long said_size)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	long state;
+
+	if (!server)
+	{
+		snprintf(said, said_size, "the server is not hosting yet");
+		return NULL;
+	}
+	state = network_game_server_get_state(server, NULL);
+	if (state != _network_game_server_state_pregame && state != _network_game_server_state_ingame)
+	{
+		snprintf(said, said_size, "bots join in the lobby or a game, not now");
+		return NULL;
+	}
+	if (state == _network_game_server_state_pregame && server->sent_start_game_message)
+	{
+		snprintf(said, said_size, "the game is starting: add bots once it has");
+		return NULL;
+	}
+	if (!bots_game_type_played(server->game.variant.game_engine_index))
+	{
+		snprintf(said, said_size, "bots play Slayer, Capture the Flag, King of the Hill, Oddball and Race only");
+		return NULL;
+	}
+	return server;
+}
+
+/* a server's bot joins, as bot number wanted_index (NONE: the first free);
+FALSE (said) without room or that number taken */
+static boolean network_game_server_port_host_bot_join(
+	struct network_game_server *server,
+	long wanted_index,
+	short kind,
+	short skill,
+	long team_index,
+	char *said,
+	long said_size)
+{
+	struct network_player joining;
+	char name[NETWORK_PLAYER_NAME_LENGTH + 1];
+	long team_counts[NUMBER_OF_MULTIPLAYER_TEAMS] = { 0, 0 };
+	boolean teams, ingame;
+	long bot_index, slot;
+
+	if (!server)
+		return FALSE;
+	ingame = network_game_server_get_state(server, NULL) == _network_game_server_state_ingame;
+	teams = server->game.variant.universal_variant.teams;
+	/* (the first bot machine no player of the game is of, or the one asked
+	for; the teams counted) */
+	for (bot_index = wanted_index != NONE ? wanted_index : 0; bot_index < BOTS_MAXIMUM; bot_index++)
+	{
+		for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+		{
+			if (network_player_is_valid(&server->game.players[slot]) &&
+				server->game.players[slot].machine_index == BOTS_FIRST_MACHINE + bot_index)
+			{
+				break;
+			}
+		}
+		if (slot == MAXIMUM_NETWORK_PLAYER_COUNT || wanted_index != NONE)
+			break;
+	}
+	if (wanted_index != NONE && slot != MAXIMUM_NETWORK_PLAYER_COUNT)
+	{
+		snprintf(said, said_size, "bot %ld is in already", wanted_index + 1);
+		return FALSE;
+	}
+	for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+	{
+		struct network_player *player = &server->game.players[slot];
+
+		if (network_player_is_valid(player) && VALID_INDEX(player->team_index, NUMBER_OF_MULTIPLAYER_TEAMS))
+			team_counts[(long)player->team_index]++;
+	}
+	if (bot_index == BOTS_MAXIMUM || !network_game_has_free_player_slot(&server->game) ||
+		server->game.player_count >= server->game.maximum_players)
+	{
+		snprintf(said, said_size, "the game is full");
+		return FALSE;
+	}
+	/* (the team asked for kept, NONE for the smaller: kept even in the lobby) */
+	bots_set_next_team(VALID_INDEX(team_index, NUMBER_OF_MULTIPLAYER_TEAMS) ? team_index : NONE);
+	if (!teams)
+		team_index = 0;
+	else if (!VALID_INDEX(team_index, NUMBER_OF_MULTIPLAYER_TEAMS))
+		team_index = team_counts[1] < team_counts[0] ? 1 : 0;
+	bots_set_next_join(kind, skill);
+	bots_network_player(bot_index, &joining);
+	joining.team_index = (char)team_index;
+	joining.primary_color_index = NONE;
+	get_unique_random_color(server, &joining);
+	joining.player_list_index = NONE;
+	if (!network_game_add_player(&server->game, &joining))
+	{
+		snprintf(said, said_size, "the game is full");
+		return FALSE;
+	}
+	if (ingame)
+	{
+		if (!network_game_server_send_player_joined_info_ingame(server, &joining))
+			network_event("network_game_server_send_player_joined_info_ingame() failed for bot %ld", bot_index + 1);
+	}
+	else if (!network_game_server_send_game_data_pregame(server))
+		network_event("network_game_server_port_host_bot_add() failed to send updated game settings to clients");
+	bots_set_on_roster(bot_index, TRUE);
+	network_game_server_port_bot_name(&joining, name, (long)sizeof(name));
+	network_event("bots: bot %ld joined the %s (team %ld)", bot_index + 1, ingame ? "game in progress" : "lobby",
+		team_index);
+	snprintf(said, said_size, "%s joined%s%s", name, teams ? " " : "",
+		teams ? network_game_server_port_team_name(team_index) : "");
+	return TRUE;
+}
+
+boolean network_game_server_port_host_bot_add(
+	short kind,
+	short skill,
+	long team_index,
+	char *said,
+	long said_size)
+{
+	struct network_game_server *server = network_game_server_port_host_bot_game(said, said_size);
+
+	return server && network_game_server_port_host_bot_join(server, NONE, kind, skill, team_index, said, said_size);
+}
+
+boolean network_game_server_port_host_bot_drop(
+	long bot_index,
+	char *said,
+	long said_size)
+{
+	struct network_game_server *server = network_game_server_port_host_bot_game(said, said_size);
+	struct network_player leaving;
+	char name[NETWORK_PLAYER_NAME_LENGTH + 1];
+	long slot, chosen = NONE;
+
+	if (!server)
+		return FALSE;
+	for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+	{
+		if (network_player_is_valid(&server->game.players[slot]) &&
+			server->game.players[slot].machine_index == BOTS_FIRST_MACHINE + bot_index)
+		{
+			chosen = slot;
+		}
+	}
+	if (bot_index < 0 || bot_index >= BOTS_MAXIMUM || chosen == NONE)
+	{
+		snprintf(said, said_size, "there is no bot %ld", bot_index + 1);
+		return FALSE;
+	}
+	leaving = server->game.players[chosen];
+	if (!network_game_remove_player(&server->game, &leaving))
+	{
+		snprintf(said, said_size, "the bot could not leave");
+		return FALSE;
+	}
+	/* (off the roster: not back in the next lobby) */
+	bots_set_on_roster(bot_index, FALSE);
+	if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame)
+	{
+		struct message_server_remove_player_ingame remove_player;
+		void *message;
+
+		remove_player.player = leaving;
+		remove_player.reason = game_time_get() + NETWORK_GAME_PLAYER_QUIT_DELAY;
+		message = create_network_game_message(_message_server_remove_player_ingame, &remove_player,
+			sizeof(remove_player));
+		if (message && !network_game_server_send_message_to_all_machines(server, message))
+			network_event("network_game_server_send_message_to_all_machines() failed for a bot leaving");
+	}
+	else if (!network_game_server_send_game_data_pregame(server))
+		network_event("network_game_server_port_host_bot_drop() failed to send updated game settings to clients");
+	network_game_server_port_bot_name(&leaving, name, (long)sizeof(name));
+	network_event("bots: bot %ld left", bot_index + 1);
+	snprintf(said, said_size, "%s left", name);
+	return TRUE;
+}
+
+long network_game_server_port_bot_roster(
+	long *bot_indices,
+	long *team_indices,
+	char (*names)[16],
+	long maximum)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	long slot, count = 0;
+
+	if (!server)
+		return 0;
+	/* (in the bots' order: their machines') */
+	for (slot = 0; slot < BOTS_MAXIMUM && count < maximum; slot++)
+	{
+		long index;
+
+		for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+		{
+			struct network_player *player = &server->game.players[index];
+
+			if (network_player_is_valid(player) && player->machine_index == BOTS_FIRST_MACHINE + slot)
+			{
+				bot_indices[count] = slot;
+				team_indices[count] = player->team_index;
+				network_game_server_port_bot_name(player, names[count], 16);
+				count++;
+				break;
+			}
+		}
+	}
+	return count;
+}
+
 boolean network_game_server_idle(
 	struct network_game_server *server)
 {
@@ -1851,11 +2269,26 @@ boolean network_game_server_idle(
 		}
 	}
 
+	mcc_ui_network_update_map(server); /* port: apply pending MCC selection after local admission */
 	/* port: the bots of a local game (port/linux/game/bots.c) */
 	network_game_server_port_bots(server);
 	/* (what Discord shows of a game hosted for internet play, and the
 	server browser's listing) */
-	p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
+	/* port: (real players alone: the bots neither count as players nor
+	take room, the most less theirs) */
+	{
+		long slot, bots = 0;
+
+		for (slot = 0; slot < MAXIMUM_NETWORK_PLAYER_COUNT; slot++)
+		{
+			if (network_player_is_valid(&server->game.players[slot]) &&
+				bots_machine_is_bot(server->game.players[slot].machine_index))
+			{
+				bots++;
+			}
+		}
+		p2p_set_game_player_counts(server->game.player_count - bots, MAX(1, server->game.maximum_players - bots));
+	}
 	network_game_server_list(server);
 
 	if (network_game_server_game_is_valid(server))
@@ -2116,12 +2549,17 @@ boolean network_game_server_start_network_game(
 	boolean success = TRUE;
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x2DE, server);
+	/* port: an MCC check still in progress is a successful idle, not a failed
+	connection. Keep the countdown pending until its validated settings are sent. */
+	if (mcc_ui_network_map_pending(server)) return TRUE;
 
 	if (server->sent_start_game_message == FALSE)
 	{
 		struct message_server_begin_game begin_game = { 0 };
 		void *message;
 
+		/* port: the riding decision for this game, made as it starts and sent with its settings (network_coop.c) */
+		network_game_port_vehicle_riding_start(&server->game);
 		/* the settings record goes out in pieces */
 		/* port: once the settings are out, the start is sent once: a machine
 		that missed it (its connection failed, and is closed) is dropped, and
@@ -2169,6 +2607,7 @@ boolean network_game_server_start_network_game(
 			else
 				network_event("signalling client machines to begin loading for network game (some machines missed it)");
 			server->sent_start_game_message = TRUE;
+			mcc_load_network_start(&server->game); /* port: bind MCC progress before loading */
 			csmemcpy(network_game_server_start_players, server->game.players,
 				sizeof(network_game_server_start_players));
 			success = TRUE;
@@ -2630,6 +3069,7 @@ void network_game_server_all_machines_have_loaded(
 	long client_machine_index;
 
 	network_event("all machines have successfully loaded");
+	mcc_load_network_disconnect(); /* port: the MCC conversion wait is over */
 
 	server->state = _network_game_server_state_ingame;
 	server->time_of_first_client_loading_completion = 0;
@@ -2679,6 +3119,7 @@ void network_game_server_client_machine_game_loading_complete(
 	}
 
 	SET_FLAG(machine->flags, _network_client_machine_level_loaded_bit, TRUE);
+	mcc_load_network_peer_left(machine->machine_index); /* port: retire its MCC loading lease */
 	if (!server->time_of_first_client_loading_completion)
 		server->time_of_first_client_loading_completion = system_milliseconds();
 
@@ -3147,8 +3588,20 @@ static void network_game_server_refuse_late_joiner(
 
 /* the players in the settings each machine joining the game in progress
 was started with (by machine index): those added and gone while it loaded
-it, whose messages it did not hear, it is told of once it has */
-static struct network_player late_joiner_players[MAXIMUM_NETWORK_MACHINE_COUNT][NUMBEROF(((struct network_game *)0)->players)];
+it, whose messages it did not hear, it is told of once it has (on the heap
+at the first use, zeroed as static data is: at 512 KB they do not fit in the
+guest images, whose code and data have to fit in their 64 MB) */
+typedef struct network_player late_joiner_players_table[MAXIMUM_NETWORK_MACHINE_COUNT][NUMBEROF(((struct network_game *)0)->players)];
+static late_joiner_players_table *late_joiner_players_storage;
+
+static late_joiner_players_table *late_joiner_players_get(void)
+{
+	if (!late_joiner_players_storage &&
+		!(late_joiner_players_storage = calloc(1, sizeof(*late_joiner_players_storage))))
+		abort();
+	return late_joiner_players_storage;
+}
+#define late_joiner_players (*late_joiner_players_get())
 
 static boolean network_game_server_same_player(
 	struct network_player const *player0,
@@ -3242,6 +3695,12 @@ static void network_game_server_restore_held_players(
 	{
 		struct network_player player = network_game_server_held_players[index];
 
+		/* port: not one of a machine that has gone */
+		if (!network_player_is_valid(&player) ||
+			!network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[player.machine_index]))
+		{
+			continue;
+		}
 		if (!network_game_add_player(&server->game, &player))
 			network_event("failed to put back a player held for a map download");
 	}
@@ -4021,6 +4480,8 @@ void network_game_server_change_map_name(
 		server && map_name && map_name[0]);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x79C,
 		server->state == _network_game_server_state_pregame);
+	/* port: MCC package work waits for local admission; legacy selections remain immediate. */
+	if (mcc_ui_network_defer_map(server, map_name)) return;
 
 	for (client_machine_index = 0;
 		client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT;
@@ -4087,6 +4548,8 @@ boolean network_game_server_remove_client_machine_from_game(
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x22F, server);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x230, client);
+	/* port: release MCC transfers before this connection slot is reused */
+	mcc_share_game_peer_left(client);
 
 	if (_network_game_server_state_ingame == server->state)
 	{
@@ -4150,6 +4613,13 @@ boolean network_game_server_remove_client_machine_from_game(
 						waiting_index++;
 					}
 				}
+				/* port: and so do its players held out of the game for a map
+				download: put back as the game ends
+				(network_game_server_reset_to_pregame), they were the players
+				of a machine that had gone, which nothing took out */
+				network_game_server_discard_held_players(client->machine_index);
+				if (VALID_INDEX(client->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
+					network_game_server_map_pending[client->machine_index] = FALSE;
 			}
 			server->client_machines[i].connection = NULL;
 			server->client_machines[i].last_received_update_sequence_number = 0;
@@ -5015,6 +5485,10 @@ static boolean network_game_server_setup_game_from_playlist(
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x961, server);
 
+	/* port: an MCC game restarted from its pause menu keeps its settings */
+	if (mcc_ui_network_restart_settings(server))
+		return TRUE;
+
 	network_event("setting up a net game");
 	if (game_engine_get_current_stage(&server->game.variant, server->game.map.name))
 	{
@@ -5492,7 +5966,9 @@ static boolean network_game_server_idle_pregame_tasks(
 
 		/* port: the gametype's auto team balance (game_variant_options):
 		the lobby's teams kept within a player of each other, the bigger
-		team's last player moved */
+		team's last player moved; port: never a bot the server's owner put on
+		a team (sv_bot_add red|blue: it stays where it was put, and the two
+		rules fought over it until the game started) */
 		if (server->game.variant.universal_variant.teams && server->game.variant_options.auto_team_balance)
 		{
 			for (;;)
@@ -5507,13 +5983,20 @@ static boolean network_game_server_idle_pregame_tasks(
 
 					if (network_player_is_valid(player) && VALID_INDEX(player->team_index, 2))
 					{
-						count[player->team_index]++;
-						last[player->team_index] = itr;
+						count[(long)player->team_index]++;
+						if (!bots_machine_is_bot(player->machine_index) ||
+							bots_bot_team_asked(player->machine_index - BOTS_FIRST_MACHINE) == NONE)
+						{
+							last[(long)player->team_index] = itr;
+						}
 					}
 				}
 				if (ABS(count[0] - count[1]) <= 1)
 					break;
 				bigger = count[0] > count[1] ? 0 : 1;
+				/* (nobody on the bigger team it may move: as it is) */
+				if (last[bigger] == NONE)
+					break;
 				server->game.players[last[bigger]].team_index = 1 - bigger;
 				network_game_server_send_game_data_pregame(server);
 			}
@@ -5680,6 +6163,7 @@ static boolean network_game_server_idle_pregame_tasks(
 			NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_LEVEL_LOADING)
 		{
 			int i;
+			boolean mcc_loading_wait = FALSE; /* port: loaded bits still decide completion */
 
 			for (i = 0; i < MAXIMUM_NETWORK_MACHINE_COUNT; i++)
 			{
@@ -5694,6 +6178,13 @@ static boolean network_game_server_idle_pregame_tasks(
 					char ascii_name[MAXIMUM_MACHINE_NAME_LENGTH];
 					boolean removed;
 
+					/* port: MCC conversion may progress beyond the ordinary wait.
+					 * This never marks a peer loaded or excludes it from readiness. */
+					if (mcc_load_network_host_waiting(server->client_machines[i].machine_index))
+					{
+						mcc_loading_wait = TRUE;
+						continue;
+					}
 					network_event(
 						"forcibly removing client system '%s' due to timeout while loading for game",
 						wide_to_ascii(
@@ -5710,8 +6201,9 @@ static boolean network_game_server_idle_pregame_tasks(
 				}
 			}
 
-			/* (the last removal may have started it) */
-			if (server->state == _network_game_server_state_pregame)
+			/* (the last removal may have started it; port: not while a
+			machine's MCC conversion holds the start) */
+			if (server->state == _network_game_server_state_pregame && !mcc_loading_wait)
 				network_game_server_all_machines_have_loaded(server);
 		}
 	}
@@ -5878,3 +6370,6 @@ boolean network_game_server_reset_to_pregame(
 
 	return success;
 }
+
+/* port: Independent MCC pause-menu round restart. */
+#include "mcc_ui_network.inl" /* port: port/linux/game/mcc_ui_network.inl */

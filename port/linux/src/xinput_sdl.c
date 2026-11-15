@@ -46,6 +46,8 @@ extern unsigned char network_aim_assist_block_mouse(void);
 #include "halo_keyboard.h"
 #include "halo_ui_pointer.h"
 #include "halo_overlay_menu.h"
+#include "halo_host_dashboard.h"
+#include "server_mode.h" /* port: halo_server_hosting, the host's screen a menu */
 #if defined(HALO_SWITCH) || defined(HALO_PS5)
 #include "guest_host.h"
 #endif
@@ -283,6 +285,7 @@ static void chat_pad_record(short port, const XINPUT_GAMEPAD *pad)
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_B] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_B;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_X] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_X;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_Y] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_Y;
+	if (pad->bAnalogButtons[XINPUT_GAMEPAD_BLACK] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_RIGHT_SHOULDER;
 	if (pad->sThumbLY > PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_UP;
 	if (pad->sThumbLY < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_DOWN;
 	if (pad->sThumbLX < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_LEFT;
@@ -398,6 +401,8 @@ static void overlay_pad_take(int port, XINPUT_GAMEPAD *pad, SDL_Gamepad *gamepad
 	if (pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN) buttons |= 1UL << HALO_OVERLAY_PAD_DPAD_DOWN;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_A] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_A;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_B] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_B;
+	if (pad->bAnalogButtons[XINPUT_GAMEPAD_X] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_X;
+	if (pad->bAnalogButtons[XINPUT_GAMEPAD_Y] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_Y;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_WHITE] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_LEFT_SHOULDER;
 	if (pad->bAnalogButtons[XINPUT_GAMEPAD_BLACK] >= PRESSED) buttons |= 1UL << HALO_OVERLAY_PAD_RIGHT_SHOULDER;
 	if (gamepad)
@@ -409,7 +414,8 @@ static void overlay_pad_take(int port, XINPUT_GAMEPAD *pad, SDL_Gamepad *gamepad
 		if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))
 			buttons |= 1UL << HALO_OVERLAY_PAD_DPAD_DOWN;
 	}
-	if (overlay_menu_take_pad((short)port, buttons))
+	/* (the overlay first, which opens over the host's screen too) */
+	if (overlay_menu_take_pad((short)port, buttons) || host_dashboard_take_pad((short)port, buttons))
 	{
 		overlay_held_buttons[port] = pad->wButtons;
 		overlay_held_analog[port] = 0;
@@ -1155,9 +1161,9 @@ int halo_push_to_talk_held(void)
 	and the game still gets it, network_chat.c; not in a replay's playback,
 	whose D-pad Down is its camera's: network_replay_playback.c) */
 	{
-		extern unsigned char network_replay_playing(void);
+		extern unsigned char network_replay_viewing(void);
 
-		return !input.menus && !network_replay_playing() && (chat_pad[0] & (1UL << HALO_CHAT_PAD_DOWN)) != 0;
+		return !input.menus && !network_replay_viewing() && (chat_pad[0] & (1UL << HALO_CHAT_PAD_DOWN)) != 0;
 	}
 }
 
@@ -1566,7 +1572,14 @@ static BOOL menu_buttons_swapped(BOOL menus)
 		read_at = config_changes();
 		swap = config_boolean("controls.nintendo_menu_buttons") != 0;
 	}
-	return (menus || game_engine_showing_postgame() || network_replay_playing()) && swap;
+	/* (and hosting from the menus: the host's screen is a menu, in a game too,
+	port/linux/game/host_dashboard.c) */
+	/* (and the text chat's on-screen keyboard, a menu's keys over the game:
+	A types, B cancels, network_chat.c) */
+	extern unsigned char network_chat_keyboard_open(void);
+
+	return (menus || game_engine_showing_postgame() || network_replay_playing() || halo_server_hosting() ||
+		network_chat_keyboard_open()) && swap;
 #else
 	(void)menus;
 	return FALSE;
@@ -1995,7 +2008,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		}
 		if (gamepad && !gamepad_capturing(gamepad))
 		{
-			extern unsigned char network_replay_playing(void);
+			extern unsigned char network_replay_viewing(void);
 			BOOL held_back[INPUT_GAMEPAD_END - INPUT_GAMEPAD];
 			int index;
 
@@ -2003,7 +2016,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			/* (a replay's playback has no voice chat and no game's controls: its
 			own take every button, a shoulder bound to talk its speed too:
 			port/linux/game/network_replay_playback.c) */
-			BOOL replay = network_replay_playing() != 0;
+			BOOL replay = network_replay_viewing() != 0;
 
 			for (index = 0; index < INPUT_GAMEPAD_END - INPUT_GAMEPAD; index++)
 				held_back[index] = !replay &&

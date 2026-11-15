@@ -14,6 +14,8 @@ before). test_map_share_restart.py takes the constants and structures
 #include "harness.h"
 
 typedef unsigned short word;
+/* (a connection's socket: xnet.c's Winsock) */
+typedef int SOCKET;
 
 /* the allocator: each block followed by SLACK bytes of 0xFF, so that a bit
 read beyond a bitmap is had, and one cleared beyond it shows */

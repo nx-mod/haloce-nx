@@ -190,7 +190,11 @@ struct nv2a_pixel_shader_key
 	stock shader, whose key and hash this leaves as they were). The Vulkan
 	renderer's: under deko3d only vertex shaders have the variant. */
 	unsigned char plasma_model;
-	unsigned char ce_meter_padding[2];
+	/* MCC's environment lightmap pass (mcc_environment_shader.h): its bump
+	attenuation in place of the dot product. deko3d keeps it in a record's
+	second spare byte, as ce_meter_channels its first */
+	unsigned char mcc_bump_attenuation;
+	unsigned char ce_meter_padding[1];
 };
 
 /* what a model lighting program's variant adds (plasma_model_shader.c):
@@ -258,6 +262,23 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 void xgpu_texture_cache_begin_frame(void);
 /* (debug.gpu_stats) a texture of this many bytes uploaded to GL (d3d8_gl.c) */
 void xgpu_statistics_texture_upload(unsigned long bytes);
+
+/* MCC-owned immutable resources never enter the guest physical texture cache
+(port/linux/src/mcc_texture_bridge.c registers them): each renderer's texture
+cache makes its own copy of one from its registered pixels (xbox_textures.c,
+xbox_textures_vk.c, xbox_textures_dk.c) */
+BOOL xgpu_mcc_texture_describe(DWORD const *resource, struct xgpu_texture_description *description);
+/* (OpenGL's: xbox_textures.c) */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target,
+	struct xgpu_texture_description const *description, void const *pixels,
+	unsigned long bytes, D3DCOLOR const *palette);
+/* a header no texture stage may keep once its registration goes (each renderer's device) */
+void xgpu_mcc_texture_unbind(DWORD const *resource);
+/* the renderer's copy of a registered header, let go as its registration goes */
+void xgpu_mcc_texture_forget(DWORD const *resource);
+/* the renderer's copy made now, as the map loads: FALSE where it is not (one
+there already, or a renderer that makes them at their first draw) */
+BOOL xgpu_mcc_texture_prepare(DWORD const *resource);
 
 /* ---------- render targets */
 

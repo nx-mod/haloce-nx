@@ -1,7 +1,7 @@
 """The rules of network_chat.c's text chat: a line's text (another machine's is untrusted), the lines the host takes
 from a machine, who hears a team's line and a vehicle's, how long a line shows, whether a public game has the chat (a
 dedicated server's may), and the host's /mute: what it reads from a typed line, the player a name means, and how long a
-mute lasts."""
+mute lasts. (Its on-screen keyboard's keys are onscreen_keyboard.c's: test_onscreen_keyboard.py.)"""
 
 import re
 import sys
@@ -15,15 +15,12 @@ from harness import CHECK_FAILED, build, constant, enum_with, function, mutated,
 CASES = ["text-printable", "text-control-characters", "text-pipe", "text-bounds", "text-empty", "append", "rate-burst",
          "rate-refill", "rate-wrap", "hears", "hears-vehicle", "flags", "alpha", "command-mute", "command-unmute",
          "command-not", "command-usage", "name-match", "name-bounds", "mute-time", "mute-wrap", "mute-again",
-         "mute-full", "link-found", "link-written-out", "link-spaced", "link-word-domains", "link-not", "refused", "listing", "filter", "keyboard-character",
-         "keyboard-move", "keyboard-tap"]
+         "mute-full", "link-found", "link-written-out", "link-spaced", "link-word-domains", "link-not", "refused", "listing", "filter"]
 FUNCTIONS = ("chat_text_clean", "chat_text_append", "chat_rate_take", "chat_hears", "chat_channel_from_flags",
              "chat_channel_flags", "chat_line_alpha", "chat_lower", "chat_command_word", "chat_command_parse",
              "chat_name_match", "chat_names_equal", "chat_mute_minutes_left", "chat_mute_find", "chat_mute_set", "chat_minutes_plural",
              "chat_alphanumeric", "chat_link_domain", "chat_text_has_link", "chat_refused", "chat_listing_allows",
-             "chat_filter_mode", "chat_filter_level", "chat_filter_star",
-             "chat_keyboard_character",
-             "chat_keyboard_move", "chat_keyboard_key_at")
+             "chat_filter_mode", "chat_filter_level", "chat_filter_star")
 
 # a fault in network_chat.c, the function it is in, and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -100,18 +97,6 @@ NEGATIVE_CONTROLS = {
                               "chat_filter_level", "filter"),
     "star-past-marks": (("if (marked[index] && text[index] != ' ')", "if (text[index] != ' ')"),
                         "chat_filter_star", "filter"),
-    "shift-not-letters": (("if (shift && character >= 'a' && character <= 'z')", "if (shift)"),
-                          "chat_keyboard_character", "keyboard-character"),
-    "last-row-read": (("row >= CHAT_KEYBOARD_ROWS - 1 ||", "row >= CHAT_KEYBOARD_ROWS ||"),
-                      "chat_keyboard_character", "keyboard-character"),
-    "move-no-wrap": (("% CHAT_KEYBOARD_ROWS + CHAT_KEYBOARD_ROWS) % CHAT_KEYBOARD_ROWS", "% CHAT_KEYBOARD_ROWS)"),
-                     "chat_keyboard_move", "keyboard-move"),
-    "wide-not-snapped": (("*column = (short)(*column - *column % width);", ""), "chat_keyboard_move",
-                         "keyboard-move"),
-    "tap-outside-taken": (("if (x < 0.0f || x >= 1.0f || y < 0.0f || y >= 1.0f)", "if (0)"),
-                          "chat_keyboard_key_at", "keyboard-tap"),
-    "tap-wide-not-snapped": (("*column = (short)(*column - *column % CHAT_KEYBOARD_WIDE_COLUMNS);", ";"),
-                             "chat_keyboard_key_at", "keyboard-tap"),
 }
 
 
@@ -120,8 +105,7 @@ def generated(fault=None, faulty_function=None):
     config = ""
     for name in ("CHAT_TEXT_SIZE", "CHAT_BURST", "CHAT_REFILL_MILLISECONDS", "CHAT_LINE_MILLISECONDS",
                  "CHAT_FADE_MILLISECONDS", "CHAT_NAME_SIZE", "CHAT_MUTE_DEFAULT_MINUTES", "CHAT_MUTE_MAXIMUM_MINUTES",
-                 "CHAT_MILLISECONDS_PER_MINUTE", "CHAT_KEYBOARD_COLUMNS", "CHAT_KEYBOARD_ROWS",
-                 "CHAT_KEYBOARD_WIDE_COLUMNS"):
+                 "CHAT_MILLISECONDS_PER_MINUTE"):
         config += f"#define {name} {constant(source, name)}\n"
     config += f"#define CHAT_NAME_AMBIGUOUS ({re.search(r'CHAT_NAME_AMBIGUOUS = (-?[0-9]+)', source).group(1)})\n"
     config += structure(source, "chat_rate") + "\n"

@@ -267,6 +267,9 @@ void render_frame_pregame(
 	halo_screen_ui_offset(TRUE);
 	render_ui_widgets(0, &window->rasterizer_camera.viewport_bounds);
 	halo_screen_ui_offset(FALSE);
+	/* port: hosting from the menus, the host's screen here too, between
+	maps (port/linux/game/host_dashboard.c) */
+	host_dashboard_draw();
 	bink_playback_render();
 
 	{

@@ -25,6 +25,11 @@ enum host_event_kind
 	_host_event_gamepad_removed,
 	_host_event_focus_gained,
 	_host_event_focus_lost,
+	/* the touchscreen's fingers (handheld): the menus' pointer and the game's
+	keyboard's taps (port/linux/src/touch_input.c) */
+	_host_event_finger_down,
+	_host_event_finger_motion,
+	_host_event_finger_up,
 };
 
 struct host_event
@@ -37,6 +42,11 @@ struct host_event
 	uint16_t modifiers;
 	uint8_t down;
 	uint8_t repeat;
+	/* a finger's: its touch device and its own id, and where it is and moved,
+	0 to 1 of the screen */
+	uint64_t touch_id;
+	uint64_t finger_id;
+	float x, y, dx, dy, pressure;
 };
 
 /* writes the SDL3 SDL_Event (128 bytes) for event */

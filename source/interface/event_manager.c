@@ -182,6 +182,28 @@ void event_manager_post_button(
 	return;
 }
 
+void event_manager_post_left_stick(
+	short controller_index,
+	short y)
+{
+	struct event_record event = {0};
+
+	if (!event_manager_globals.state.initialized ||
+		controller_index < 0 ||
+		controller_index >= MAXIMUM_GAMEPADS)
+	{
+		return;
+	}
+	/* (let go first, so that each step is a new push and not held: a held
+	stick repeats only after a while, queue_event) */
+	event.type = _event_type_left_stick;
+	queue_event(&event, controller_index);
+	event.data.stick.y = y > 0 ? 32767 : -32768;
+	queue_event(&event, controller_index);
+
+	return;
+}
+
 /* ---------- private code */
 
 static void queue_event(

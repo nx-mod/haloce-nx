@@ -118,6 +118,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "director.h"
+#include "mcc_camera.h" /* port: port/linux/game/mcc_camera.c */
 
 #include "camera_scripting.h"
 #include "dead_camera.h"
@@ -264,6 +265,8 @@ void director_dispose_from_old_map(
 {
 	short local_player_index;
 
+	sound_listener_motion_reset(NONE); /* port: discard motion across map unload */
+
 	for (local_player_index = 0; local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; local_player_index++)
 	{
 		struct director *director = director_get(local_player_index);
@@ -397,6 +400,14 @@ short director_desired_perspective(
 			following = TRUE;
 	}
 
+	/* port: MCC weapon cameras must select the same perspective for display
+	 * and deterministic aiming. The adapter leaves legacy maps and seats alone. */
+	if (mcc_camera_weapon_following(unit_index))
+	{
+		*perspective = _director_perspective_third_person;
+		following = TRUE;
+	}
+
 	return following;
 }
 
@@ -448,6 +459,7 @@ static void director_set_camera(
 	struct director *director = director_get(local_player_index);
 
 	director->camera_proc = camera_proc;
+	sound_listener_motion_reset(local_player_index); /* port: camera selection is not listener motion */
 	director->debug_input_scale = 1.f;
 	director->debug_controls = FALSE;
 	if (interpolate)
@@ -1041,6 +1053,8 @@ void director_initialize_for_new_map(
 	void)
 {
 	short local_player_index;
+
+	sound_listener_motion_reset(NONE); /* port: also called when restoring a saved game */
 
 	director_globals.game_mode = game_in_editor() ? _director_mode_editor : _director_mode_game;
 	director_globals.initialize_camera = FALSE;

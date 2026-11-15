@@ -76,18 +76,8 @@ public class HaloActivity extends SDLActivity {
     private static final int DRIVER_NAME_LENGTH = 127;
     /** the custom_maps folder the map lists' IMPORT copies maps into, while the file picker is open */
     private String pendingMapsFolder;
-    /** the longest map name the map lists take (port/linux/game/custom_edition_maps.c's MAXIMUM_MAP_NAME_LENGTH), a
-     * map file's header and the cache version of Custom Edition's (port/linux/src/server_rotation.c's
-     * server_map_header), the largest map taken, and the largest description beside one (<name>.txt, which the lists
-     * show) */
-    private static final int MAP_NAME_LENGTH = 51;
-    private static final int MAP_HEADER_SIZE = 0x800;
-    private static final int MAP_VERSION = 609;
-    private static final long MAP_MAXIMUM_SIZE = 1024L * 1024 * 1024;
-    private static final int MAP_DESCRIPTION_MAXIMUM_SIZE = 65536;
-    /** the longest folder name the lists show (custom_edition_maps.h's CUSTOM_EDITION_MAP_CATEGORY_LENGTH less its
-     * terminator) */
-    private static final int MAP_SET_NAME_LENGTH = 63;
+    /** the most bytes of one file IMPORT copies into the import inbox (an MCC package's .zip can pass 4 GB) */
+    private static final long IMPORT_MAXIMUM_SIZE = 16L << 30;
     /** a replay's file name ends so, and the file begins so (port/linux/game/network_replay.c) */
     private static final String REPLAY_EXTENSION = ".ocreplay";
     private static final byte[] REPLAY_MAGIC = "OCREPLAY".getBytes(StandardCharsets.US_ASCII);
@@ -98,6 +88,81 @@ public class HaloActivity extends SDLActivity {
 
     /** a line into the game's log: logcat and halo.log (host_main.c) */
     private static native void nativeLog(String line);
+
+    // ---------- the Steam sign-in's seal (port/android/host/steam_seal.c, from the Steam client's threads):
+    // an AES-GCM key of the Android Keystore, which never leaves it, seals the refresh token the host keeps in
+    // the app's private storage. A copy of the file opens on no other phone, nor here once the key is gone
+    // (steamForget, at a log out; an uninstall)
+
+    private static final String STEAM_KEY_ALIAS = "steam_session";
+    private static final int STEAM_TAG_BITS = 128;
+
+    private static javax.crypto.SecretKey steamKey(boolean create) throws Exception {
+        java.security.KeyStore store = java.security.KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        java.security.Key key = store.getKey(STEAM_KEY_ALIAS, null);
+        if (key instanceof javax.crypto.SecretKey)
+            return (javax.crypto.SecretKey) key;
+        if (!create)
+            return null;
+        javax.crypto.KeyGenerator generator = javax.crypto.KeyGenerator.getInstance(
+                android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        generator.init(new android.security.keystore.KeyGenParameterSpec.Builder(STEAM_KEY_ALIAS,
+                android.security.keystore.KeyProperties.PURPOSE_ENCRYPT
+                        | android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build());
+        return generator.generateKey();
+    }
+
+    /** plain sealed: its vector's length (a byte), the vector, then the cipher text and its tag; null on a failure */
+    public static byte[] steamSeal(byte[] plain) {
+        try {
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, steamKey(true));
+            byte[] vector = cipher.getIV();
+            byte[] sealed = cipher.doFinal(plain);
+            byte[] out = new byte[1 + vector.length + sealed.length];
+            out[0] = (byte) vector.length;
+            System.arraycopy(vector, 0, out, 1, vector.length);
+            System.arraycopy(sealed, 0, out, 1 + vector.length, sealed.length);
+            return out;
+        } catch (Exception e) {
+            android.util.Log.w("Halo", "steam: the Keystore could not seal the sign-in: " + e);
+            return null;
+        }
+    }
+
+    /** steamSeal's undone: the plain bytes, or null (another key's, damaged, or the key gone) */
+    public static byte[] steamUnseal(byte[] sealed) {
+        try {
+            javax.crypto.SecretKey key = steamKey(false);
+            int vector = sealed.length > 0 ? sealed[0] & 255 : 0;
+            if (key == null || vector < 12 || sealed.length < 1 + vector + STEAM_TAG_BITS / 8)
+                return null;
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key,
+                    new javax.crypto.spec.GCMParameterSpec(STEAM_TAG_BITS, sealed, 1, vector));
+            return cipher.doFinal(sealed, 1 + vector, sealed.length - 1 - vector);
+        } catch (Exception e) {
+            android.util.Log.w("Halo", "steam: the Keystore could not open the sign-in: " + e);
+            return null;
+        }
+    }
+
+    /** the key deleted (after a log out): what it sealed opens no more */
+    public static byte[] steamForget(byte[] unused) {
+        try {
+            java.security.KeyStore store = java.security.KeyStore.getInstance("AndroidKeyStore");
+            store.load(null);
+            store.deleteEntry(STEAM_KEY_ALIAS);
+        } catch (Exception e) {
+            android.util.Log.w("Halo", "steam: the Keystore's key could not be deleted: " + e);
+        }
+        return null;
+    }
 
     /** how an import or export went: in a Toast, and in the log, where a report sent in shows it */
     private void report(String what, String text) {
@@ -646,10 +711,9 @@ public class HaloActivity extends SDLActivity {
 
     /**
      * The map lists' IMPORT (New Game's and the Map screen's: port/linux/game/menu_functions.c, through
-     * host_android_import_maps): the system's file picker, several files at once, then each Custom Edition map chosen
-     * copied into folder, custom_maps, where the lists find it. A .zip file gives the .map files in it, wherever
-     * they are there: a set of maps goes to a folder of its own (copyMapsIn). Called on the game's thread; no storage
-     * permission.
+     * host_android_import_maps): the system's file picker, several files at once, each copied as it is into folder,
+     * the import inbox, which the game takes in from (port/android/host/host_mcc_import.c: Custom Edition maps, .zip files of
+     * them, and MCC packages, which only come in .zip files). Called on the game's thread; no storage permission.
      */
     public void importMaps(String folder) {
         runOnUiThread(() -> {
@@ -669,239 +733,64 @@ public class HaloActivity extends SDLActivity {
     }
 
     /**
-     * a name in custom_maps, of a map (its level name's, custom_maps\<name>) or a folder of maps: the file's without
-     * the folders before it or the extension given, with what the lists cannot take (anything but printable ASCII,
-     * and what a file system refuses) made '_', and no dot or space at its ends; null when nothing is left
+     * a file's name in the import inbox: the document's own, without folders, with what a file system refuses made
+     * '_', no dot or space at its ends, and a number added if one of that name is there already; null when nothing
+     * is left of it
      */
-    private static String mapName(String chosen, String extension) {
+    private static File inboxFile(File inbox, String chosen) {
         String name = chosen != null ? chosen : "";
         name = name.substring(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
-        if (name.toLowerCase(java.util.Locale.ROOT).endsWith(extension))
-            name = name.substring(0, name.length() - extension.length());
-        name = name.replaceAll("[^\\x20-\\x7E]|[\\\\/:*?\"<>|]", "_").replaceAll("^[. ]+|[. ]+$", "");
-        return name.isEmpty() ? null : name;
-    }
-
-    /** the resource map type (cache_file_formats.h's resource_map_type) of Custom Edition's bitmaps.map, sounds.map
-     * or loc.map, by its name; 0 for any other map */
-    private static int resourceMapType(String name) {
-        switch (name.toLowerCase(java.util.Locale.ROOT)) {
-            case "bitmaps": return 1;
-            case "sounds": return 2;
-            case "loc": return 3;
-            default: return 0;
-        }
+        name = name.replaceAll("[\\x00-\\x1F\\x7F\\\\/:*?\"<>|]", "_").replaceAll("^[. ]+|[. ]+$", "");
+        if (name.isEmpty())
+            return null;
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name, extension = dot > 0 ? name.substring(dot) : "";
+        File file = new File(inbox, name);
+        for (int number = 2; file.exists() || new File(inbox, file.getName() + ".part").exists(); number++)
+            file = new File(inbox, stem + " (" + number + ")" + extension);
+        return file;
     }
 
     /**
-     * why the file is not a map the lists take (as server_map_header reads it: a Custom Edition cache file), or for
-     * a resource map's name, not that resource map (its type its first field), else null
-     */
-    private static String mapProblem(File map, String name) {
-        byte[] header = new byte[MAP_HEADER_SIZE];
-        int read = 0;
-        try (InputStream input = new FileInputStream(map)) {
-            int size;
-            while (read < header.length && (size = input.read(header, read, header.length - read)) != -1)
-                read += size;
-        } catch (IOException e) {
-            return "it cannot be read (" + e.getMessage() + ")";
-        }
-        int resource = resourceMapType(name);
-        if (resource != 0) {
-            if (read < 4 || header[0] != resource || header[1] != 0 || header[2] != 0 || header[3] != 0)
-                return "it is not Custom Edition's " + name + ".map";
-            return null;
-        }
-        if (read < header.length || header[0] != 'd' || header[1] != 'a' || header[2] != 'e' || header[3] != 'h'
-                || header[0x7FC] != 't' || header[0x7FD] != 'o' || header[0x7FE] != 'o' || header[0x7FF] != 'f')
-            return "it is not a map file";
-        int version = (header[4] & 0xFF) | (header[5] & 0xFF) << 8 | (header[6] & 0xFF) << 16 | (header[7] & 0xFF) << 24;
-        if (version == 5)
-            return "it is an Xbox map, not a Custom Edition one";
-        if (version != MAP_VERSION)
-            return "it is not a Custom Edition map (its version is " + version + ", not " + MAP_VERSION + ")";
-        return null;
-    }
-
-    /** the outcomes of one IMPORT: the maps taken, those already there, and why the others were not */
-    private static final class MapImport {
-        final List<String> copied = new ArrayList<>();
-        final List<String> skipped = new ArrayList<>();
-        final List<String> failed = new ArrayList<>();
-        /** the .part files written so far (each one's name has its number) */
-        int parts;
-    }
-
-    /** a map read and checked, not yet kept: its name, and the file it was written to */
-    private static final class MapPart {
-        final String name;
-        final File part;
-
-        MapPart(String name, File part) {
-            this.name = name;
-            this.part = part;
-        }
-    }
-
-    /**
-     * one map, read from input (left open), written to a .part file of folder (which the lists pass over) and
-     * checked; null, its reason in outcome, when it is not a map the lists take
-     */
-    private static MapPart readMap(InputStream input, File folder, String chosen, MapImport outcome) {
-        String name = mapName(chosen, ".map");
-        if (name == null) {
-            outcome.failed.add(chosen + ": it has no name");
-            return null;
-        }
-        if (name.length() > MAP_NAME_LENGTH) {
-            outcome.failed.add(name + ": its name is longer than " + MAP_NAME_LENGTH + " characters");
-            return null;
-        }
-        // (the game looks for Custom Edition's resource maps by these names)
-        if (resourceMapType(name) != 0)
-            name = name.toLowerCase(java.util.Locale.ROOT);
-        File part = new File(folder, ".import-" + (outcome.parts++) + ".map.part");
-        try {
-            try (OutputStream output = new FileOutputStream(part)) {
-                byte[] buffer = new byte[65536];
-                long total = 0;
-                int size;
-                while ((size = input.read(buffer)) != -1) {
-                    total += size;
-                    if (total > MAP_MAXIMUM_SIZE)
-                        throw new IOException("it is larger than " + (MAP_MAXIMUM_SIZE >> 20) + " MB");
-                    output.write(buffer, 0, size);
-                }
-            }
-            String problem = mapProblem(part, name);
-            if (problem != null)
-                throw new IOException(problem);
-            return new MapPart(name, part);
-        } catch (IOException e) {
-            part.delete();
-            outcome.failed.add(name + ": " + e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * the maps read made maps of custom_maps (folder), each <name>.map: a set's in its folder (set, null for none),
-     * Custom Edition's resource maps always at custom_maps' top, where the game looks for them; a name there already
-     * is left as it is. A map's description (<name>.txt, which the lists show) goes beside it, unless one is there.
-     */
-    private static void keepMaps(List<MapPart> maps, File folder, String set, java.util.Map<String, byte[]> descriptions,
-            MapImport outcome) {
-        for (MapPart map : maps) {
-            File directory = set != null && resourceMapType(map.name) == 0 ? new File(folder, set) : folder;
-            File kept = new File(directory, map.name + ".map");
-            String shown = directory == folder ? map.name : set + "/" + map.name;
-            try {
-                if (kept.exists()) {
-                    outcome.skipped.add(shown);
-                    continue;
-                }
-                directory.mkdirs();
-                if (!map.part.renameTo(kept)) {
-                    outcome.failed.add(shown + ": it cannot be kept");
-                    continue;
-                }
-                outcome.copied.add(shown);
-                byte[] text = descriptions.get(map.name.toLowerCase(java.util.Locale.ROOT));
-                File description = new File(directory, map.name + ".txt");
-                if (text != null && !description.exists()) {
-                    try (OutputStream output = new FileOutputStream(description)) {
-                        output.write(text);
-                    } catch (IOException e) {
-                        description.delete();
-                    }
-                }
-            } finally {
-                map.part.delete();
-            }
-        }
-    }
-
-    /**
-     * the documents chosen taken into folder, custom_maps, on a thread of their own; a Toast says how it went. A .zip
-     * gives its .map files, and the .txt of a map's name, its description; one of more than one map (the resource
-     * maps aside) is a set of maps, which goes to a folder named like the .zip, as the lists show one. Any other
-     * document is taken as a map.
+     * the documents chosen copied into folder, the import inbox, on a thread of their own: each as a .part (which
+     * the game passes over) until it is whole. The game checks and imports them, and says how it went.
      */
     private void copyMapsIn(List<Uri> documents, String folder) {
-        File directory = new File(folder);
-        directory.mkdirs();
-        // (a .part an import cut short left)
-        File[] left = directory.listFiles((parent, name) -> name.startsWith(".import-") && name.endsWith(".map.part"));
-        if (left != null) {
-            for (File part : left)
-                part.delete();
-        }
-        MapImport outcome = new MapImport();
+        File inbox = new File(folder);
+        inbox.mkdirs();
+        List<String> failed = new ArrayList<>();
         runOnUiThread(() -> Toast.makeText(this, "Importing...", Toast.LENGTH_SHORT).show());
         for (Uri document : documents) {
             String chosen = documentName(document);
-            List<MapPart> maps = new ArrayList<>();
+            File file = inboxFile(inbox, chosen);
+            if (file == null) {
+                failed.add(chosen + ": it has no name");
+                continue;
+            }
+            File part = new File(inbox, file.getName() + ".part");
             try (InputStream input = getContentResolver().openInputStream(document)) {
                 if (input == null)
                     throw new IOException("it cannot be opened");
-                java.util.Map<String, byte[]> descriptions = new java.util.HashMap<>();
-                if (chosen == null || !chosen.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) {
-                    MapPart map = readMap(input, directory, chosen, outcome);
-                    if (map != null)
-                        maps.add(map);
-                    keepMaps(maps, directory, null, descriptions, outcome);
-                    continue;
-                }
-                int found = 0, set = 0;
-                try (ZipInputStream zip = new ZipInputStream(input)) {
-                    ZipEntry entry;
-                    while ((entry = zip.getNextEntry()) != null) {
-                        String path = entry.getName();
-                        String lower = path.toLowerCase(java.util.Locale.ROOT);
-                        if (entry.isDirectory())
-                            continue;
-                        if (lower.endsWith(".map")) {
-                            found++;
-                            MapPart map = readMap(zip, directory, path, outcome);
-                            if (map != null) {
-                                maps.add(map);
-                                if (resourceMapType(map.name) == 0)
-                                    set++;
-                            }
-                        } else if (lower.endsWith(".txt")) {
-                            ByteArrayOutputStream text = new ByteArrayOutputStream();
-                            byte[] buffer = new byte[4096];
-                            int size;
-                            while ((size = zip.read(buffer)) != -1 && text.size() <= MAP_DESCRIPTION_MAXIMUM_SIZE)
-                                text.write(buffer, 0, size);
-                            String name = mapName(path, ".txt");
-                            if (name != null && text.size() <= MAP_DESCRIPTION_MAXIMUM_SIZE)
-                                descriptions.put(name.toLowerCase(java.util.Locale.ROOT), text.toByteArray());
-                        }
+                try (OutputStream output = new FileOutputStream(part)) {
+                    byte[] buffer = new byte[65536];
+                    long total = 0;
+                    int size;
+                    while ((size = input.read(buffer)) != -1) {
+                        total += size;
+                        if (total > IMPORT_MAXIMUM_SIZE)
+                            throw new IOException("it is larger than 16 GB");
+                        output.write(buffer, 0, size);
                     }
                 }
-                if (found == 0)
-                    outcome.failed.add(chosen + ": it has no .map file");
-                String setName = mapName(chosen, ".zip");
-                if (setName != null && setName.length() > MAP_SET_NAME_LENGTH)
-                    setName = setName.substring(0, MAP_SET_NAME_LENGTH).replaceAll("[. ]+$", "");
-                keepMaps(maps, directory, set > 1 && setName != null && !setName.isEmpty() ? setName : null,
-                    descriptions, outcome);
+                if (!part.renameTo(file))
+                    throw new IOException("it cannot be kept");
             } catch (Exception e) {
-                outcome.failed.add(chosen + ": " + e.getMessage());
-            } finally {
-                for (MapPart map : maps)
-                    map.part.delete();
+                part.delete();
+                failed.add(file.getName() + ": " + e.getMessage());
             }
         }
-        String text = (outcome.copied.isEmpty() ? "" : "Imported " + String.join(", ", outcome.copied) + ". ")
-            + (outcome.skipped.isEmpty() ? "" : String.join(", ", outcome.skipped) + (outcome.skipped.size() == 1
-                ? " was" : " were") + " already there. ")
-            + (outcome.failed.isEmpty() ? "" : "Not imported: " + String.join("; ", outcome.failed) + ".")
-            + (outcome.copied.isEmpty() && outcome.skipped.isEmpty() && outcome.failed.isEmpty()
-                ? "Nothing imported." : "");
-        report("import maps", text.trim());
+        if (!failed.isEmpty())
+            report("import maps", "Not imported: " + String.join("; ", failed) + ".");
     }
 
     /** the documents a picker of several files chose */

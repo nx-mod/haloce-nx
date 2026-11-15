@@ -144,7 +144,8 @@ typedef char dk_key_data_within_pixel_key[sizeof(struct nv2a_pixel_shader_key) >
 struct dk_key_record
 {
 	uint8_t stage;
-	/* [0]: a pixel key's ce_meter_channels (0 in the records written before it was kept); the rest 0 */
+	/* [0]: a pixel key's ce_meter_channels (0 in the records written before it was kept); [1]: its
+	mcc_bump_attenuation (likewise); the rest 0 */
 	uint8_t reserved[3];
 	uint32_t map_hash;
 	uint8_t data[DK_KEY_DATA_SIZE];
@@ -293,6 +294,9 @@ static uint64_t key_hash(uint32_t stage, const void *data)
 		}
 		if (key->ce_meter_channels)
 			hash = dk_shader_hash_mix(hash, &key->ce_meter_channels, sizeof(key->ce_meter_channels));
+		/* (MCC's environment lightmap pass, likewise mixed only when set: every other key's hash stays) */
+		if (key->mcc_bump_attenuation)
+			hash = dk_shader_hash_mix(hash, &key->mcc_bump_attenuation, sizeof(key->mcc_bump_attenuation));
 		hash = debug_hash_mix(hash);
 	}
 	return hash;
@@ -311,7 +315,10 @@ static void record_key(const struct dk_key_record *record, union dk_key_data *da
 	memset(data, 0, sizeof(*data));
 	memcpy(data, record->data, record->stage == DK_SHADER_STAGE_VERTEX ? DK_VERTEX_KEY_BYTES : DK_KEY_DATA_SIZE);
 	if (record->stage == DK_SHADER_STAGE_PIXEL)
+	{
 		data->pixel.ce_meter_channels = record->reserved[0];
+		data->pixel.mcc_bump_attenuation = record->reserved[1];
+	}
 }
 
 /* ---------- the key store */
@@ -554,7 +561,10 @@ static void console_append(uint32_t stage, uint32_t map_hash, const void *data, 
 	record.map_hash = map_hash;
 	memcpy(record.data, data, size < DK_KEY_DATA_SIZE ? size : DK_KEY_DATA_SIZE);
 	if (stage == DK_SHADER_STAGE_PIXEL)
+	{
 		record.reserved[0] = ((const struct nv2a_pixel_shader_key *)data)->ce_meter_channels;
+		record.reserved[1] = ((const struct nv2a_pixel_shader_key *)data)->mcc_bump_attenuation;
+	}
 	pthread_mutex_lock(&append_lock);
 	if (!append_started)
 	{

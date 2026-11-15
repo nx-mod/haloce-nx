@@ -162,7 +162,7 @@ static int muzzle_position(struct muzzle_pulse *pulse, real_point3d *position)
 		position->z += forward.k * profile->forward_offset;
 	}
 	/* a replay's playback has no local player: its view is the replay's camera */
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		const struct observer_result *camera = network_replay_camera();
 		return camera && distance3d(position, &camera->position) <= 25.0f ? TRUE : FALSE;

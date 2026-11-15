@@ -310,11 +310,20 @@ static struct overlay_entry overlay_bots_routes_entries[] =
 };
 static struct overlay_source overlay_bots_routes = OVERLAY_FOLDER_OF("Routes", overlay_bots_routes_entries);
 
+/* port: the kind of bot added from now on (bots_common.h) */
+static struct overlay_entry overlay_bots_kind_entries[] =
+{
+	OVERLAY_SETTING_CHOICE("Birchwood", "bots.kind", "birchwood"),
+	OVERLAY_SETTING_CHOICE("Proving Grounds", "bots.kind", "provinggrounds"),
+};
+static struct overlay_source overlay_bots_kind = OVERLAY_FOLDER_OF("Kind", overlay_bots_kind_entries);
+
 static struct overlay_entry overlay_bots_entries[] =
 {
 	OVERLAY_FOLDER("Add Bots", overlay_bots_add),
 	OVERLAY_FOLDER("Drop Bots", overlay_bots_drop),
 	OVERLAY_FOLDER("Difficulty", overlay_bots_skill),
+	OVERLAY_FOLDER("Kind", overlay_bots_kind),
 	OVERLAY_TOGGLE("Vehicles", _overlay_state_config_integer, "config bots.vehicles 1", "config bots.vehicles 0",
 		"bots.vehicles", 0.0f, FALSE),
 	OVERLAY_FOLDER("Routes", overlay_bots_routes),

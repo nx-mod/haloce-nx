@@ -1685,3 +1685,27 @@ boolean game_engine_race_read_network_state(
 	csmemcpy(race_events.best_laps, state.best_laps, sizeof(race_events.best_laps));
 	return TRUE;
 }
+
+/* port: (game_engine.h, the Proving Grounds bots) the race's type, the flags
+a player may touch next (can_touch_team's rules), and the reach of a touch
+(race_engine_player_update's) */
+short game_engine_race_type(
+	void)
+{
+	return (short)game_engine_get_variant()->game_engine_variant.race.race_type;
+}
+
+boolean game_engine_race_can_touch(
+	long player_index,
+	long flag_number)
+{
+	if (flag_number < 0 || flag_number >= MAXIMUM_RACE_FLAGS || !player_try_and_get(player_index))
+		return FALSE;
+	return can_touch_team(player_index, flag_number);
+}
+
+real game_engine_race_touch_radius(
+	boolean in_vehicle)
+{
+	return in_vehicle ? 2.5f : 1.5f;
+}

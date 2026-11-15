@@ -954,7 +954,7 @@ else the player's own */
 static struct observer_result const *game_sound_camera(
 	short local_player_index)
 {
-	struct observer_result const *replay_camera = local_player_index == 0 && network_replay_playing() ?
+	struct observer_result const *replay_camera = local_player_index == 0 && network_replay_viewing() ?
 		network_replay_camera() : NULL;
 
 	return replay_camera ? replay_camera : observer_get_camera(local_player_index);
@@ -1099,7 +1099,7 @@ static void compute_combined_pas(
 	{
 		/* port: and a replay's playback's view (game_sound_camera) */
 		if (local_player_get_player_index(local_player_index) != NONE ||
-			(local_player_index == 0 && network_replay_playing() && network_replay_camera()))
+			(local_player_index == 0 && network_replay_viewing() && network_replay_camera()))
 		{
 			struct observer_result const *camera = game_sound_camera(local_player_index);
 

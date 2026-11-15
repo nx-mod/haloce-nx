@@ -182,8 +182,10 @@ struct game_options;
 #include "structures/structures.h"
 #include "units/units.h"
 #include "units/vehicles.h"
+#include "units/bipeds.h" /* port: bipeds_riding_latch */
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "biped_ragdoll.h" /* port: port/linux/game/biped_ragdoll.c */
+#include "mcc_loading.h" /* port: port/linux/game/mcc_loading.c */
 #ifdef HALO_PROFILE
 #include "profile_console.h" /* port: port/linux/game/profile_console.c */
 #endif
@@ -428,6 +430,11 @@ void game_initial_pulse(
 {
 	struct data_iterator iterator;
 
+	/* port: the map's declared value before scripts run; a load must not read
+	it again (vehicle_riding.c) */
+	vehicle_riding_map_start();
+	bipeds_riding_latch();
+
 	data_iterator_new(&iterator, player_data);
 	while (data_iterator_next(&iterator))
 		game_engine_player_added(iterator.datum_index);
@@ -634,6 +641,7 @@ boolean game_load(
 		game_options_verify(options));
 
 	random_seed_debug_log(TRUE);
+	mcc_loading_begin(options->map_name); /* port: no-op for Xbox/CE loads */
 	csmemcpy(&game_globals->options, options, sizeof(*options));
 	{
 		/* port: how long the map's load takes once it is in the cache, in the port's log */
@@ -647,6 +655,7 @@ boolean game_load(
 		platform_log("map load: %s: scenario_load %lu ms", options->map_name, GetTickCount() - started);
 	}
 
+	mcc_loading_end(game_globals->map_loaded); /* port: includes failed MCC loads */
 	return game_globals->map_loaded;
 }
 

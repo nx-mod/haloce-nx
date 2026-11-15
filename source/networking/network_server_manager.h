@@ -151,5 +151,12 @@ void network_game_server_change_game_variant(
 hs.c); team_index 0 red, 1 blue, NONE for a game without teams; what came of it in said */
 boolean network_game_server_port_bot_add(long team_index, char *said, long said_size);
 boolean network_game_server_port_bot_drop(long team_index, char *said, long said_size);
+/* port: a server's bots (sv_bot_add, sv_bot_drop: port/linux/game/server_commands.c; the Host Server screen's BOTS),
+in its lobby or its game: one joins as the kind (bots_common.h's) and skill level (NONE: bots.skill's) asked, on the
+team asked (NONE: the smaller; a game without teams takes none), or bot number bot_index (0 up) leaves; and the bots
+there now, their numbers, teams and names (16 at most each), how many. What came of it in said */
+boolean network_game_server_port_host_bot_add(short kind, short skill, long team_index, char *said, long said_size);
+boolean network_game_server_port_host_bot_drop(long bot_index, char *said, long said_size);
+long network_game_server_port_bot_roster(long *bot_indices, long *team_indices, char (*names)[16], long maximum);
 
 #endif // __NETWORK_SERVER_MANAGER_H

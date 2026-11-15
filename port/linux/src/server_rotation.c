@@ -15,6 +15,7 @@ A dedicated server's rotation and gametype rules (server_rotation.h).
 #include "platform.h"
 #include "port_config.h"
 #include "posix.h"
+#include "../game/mcc_server.h"
 #endif
 
 /* ---------- the rules */
@@ -40,7 +41,14 @@ static const char *const loadout_weapon_words[] =
 	"none", "random", "assault_rifle", "pistol", "shotgun", "sniper_rifle", "rocket_launcher", "plasma_pistol",
 	"plasma_rifle", "needler", NULL,
 };
-static const char *const team_vehicles_words[] = { "gametype", "pc", "custom", NULL };
+/* (the vehicle set's, every one the map places, the counts, then a vehicle
+set of the vehicle options' own by its name: game_engine.c's sets, and the
+port's ROCKET WARTHOGS, BANSHEES and GUN TURRETS) */
+static const char *const team_vehicles_words[] =
+{
+	"gametype", "pc", "custom", "default", "none", "warthogs", "ghosts", "scorpions", "rocket_warthogs", "banshees",
+	"gun_turrets", NULL,
+};
 
 #define ALL _server_engine_all
 #define RULE_INTEGER(key, alias, table, engines, minimum, maximum, description) \
@@ -67,6 +75,7 @@ const struct server_rule_definition server_rule_definitions[] =
 	RULE_BOOLEAN("no_shields", NULL, "universal", ALL, "Players have no shields"),
 	RULE_BOOLEAN("invisible", NULL, "universal", ALL, "Players are always camouflaged"),
 	RULE_BOOLEAN("generic_equipment", NULL, "universal", ALL, "Every map starts players with the same weapons"),
+	RULE_BOOLEAN("vehicle_riding", "riding", "universal", ALL, "Players standing on a vehicle are carried by it"),
 	RULE_CHOICE("weapon_set", "weapons", "universal", ALL, weapon_set_words, "The weapons on the map"),
 	RULE_CHOICE("vehicle_set", "vehicles", "universal", ALL, vehicle_set_words, "The vehicles on the map"),
 	RULE_CHOICE("goal_radar", NULL, "universal", ALL, goal_radar_words,
@@ -88,7 +97,8 @@ const struct server_rule_definition server_rule_definitions[] =
 		"A custom loadout's second weapon"),
 	RULE_BOOLEAN("no_map_weapons", NULL, "options", ALL, "No weapons lie on the map"),
 	RULE_CHOICE("team_vehicles", NULL, "options", ALL, team_vehicles_words,
-		"Each team's vehicles: the vehicle set's (gametype), every one the map places (pc), or the counts below (custom)"),
+		"Each team's vehicles: the vehicle set's (gametype), every one the map places (pc), the counts below (custom), "
+		"or a vehicle set by its name"),
 	RULE_INTEGER("warthogs", NULL, "options", ALL, 0, 4, "Warthogs of each team, with team_vehicles custom"),
 	RULE_INTEGER("ghosts", NULL, "options", ALL, 0, 4, "Ghosts of each team, with team_vehicles custom"),
 	RULE_INTEGER("scorpions", NULL, "options", ALL, 0, 4, "Scorpions of each team, with team_vehicles custom"),
@@ -96,6 +106,18 @@ const struct server_rule_definition server_rule_definitions[] =
 		"Rocket Warthogs of each team, with team_vehicles custom"),
 	RULE_INTEGER("banshees", NULL, "options", ALL, 0, 4, "Banshees of each team, with team_vehicles custom"),
 	RULE_INTEGER("gun_turrets", NULL, "options", ALL, 0, 4, "Gun turrets of each team, with team_vehicles custom"),
+	/* (blue's own, over team_vehicles' and the counts' for both: the vehicle
+	options' BLUE side) */
+	RULE_CHOICE("blue_team_vehicles", NULL, "options", ALL, team_vehicles_words,
+		"Blue's vehicles, when they are not red's: as team_vehicles"),
+	RULE_INTEGER("blue_warthogs", NULL, "options", ALL, 0, 4, "Blue's Warthogs, with blue_team_vehicles custom"),
+	RULE_INTEGER("blue_ghosts", NULL, "options", ALL, 0, 4, "Blue's Ghosts, with blue_team_vehicles custom"),
+	RULE_INTEGER("blue_scorpions", NULL, "options", ALL, 0, 4, "Blue's Scorpions, with blue_team_vehicles custom"),
+	RULE_INTEGER("blue_rocket_warthogs", NULL, "options", ALL, 0, 4,
+		"Blue's Rocket Warthogs, with blue_team_vehicles custom"),
+	RULE_INTEGER("blue_banshees", NULL, "options", ALL, 0, 4, "Blue's Banshees, with blue_team_vehicles custom"),
+	RULE_INTEGER("blue_gun_turrets", NULL, "options", ALL, 0, 4, "Blue's gun turrets, with blue_team_vehicles custom"),
+	RULE_BOOLEAN("force_team_spawns", NULL, "options", ALL, "Team games spawn each team on its own side, as CTF"),
 	RULE_BOOLEAN("hardcore", NULL, "options", ALL,
 		"Hardcore: no motion sensor, no aim assist, a kill restores the killer's health and shields"),
 
@@ -256,6 +278,29 @@ static int plain_name(const char *text)
 	return index > 0 && text[0] != '.';
 }
 
+/* the name of a gametype in the game's saved games, as a rotation writes
+it (server_gametype_saved_reference): letters, digits, "_", "-", "." and
+"%" with two hex digits for any other byte of its UTF-8 */
+static int saved_name(const char *text)
+{
+	int index;
+
+	for (index = 0; text[index]; index++)
+	{
+		unsigned char character = (unsigned char)text[index];
+
+		if (character == '%')
+		{
+			if (!isxdigit((unsigned char)text[index + 1]) || !isxdigit((unsigned char)text[index + 2]))
+				return 0;
+			index += 2;
+		}
+		else if (!(isalnum(character) || character == '_' || character == '-' || character == '.'))
+			return 0;
+	}
+	return index > 0;
+}
+
 /* a level's path: letters, digits, "_", "-", "." and backslashes, no part
 of it only dots (nothing leaves the maps folder) */
 static int level_path(const char *text)
@@ -335,7 +380,7 @@ int server_rotation_parse_entry(const char *text, int length, struct server_entr
 	{
 		char *map = copy;
 		size_t map_length;
-		char prefix[12] = "";
+		char prefix[12] = "", mcc_prefix[9] = "";
 
 		while (is_space(*map))
 			map++;
@@ -357,7 +402,17 @@ int server_rotation_parse_entry(const char *text, int length, struct server_entr
 		/* (custom_maps\ in any case) */
 		if (map_length >= 12 && map[11] == '\\')
 			snprintf(prefix, sizeof(prefix), "%.11s", map);
-		if (text_equal_case(prefix, "custom_maps"))
+		/* Explicit MCC names are resolved by the MCC adapter. Bare names
+		retain their Xbox/CE lookup order. */
+		if (map_length >= 9 && map[8] == '\\')
+			snprintf(mcc_prefix, sizeof(mcc_prefix), "%.8s", map);
+		if (text_equal_case(mcc_prefix, "mcc_maps"))
+		{
+			entry->map_kind = _server_map_mcc;
+			snprintf(entry->level, sizeof(entry->level), "%s", map);
+			snprintf(entry->map_name, sizeof(entry->map_name), "%s", strrchr(map, '\\') + 1);
+		}
+		else if (text_equal_case(prefix, "custom_maps"))
 		{
 			entry->map_kind = _server_map_custom;
 			memcpy(entry->map, "custom_maps", 11);
@@ -419,13 +474,18 @@ int server_rotation_parse_entry(const char *text, int length, struct server_entr
 		while (gametype_length && is_space(gametype[gametype_length - 1]))
 			gametype[--gametype_length] = 0;
 		if (!gametype_length || gametype_length >= sizeof(entry->gametype) ||
-			!plain_name(!strncmp(gametype, "file=", 5) ? gametype + 5 : gametype))
+			!(!strncmp(gametype, "saved=", 6) ? saved_name(gametype + 6) :
+				plain_name(!strncmp(gametype, "file=", 5) ? gametype + 5 : gametype)))
 		{
 			snprintf(entry->rejected, sizeof(entry->rejected), "\"%s\" is not a gametype's name", gametype);
 			return 1;
 		}
-		for (index = 0; gametype[index]; index++)
-			gametype[index] = (char)tolower((unsigned char)gametype[index]);
+		/* (a gametype in the game's saved games keeps its name's case) */
+		if (strncmp(gametype, "saved=", 6))
+		{
+			for (index = 0; gametype[index]; index++)
+				gametype[index] = (char)tolower((unsigned char)gametype[index]);
+		}
 		snprintf(entry->gametype, sizeof(entry->gametype), "%s", gametype);
 	}
 	/* the rules */
@@ -611,6 +671,36 @@ static int map_file(const char *folder, const char *name, char *path, int size)
 	return server_map_header(path, &version, &type);
 }
 
+/* a Custom Edition map's file in a maps folder (an absolute one) or one
+subfolder of it, the first found: the game finds custom_maps\<name> so
+(custom_edition_cache.c), and the menus list a set's folder's maps */
+static int custom_map_file(const char *folder, const char *name, char *path, int size)
+{
+	void *directory;
+	char entry[256];
+	int found = 0;
+
+	if (map_file(folder, name, path, size))
+		return 1;
+	directory = posix_directory_open(folder);
+	while (directory && !found && posix_directory_next(directory, entry, sizeof(entry)))
+	{
+		char nested[1024];
+		struct posix_file_information information;
+
+		if (entry[0] == '.' ||
+			snprintf(nested, sizeof(nested), "%s/%s", folder, entry) >= (int)sizeof(nested) ||
+			posix_stat(nested, &information) != 0 || !(information.flags & _posix_file_is_directory))
+		{
+			continue;
+		}
+		found = map_file(nested, name, path, size);
+	}
+	if (directory)
+		posix_directory_close(directory);
+	return found;
+}
+
 /* a campaign level plays only as co-op, a multiplayer map never so, and
 the main menu's not at all (the scenario's type in its header); the maps
 folder's an Xbox cache file, custom_maps' a Custom Edition one (version) */
@@ -650,6 +740,11 @@ void server_rotation_resolve(struct server_entry *entry)
 
 	if (entry->rejected[0])
 		return;
+	if (entry->map_kind == _server_map_mcc)
+	{
+		mcc_server_resolve(entry);
+		return;
+	}
 	custom_maps_folder(folder, sizeof(folder));
 	/* a name: the Xbox's map of it, else Custom Edition's */
 	if (entry->map_kind == _server_map_name)
@@ -660,10 +755,10 @@ void server_rotation_resolve(struct server_entry *entry)
 			server_rotation_check_kind(entry, type, version);
 			return;
 		}
-		if (map_file(folder, entry->map_name, path, sizeof(path)) ||
+		if (custom_map_file(folder, entry->map_name, path, sizeof(path)) ||
 			(platform_custom_edition_root()[0] &&
 				(snprintf(folder, sizeof(folder), "%s/maps", platform_custom_edition_root()),
-				map_file(folder, entry->map_name, path, sizeof(path)))))
+				custom_map_file(folder, entry->map_name, path, sizeof(path)))))
 		{
 			entry->map_kind = _server_map_custom;
 			snprintf(entry->level, sizeof(entry->level), "custom_maps\\%s", entry->map_name);
@@ -678,10 +773,10 @@ void server_rotation_resolve(struct server_entry *entry)
 	}
 	if (entry->map_kind == _server_map_custom)
 	{
-		if (map_file(folder, entry->map_name, path, sizeof(path)) ||
+		if (custom_map_file(folder, entry->map_name, path, sizeof(path)) ||
 			(platform_custom_edition_root()[0] &&
 				(snprintf(folder, sizeof(folder), "%s/maps", platform_custom_edition_root()),
-				map_file(folder, entry->map_name, path, sizeof(path)))))
+				custom_map_file(folder, entry->map_name, path, sizeof(path)))))
 		{
 			server_map_header(path, &version, &type);
 			server_rotation_check_kind(entry, type, version);
@@ -755,6 +850,7 @@ int server_maps_each(void (*each)(void *context, const char *name, const char *l
 	count = maps_in_folder(folder, 0, each, context);
 	custom_maps_folder(folder, sizeof(folder));
 	count += maps_in_folder(folder, 1, each, context);
+	count += mcc_server_maps_each(each, context);
 	return count;
 }
 

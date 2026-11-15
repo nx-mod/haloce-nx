@@ -512,9 +512,11 @@ static void update_hosting(const unsigned char *token, int player_count, int max
 {
 	/* (a dedicated server is listed by the master servers, not among the
 	games players host: server_master.c; server.list_on_brokers, until
-	there are masters, lists it here too) */
+	there are masters, lists it here too. Hosting from the menus is listed
+	here as a player's game is: a console has no publisher key for the
+	masters, and was listed nowhere) */
 	int want = token && lobby.public && config_boolean("network.public_lobby") &&
-		(!halo_server_mode() || config_boolean("server.list_on_brokers"));
+		(!halo_server_headless() || config_boolean("server.list_on_brokers"));
 
 	lobby.hosting_token_valid = token != NULL;
 	if (token)

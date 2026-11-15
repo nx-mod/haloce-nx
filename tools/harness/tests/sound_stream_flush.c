@@ -9,12 +9,16 @@ static unsigned long status[8],completed[8];
 #define mixer_lock 0
 #define pthread_mutex_lock(...) ((void)lock_depth++)
 #define pthread_mutex_unlock(...) ((void)lock_depth--)
+/* (port: this fork's mixer, which takes the lock between voices, and the
+ * game's taking of it counted for the mixer to let it in) */
+#define pthread_mutex_trylock(...) (lock_depth++,0)
+#define mixer_lock_take() pthread_mutex_lock(&mixer_lock)
 #define channel_get(i) (&dsound_globals.channels[i])
 #define sound_cache_sound_hardware_unlock(...) ((void)unlocks++)
 #define interrupt_time_error(...) CHECK(FALSE,"invalid completion")
 #define SetEvent(...) ((void)events++)
 #define resampler_reset(...) ((void)resets++)
-/* (the fade of what the voice would have played next: the mixer's, test_mixer.py) */
+/* The mixer harness checks fade samples; this fixture checks game/cache ownership. */
 #define voice_cut(...) ((void)0)
 static void dsound_channel_fill(short i) {
  (void)i; refills++;
@@ -28,6 +32,8 @@ static HRESULT stream_flush(IDirectSoundStream *object);
 #include "under_test.inc"
 static void callback(void *context,void *packet,DWORD result) {
  CHECK(lock_depth==0,"callback runs without the mixer lock");
+ /* (the mixer, which may run now, leaves a stream being flushed) */
+ CHECK(stream.flushing==(result==XMEDIAPACKET_STATUS_FLUSHED),"the stream is not marked as being flushed");
  dsound_channel_callback(context,packet,result);
 }
 static void reset(int count,int finished,int wrapped) {
@@ -63,6 +69,7 @@ int main(int argc,char **argv) {
  CASE("no-callback") { stream.callback=NULL; }
  channel_stop(0);
  CHECK(stream.packet_count==0 && stream.cursor==0 && !lock_depth,"flush empties stream and resets cursor");
+ CHECK(!stream.flushing,"the stream is left marked as being flushed");
  CHECK(refills==0 && resets==1,"cancellation never refills and resets resampling");
  for(int i=0;i<count;i++) {
   CHECK(status[i]==XMEDIAPACKET_STATUS_FLUSHED,"even finished packets are cancelled");

@@ -95,9 +95,16 @@ TOMLC17_DIR = Path("port/third_party/tomlc17")
 # (port/ps5/PS5.md, phase 2); the rest are replaced by port/ps5/host's
 # (and the server browser's requests to the master servers, host_https.c, on
 # posix_update.c's HTTPS as Android's; and a replay's records in the host's
-# memory, host_replay.c)
+# memory, host_replay.c; and the map lists' IMPORT, host_mcc_import.c)
 SHARED_HOST_FILES = ("host_arch.c", "host_common.c", "host_loader.c", "host_thread.c", "host_watch_hash.c",
-                     "host_https.c", "host_replay.c")
+                     "host_https.c", "host_replay.c", "host_mcc_import.c",
+                     # (an MCC map's conversion on the host's threads)
+                     "host_mcc_convert.c",
+                     # (an MCC package's fingerprint on the host's threads)
+                     "host_mcc_hash.c",
+                     # (the Steam Workshop screen's Steam client: steam_downloads.h)
+                     "steam_cm.c", "steam_crypto.c", "steam_depot.c", "steam_downloads.c", "steam_net.c",
+                     "steam_seal.c", "steam_unpack.c")
 # and the Vulkan renderer's host half (port/ps5/PS5.md, phase 4), less
 # host_vk_driver.c (port/ps5/host/host_vk_driver_ps5.c is the console's) and
 # the probe, host_vk_probe.c
@@ -108,7 +115,9 @@ SHARED_RENDERER_FILES = ("host_vk.c", "host_vk_data.c", "host_vk_draw.c", "host_
 # compiles them (port/ps5/PS5.md, phases 2 and 5), and the Linux updater's
 # HTTPS download, which the title's updater fetches with (phase 8:
 # port/ps5/host/host_update_ps5.c)
-POSIX_FILES = ("posix_files.c", "posix_net.c", "posix_upnp.c", "posix_dtls.c", "posix_update.c")
+POSIX_FILES = ("posix_files.c", "posix_net.c", "posix_upnp.c", "posix_dtls.c", "posix_update.c",
+               # (MCC's package previews and download staging)
+               "posix_mcc_preview.c", "posix_mcc_share.c")
 # (and posix_net.c's calls that take or give an address, which
 # host_net_ps5.c turns round between Winsock's layout and BSD's: phase 5)
 ADDRESS_WRAPS = ("posix_socket_bind", "posix_socket_connect", "posix_socket_accept", "posix_socket_sendto",
@@ -346,7 +355,9 @@ licence's text in licenses/ under its name:
 - kcp, MIT; Monocypher, CC0-1.0 or BSD-2-Clause (the network)
 - tomlc17, MIT (config.toml)
 - zlib, the zlib licence; musl's maths, MIT
-- stb_truetype and stb_vorbis, public domain or MIT
+- stb_truetype, stb_image and stb_vorbis, public domain or MIT
+- Zstandard's decoder, BSD-3-Clause; the LZMA SDK's decoder, public domain
+  (the Steam Workshop screen's downloads)
 - SMAA, MIT (anti-aliasing)
 - Overpass, SIL Open Font License 1.1 (the text); Lucide's icons, ISC
 """
@@ -398,7 +409,9 @@ RELEASE_LICENSES = (
     ("repo", "port/third_party/monocypher/LICENCE.md", "licenses/monocypher-LICENCE.md", None, "Monocypher"),
     ("repo", "port/third_party/tomlc17/LICENSE", "licenses/tomlc17-LICENSE.txt", None, "tomlc17"),
     ("repo", "port/third_party/musl-math/COPYRIGHT", "licenses/musl-math-COPYRIGHT.txt", None, "musl's maths"),
-    ("repo", "port/third_party/stb/LICENSE", "licenses/stb-LICENSE.txt", None, "stb_truetype"),
+    ("repo", "port/third_party/stb/LICENSE", "licenses/stb-LICENSE.txt", None, "stb_truetype and stb_image"),
+    ("repo", "port/third_party/zstd/LICENSE", "licenses/zstd-LICENSE.txt", None,
+     "Zstandard's decoder, the Steam Workshop screen's downloads"),
     ("repo", "port/third_party/stb_vorbis/LICENSE", "licenses/stb_vorbis-LICENSE.txt", None, "stb_vorbis"),
     ("repo", "port/third_party/smaa/LICENSE", "licenses/smaa-LICENSE.txt", None, "SMAA"),
     ("repo", "port/third_party/qrcodegen/LICENSE", "licenses/qrcodegen-LICENSE.txt", None,
@@ -699,6 +712,8 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
     host_sources = [*sorted((root / PORT_DIR / "host").glob("*.c")),
                     *(root / ANDROID_DIR / "host" / name for name in SHARED_HOST_FILES + SHARED_RENDERER_FILES),
                     *(root / LINUX_DIR / "src" / name for name in POSIX_FILES), root / TOMLC17_DIR / "tomlc17.c",
+                    # (the map lists' IMPORT's JSON reader: host_mcc_import.c)
+                    root / LINUX_DIR / "src" / "server_json.c",
                     guest["host_table_c"], import_stubs]
     for source in host_sources:
         obj = obj_dir / (source.name + ".o")
@@ -707,6 +722,14 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
             cflags += " " + shlex.quote(f'-DHALO_PS5_PINS="{pins_text()}"')
         if source.name == "host_vk_driver_ps5.c":
             cflags += " " + shlex.quote(f'-DHALO_PS5_RADV_PINS="{radv_pins_text()}"')
+        # (the Steam client's chunk unpacker: the LZMA SDK's and Zstandard's
+        # decoders, whose warnings are not ours)
+        if source.name == "steam_unpack.c":
+            cflags += " -w"
+        # (an MCC map's conversion: the guest's codecs, whose bcdec shifts
+        # signed values as the guest's -fwrapv defines)
+        if source.name == "host_mcc_convert.c":
+            cflags += " -fwrapv"
         if source.name == "tomlc17.c":
             # (the SDK's math.h: its isnan's _Generic names volatile types,
             # which an lvalue never has; the warning is the header's, in a

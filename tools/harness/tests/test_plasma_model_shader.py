@@ -28,7 +28,7 @@ _work = tempfile.TemporaryDirectory(prefix="plasma-model-shader-")
 
 
 def strip_includes(code):
-    return re.sub(r'^#include "?(xgpu|port_config|vk_shaders|dk_shaders|plasma_model_shader).*$', '', code, flags=re.M)
+    return re.sub(r'^#include "?(xgpu|port_config|vk_shaders|dk_shaders|plasma_model_shader|mcc_environment_shader).*$', '', code, flags=re.M)
 
 
 def xdk_constants():
@@ -79,6 +79,9 @@ def built(backend, fault=None):
     code = ("#define TEST_VULKAN 1\n" if backend == "vulkan" else "") + prelude()
     code += read(shaders).replace('#include "xgpu.h"', '') + "\n" + read("port/linux/include/plasma_model_shader.h")
     code += strip_includes(read("port/linux/src/plasma_model_shader.c")) + strip_includes(read(vertex))
+    # (MCC's environment lightmap pass, which the pixel generators call)
+    code += read("port/linux/include/mcc_environment_shader.h")
+    code += strip_includes(read("port/linux/src/mcc_environment_shader_gl.c"))
     if pixel:
         code += strip_includes(read(pixel))
     if fault:

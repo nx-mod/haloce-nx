@@ -22,6 +22,18 @@ long long posix_server_unix_milliseconds(void)
 	return clock_milliseconds;
 }
 
+/* a dedicated server's process, whose lines go to standard output (hosting
+from the menus, they go to the game's log: platform_log) */
+int halo_server_headless(void)
+{
+	return 1;
+}
+
+void platform_log(char const *format, ...)
+{
+	(void)format;
+}
+
 #include "under_test.inc"
 
 static void log_lines(int count)

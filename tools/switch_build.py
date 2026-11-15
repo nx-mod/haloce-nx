@@ -47,12 +47,15 @@ BUILD = Path("build/switch")
 # nx-mod fork identity: the nacp version and the main menu's news label
 # (source/interface/ui_widget_game_data_input_functions.c). One source of truth.
 NX_REPOSITORY = "nx-mod/haloce-nx"
-NX_VERSION = "1.6.0-nx"
+NX_VERSION = "1.7.0-nx"
 THIRD_PARTY = Path("build/android/third_party")
 TOML_DIR = Path("port/third_party/tomlc17")
 KCP_DIR = Path("port/third_party/kcp")
 EXPAT_DIR = Path("port/third_party/expat")
 MONOCYPHER_DIR = Path("port/third_party/monocypher")
+# the Steam Workshop screen's Steam client, in the host (port/android/host/steam_downloads.h)
+STEAM_HOST_FILES = ("steam_cm", "steam_crypto", "steam_depot", "steam_downloads", "steam_net", "steam_seal",
+                    "steam_unpack")
 MUSL_DIR = THIRD_PARTY / f"musl-{MUSL_VERSION}"
 SDL_DIR = THIRD_PARTY / "SDL3"
 
@@ -561,7 +564,9 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # the deko3d renderer's take their place, below
     opengl_only = {"d3d8_gl.c", "xbox_textures.c", "xgpu_post.c"}
     for source in sorted((LINUX_DIR / "src").glob("*.c")):
-        if source.name.startswith("posix_") or source.name in guest_host_only or source.name in opengl_only:
+        # (posix_server.c is the guest's: the clock and files of hosting from the
+        # menus, over the guest's own C library; the other posix_ files are the host's)
+        if (source.name.startswith("posix_") and source.name != "posix_server.c") or source.name in guest_host_only or source.name in opengl_only:
             continue
         objects.append(guest_object(source, platform_cflags))
     for source in hud_assets_build(n, "switch", gen_dir / "hud_hires_assets.c"):
@@ -706,9 +711,19 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         host_sources = [source for source in host_sources if source.name != "host_dk_compiler_stub.c"]
     host_sources += [
         LINUX_DIR / "src" / "posix_files.c",
+        # MCC's package previews and download staging (posix.h)
+        LINUX_DIR / "src" / "posix_mcc_preview.c", LINUX_DIR / "src" / "posix_mcc_share.c",
         TOML_DIR / "tomlc17.c",
         # a replay's records in the host's memory, as Android's and the PS5's
         ANDROID_PORT_DIR / "host" / "host_replay.c",
+        # the map lists' IMPORT, as Android's and the PS5's, and its JSON reader
+        ANDROID_PORT_DIR / "host" / "host_mcc_import.c", LINUX_DIR / "src" / "server_json.c",
+        # an MCC map's conversion on the host's threads, as Android's and the PS5's
+        ANDROID_PORT_DIR / "host" / "host_mcc_convert.c",
+        # an MCC package's fingerprint on the host's threads, as Android's and the PS5's
+        ANDROID_PORT_DIR / "host" / "host_mcc_hash.c",
+        # the Steam Workshop screen's Steam client, as Android's and the PS5's
+        *(ANDROID_PORT_DIR / "host" / f"{name}.c" for name in STEAM_HOST_FILES),
     ]
     # the port's zlib (inflate only, its names z_), for the high-res HUD's
     # PNGs, which the host decodes as a map loads (host_dk_hud.c)
@@ -748,8 +763,17 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
             cflags = " ".join([host_cflags, f"-I{ZLIB_DIR}", *ZLIB_DEFINES])
         if source in upnp_sources:
             cflags = upnp_cflags + (" -w" if source.name != "posix_upnp.c" else "")
-        if source.name == "host_dk_hud.c":
+        # (the port's zlib: the high-res HUD's PNGs, and the map lists' IMPORT's .zip files)
+        if source.name in ("host_dk_hud.c", "host_mcc_import.c", "steam_cm.c"):
             cflags = f"{host_cflags} -I{ZLIB_DIR}"
+        # (the Steam client's chunk unpacker: the LZMA SDK's and Zstandard's
+        # decoders, whose warnings are not ours)
+        if source.name == "steam_unpack.c":
+            cflags = f"{host_cflags} -I{ZLIB_DIR} -w"
+        # (an MCC map's conversion: the guest's codecs, whose bcdec shifts
+        # signed values as the guest's -fwrapv defines)
+        if source.name == "host_mcc_convert.c":
+            cflags = f"{host_cflags} -fwrapv"
         n.build(outputs=obj, rule="switch_host_cc", inputs=source, variables={"cflags": cflags},
                 implicit=[syscall_h])
         host_objects.append(obj)

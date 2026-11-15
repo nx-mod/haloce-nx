@@ -42,6 +42,10 @@ menu gets FRIENDLY FIRE too.
 #include "rasterizer/xbox/rasterizer_xbox_hardware_bitmaps.h"
 
 #include "halo_menus.h"
+#include "mcc_ui.h"
+#include "mcc_cache.h"
+#include "mcc_menu_preview.h"
+#include "custom_edition_cache.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -365,6 +369,13 @@ static char const *const port_function_names[] =
 	"port setup edit",
 	"port setup options init", "port setup options save",
 	"port map list back",
+	"port mcc solo folder back", "port mcc host folder back",
+	"port mcc share download", "port mcc share workshop", "port mcc share browser", "port mcc share cancel", "port mcc share closed",
+	"port mcc downloads open", "port mcc downloads previous", "port mcc downloads next", "port mcc downloads remove",
+	"port mcc import replace", "port mcc import keep", "port mcc import closed",
+	"port map import page closed",
+	/* the Steam Workshop (menu_functions.c's steam_*) */
+	"port steam init", "port steam close", "port steam choose", "port steam back",
 	"port pause end game", "port coop friendly fire",
 	"port coop begin", "port coop player 2 list initialize", "port coop player 2",
 	"port lobby open", "port lobby add player", "port lobby join", "port lobby leave",
@@ -417,6 +428,14 @@ static char const *const port_function_names[] =
 	"port browser sort increasing",
 	/* (a dedicated server's map vote: menu_functions.c) */
 	"port map vote open", "port map vote choose",
+	/* (Multiplayer's Host Server, its playlists, their builder and its
+	settings: menu_functions.c) */
+	"port host init", "port host choose", "port host edit", "port host delete", "port host maps init",
+	"port host map choose", "port host gametype choose", "port host entry remove", "port host entry up",
+	"port host entry down", "port host name edit", "port host save", "port host back",
+	"port host edit server name", "port host edit server password", "port host edit motd",
+	"port host map kind", "port host entry grab", "port host reorder", "port host remove all",
+	"port host round edit", "port host round add", "port host round back",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -442,6 +461,13 @@ static char const *const port_game_data_input_names[] =
 	"port renderer textbox",
 	/* (the main menu's Mods) */
 	"port mods update",
+	"port mcc share update", "port mcc share text",
+	"port mcc downloads update", "port mcc downloads text",
+	/* (the map lists' IMPORT's question: port/linux/src/mcc_import.c) */
+	"port mcc import update", "port mcc import text",
+	/* (the consoles' IMPORT's upload page: map_import_page.c) */
+	"port map import page update", "port map import page text",
+	"port steam update",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
 	/* (the gametype editor's description, with OPENCE OPTIONS' row) */
@@ -459,6 +485,10 @@ static char const *const port_game_data_input_names[] =
 	"port map vote update",
 	/* (HDR Calibration's patterns, drawn by the renderer) */
 	"port hdr calibration",
+	/* (Multiplayer's Host Server: its playlists, the builder's maps and
+	rounds, the gametypes, the settings' values typed) */
+	"port host playlists update", "port host maps update", "port host entries update",
+	"port host gametypes update", "port host settings update", "port host round update",
 };
 
 static struct
@@ -2036,6 +2066,9 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 	short grow = 0, box_height = 0;
 	boolean box_redrawn = FALSE, rebuilt;
 
+	/* MCC supplies its own Settings and game-options buttons. */
+	if (mcc_cache_tags_loaded())
+		return;
 	if (collection == NONE || quit_function == NONE)
 		return;
 	screens = tag_get('Soul', collection);
@@ -2598,6 +2631,17 @@ void menu_tags_loaded(
 	boolean campaign = game_map && full_screen_campaign_map();
 	boolean coop = game_map && network_coop_campaign_map();
 
+	/* MCC owns its pause menus and uses these native Settings screens.
+	Do not patch embedded MCC campaign widgets. */
+	if (mcc_cache_tags_loaded())
+	{
+		if (mcc_ui_settings_needed(map_name))
+		{
+			campaign = FALSE;
+			goto mcc_settings;
+		}
+		return;
+	}
 	/* (ui.map, and a multiplayer map: its pause menu's SETTINGS; a
 	campaign's too, single player's or network co-op's, which also gets
 	FRIENDLY FIRE) */
@@ -2606,6 +2650,7 @@ void menu_tags_loaded(
 	{
 		return;
 	}
+mcc_settings:
 	menus = halo_menus_load();
 	if (!menus)
 		return;
@@ -2615,6 +2660,9 @@ void menu_tags_loaded(
 	/* Settings must not pause the simulation in a network campaign. */
 	build.campaign = campaign && game_connection() == _game_connection_local &&
 		!network_game_is_active() && !game_is_cooperative();
+	/* MCC owns this decision; only its local campaign Settings pause time. */
+	if (mcc_cache_tags_loaded())
+		build.campaign = mcc_ui_settings_pause_game();
 	build.coop = coop;
 	widget_count = menus->widget_count;
 	build.widget_tags = malloc((widget_count + 1) * sizeof(long));
@@ -2703,6 +2751,10 @@ void menu_tags_loaded(
 		ingame_join_key_patch();
 		if (campaign)
 			pause_campaign_patch(instances);
+		/* MCC owns the pause layout; reuse only upstream's in-game Settings
+		filter and profile-save behavior, without patching map widgets. */
+		if (mcc_cache_tags_loaded())
+			pause_settings_patch();
 		pause_network_patch();
 		profile_settings_hide();
 		if (build.failed)
@@ -2745,6 +2797,7 @@ done:
 void menu_tags_unloaded(
 	void)
 {
+	mcc_menu_preview_clear();
 	if (menu_tags.loaded || menu_tags.block_count)
 		menu_tags_release();
 }
@@ -2782,6 +2835,11 @@ char const *pc_menus_root_name(
 boolean pc_menu_tag(
 	long tag_index)
 {
+	/* MCC's independently generated pause widgets use stock widget behavior. */
+	{
+		extern boolean mcc_pause_owns(long);
+		if (mcc_pause_owns(tag_index)) return FALSE;
+	}
 	return menu_tags.loaded && tag_index != NONE &&
 		DATUM_INDEX_TO_ABSOLUTE_INDEX(tag_index) >= menu_tags.original_count;
 }

@@ -682,7 +682,7 @@ void first_person_weapon_render_update(
 
 			/* port: hidden, too, while a replay's watched player looks
 			through a scope, as their own was */
-			if (visible && network_replay_playing() &&
+			if (visible && network_replay_viewing() &&
 				unit_get_zoom_level(first_person_weapon->unit_index)!=NONE)
 			{
 				visible= FALSE;
@@ -869,7 +869,7 @@ void first_person_weapons_update(
 		/* port: a replay's playback lets go of the arms of a player no longer
 		watched through their eyes (window 0's: main.c), as of a dead
 		player's */
-		if (player_index!=NONE || (local_player_index==0 && network_replay_playing()))
+		if (player_index!=NONE || (local_player_index==0 && network_replay_viewing()))
 		{
 			struct first_person_weapon *first_person_weapon= first_person_weapon_get(local_player_index);
 			long unit_index= player_index!=NONE ? player_get(player_index)->unit_index : NONE;
@@ -930,6 +930,9 @@ static void first_person_weapon_forget_weapon(
 
 	return;
 }
+
+/* port: MCC equipment replacement invalidates the cached weapon before deletion. */
+#include "mcc_first_person.inl" /* port: port/linux/game/mcc_first_person.inl */
 
 static void first_person_weapon_predict(
 	short local_player_index)
@@ -2461,7 +2464,7 @@ though they were local player 0; else the local player's own */
 static long first_person_weapon_player_index(
 	short local_player_index)
 {
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		return local_player_index==0 && network_replay_viewing_eyes() ?
 			network_replay_watched_player() :
@@ -2477,7 +2480,7 @@ director's */
 static boolean first_person_weapon_first_person(
 	short local_player_index)
 {
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		return local_player_index==0 && network_replay_viewing_eyes();
 	}

@@ -23,6 +23,7 @@ VK_HIRES says whether they are on).
 #include "vk_commands.h"
 #include "vk_device.h"
 #include "hud_hires.h"
+#include "mcc_texture_bridge.h"
 #include "dxt1_astc.h"
 #include "menu_files.h"
 #include "text_hires.h"
@@ -1388,6 +1389,119 @@ void halo_field_texture_forget(const void *texture)
 	}
 }
 
+/* ---------- MCC's textures (port/linux/src/mcc_texture_bridge.c)
+
+A registered header's Data is no address (0xffffffff): its pixels are the
+registry's, which never change while it is registered, so its image is made
+once (again for another palette) and never watched, and goes when the
+registration does (xgpu_mcc_texture_forget). Its entries are kept apart from
+the cache's buckets, by the header's own address, and never dropped for being
+idle. As xbox_textures.c's xgpu_mcc_texture_get. */
+
+#define MCC_TEXTURE_BUCKETS 64
+
+struct mcc_texture
+{
+	struct mcc_texture *next;
+	const DWORD *resource;
+	struct texture_entry entry;
+};
+
+static struct mcc_texture *mcc_textures[MCC_TEXTURE_BUCKETS];
+
+static struct mcc_texture **mcc_texture_link(const DWORD *resource)
+{
+	struct mcc_texture **link = &mcc_textures[(((unsigned long)resource >> 4) * 2654435761UL) % MCC_TEXTURE_BUCKETS];
+
+	while (*link && (*link)->resource != resource)
+		link = &(*link)->next;
+	return link;
+}
+
+/* the entry of a registered header, its image uploaded; NULL for any other header */
+static struct texture_entry *mcc_texture_entry(const DWORD *resource, const D3DCOLOR *palette)
+{
+	const void *pixels;
+	unsigned long bytes, hash;
+	long hud_asset;
+	struct xgpu_texture_description description;
+	struct mcc_texture **link, *mcc;
+	struct texture_entry *entry;
+
+	if (!mcc_texture_bridge_source(resource, &pixels, &bytes, &description, &hud_asset))
+		return NULL;
+	hash = description.format == 0x0b ? palette_hash(palette) : 0;
+	link = mcc_texture_link(resource);
+	mcc = *link;
+	if (!mcc)
+	{
+		uint32_t id = id_take();
+
+		if (!id)
+			return NULL;
+		mcc = calloc(1, sizeof(*mcc));
+		if (!mcc)
+		{
+			id_free[id_free_count++] = id;
+			return NULL;
+		}
+		mcc->resource = resource;
+		entry = &mcc->entry;
+		entry->data = resource[1];
+		entry->format_word = resource[3];
+		entry->size_word = resource[4];
+		entry->kind = description.cube_map ? VK_IMAGE_CUBE : description.depth > 1 ? VK_IMAGE_3D : VK_IMAGE_2D;
+		entry->address = (unsigned long)pixels;
+		entry->size = bytes;
+		entry->id = id;
+		entry->placeholder_asset = -1;
+		/* (no sheet of the Xbox's to draw larger) */
+		entry->upscale_checked = TRUE;
+		*link = mcc;
+	}
+	entry = &mcc->entry;
+	/* (the description again each time: the registry marks a meter's after it is made) */
+	entry->description = description;
+	entry->override = hud_asset >= 0 && high_res_hud() && !hud_image_failed(hud_asset) ? hud_asset : -1;
+	if (!entry->generation || entry->palette_hash != hash)
+	{
+		entry->generation = 1;
+		entry->palette_hash = hash;
+		if (entry->override < 0 || !hud_image_ready(entry->override))
+			upload(entry->id, entry->kind, &entry->description, (const unsigned char *)pixels, palette, 0);
+		else
+			/* (made when it is drawn without its replacement: the setting turned off) */
+			entry->generation = 0;
+	}
+	entry->last_used_frame = texture_frame;
+	return entry;
+}
+
+void xgpu_mcc_texture_forget(const DWORD *resource)
+{
+	struct mcc_texture **link = mcc_texture_link(resource);
+	struct mcc_texture *mcc = *link;
+
+	if (!mcc)
+		return;
+	*link = mcc->next;
+	{
+		struct vk_command_texture_free *command = vk_stream_command(VK_COMMAND_TEXTURE_FREE, sizeof(*command));
+
+		command->id = mcc->entry.id;
+	}
+	id_free[id_free_count++] = mcc->entry.id;
+	texture_drop_serial++;
+	free(mcc);
+}
+
+/* (made at their first draw) */
+BOOL xgpu_mcc_texture_prepare(const DWORD *resource)
+{
+	(void)resource;
+	return FALSE;
+}
+
 uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kind,
 	struct xgpu_texture_description *description)
 {
@@ -1403,6 +1517,14 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	static int no_cache = -1;
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	unsigned long watch_serial = memory_watch_serial();
+
+	/* (a registered MCC header: its Data is no address, and its image is kept apart) */
+	if (data == 0xffffffffUL)
+	{
+		struct texture_entry *mcc = mcc_texture_entry(resource, palette);
+
+		return mcc ? texture_entry_result(mcc, kind, description) : 0;
+	}
 
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&

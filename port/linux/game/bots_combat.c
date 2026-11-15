@@ -13,6 +13,8 @@ blow when near).
 
 #include "bots_combat.h"
 
+#include <math.h>
+
 #define TICKS BOTS_COMBAT_TICKS_PER_SECOND
 
 static float bots_combat_clamp(float value, float low, float high)
@@ -485,4 +487,31 @@ float bots_combat_high_ground(short skill, float height_above)
 		return credit < 6.0f ? credit : 6.0f;
 	}
 	return 0.0f;
+}
+
+short bots_combat_skill_pick(short pick, short level, float random_a, float random_b)
+{
+	long picked;
+
+	if (level < 0 || level >= NUMBER_OF_BOTS_SKILLS)
+		level = _bots_skill_normal;
+	switch (pick)
+	{
+	case _bots_skill_pick_random:
+		picked = (long)(random_a * (float)NUMBER_OF_BOTS_SKILLS);
+		break;
+	case _bots_skill_pick_normal:
+	{
+		/* (Box-Muller: a standard normal number, a level its spread) */
+		double a = random_a < 1e-6f ? 1e-6 : (double)random_a;
+		double normal = sqrt(-2.0 * log(a)) * cos(6.283185307179586 * (double)random_b);
+
+		picked = level + (long)floor(normal + 0.5);
+		break;
+	}
+	default:
+		picked = level;
+		break;
+	}
+	return (short)(picked < 0 ? 0 : picked >= NUMBER_OF_BOTS_SKILLS ? NUMBER_OF_BOTS_SKILLS - 1 : picked);
 }

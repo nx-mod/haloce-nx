@@ -40,7 +40,7 @@ def test_replay_playback_uses_its_camera():
     status, output = run(build('covenant_lighting', (('under_test.inc', code),)), 'replay')
     assert status == 0, output
     # without the playback's camera, the local player's (which playback lacks) is used
-    guard = 'if (network_replay_playing())'
+    guard = 'if (network_replay_viewing())'
     assert code.count(guard) == 1
     status, output = run(build('covenant_lighting', (('under_test.inc', code.replace(guard, 'if (0)')),)), 'replay')
     assert status == CHECK_FAILED, output

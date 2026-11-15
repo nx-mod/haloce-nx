@@ -231,7 +231,7 @@ static int reserve(uint64_t address, uint64_t size)
 	return -1;
 }
 
-static int crosses_custom_edition(uint64_t address, uint64_t size);
+static uint64_t crosses_custom_edition(uint64_t address, uint64_t size);
 
 static struct pool *pool_new(void)
 {
@@ -263,7 +263,7 @@ static struct pool *pool_new(void)
 		written with, to be moved, port/linux/include/halo_port_window.h) */
 		if (crosses_custom_edition(address, POOL_SIZE))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_custom_edition(address, POOL_SIZE);
 			continue;
 		}
 		if (reserve(address, POOL_SIZE) == 0)
@@ -302,9 +302,20 @@ uint32_t host_memory_window_size(void)
 reserves at its fixed address (HALO_GUEST_CUSTOM_EDITION_BASE): the window
 and a moved image are placed clear of it, so that Custom Edition maps can
 run wherever the Java runtime leaves that range free */
-static int crosses_custom_edition(uint64_t address, uint64_t size)
+/* and MCC's tag window (0x50000000, 64 MB, host_mcc_memory.c), for the same
+reason: where it cannot be held, an MCC map's tags go elsewhere and their
+addresses move (halo_port_window.h), which needs nothing else of the guest's
+in the range they were written for. Says where the first range crossed ends,
+to look past it; 0 where neither is */
+#define MCC_LINKED_BASE 0x50000000ULL
+#define MCC_LINKED_END 0x54000000ULL
+static uint64_t crosses_custom_edition(uint64_t address, uint64_t size)
 {
-	return address < HALO_GUEST_CUSTOM_EDITION_END && address + size > HALO_GUEST_CUSTOM_EDITION_BASE;
+	if (address < HALO_GUEST_CUSTOM_EDITION_END && address + size > HALO_GUEST_CUSTOM_EDITION_BASE)
+		return HALO_GUEST_CUSTOM_EDITION_END;
+	if (address < MCC_LINKED_END && address + size > MCC_LINKED_BASE)
+		return MCC_LINKED_END;
+	return 0;
 }
 
 #ifdef __ANDROID__
@@ -338,7 +349,7 @@ static uint64_t place_window(uint64_t size)
 			break;
 		if (crosses_custom_edition(candidate, size))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_custom_edition(candidate, size);
 			continue;
 		}
 		/* a mapping in the way here is one ART has just made, and may be
@@ -522,7 +533,7 @@ int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *bas
 			break;
 		if (crosses_custom_edition(candidate, round_up(size)))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_custom_edition(candidate, round_up(size));
 			continue;
 		}
 		if (reserve(candidate, round_up(size)) != 0)

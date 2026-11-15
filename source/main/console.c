@@ -403,7 +403,7 @@ void console_startup(
 	/* port: a dedicated server's init file is its own commands, which it
 	runs itself with its owner's role (port/linux/src/server_console.c),
 	and none of them (a password) is kept in the console's history */
-	if (halo_server_mode())
+	if (halo_server_headless())
 		return;
 	if (!game_in_editor())
 	{

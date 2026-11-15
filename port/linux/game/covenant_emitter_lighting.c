@@ -184,7 +184,7 @@ static int emitter_sample(long index, int component, struct emitter_sample *samp
 		sample->position = marker.matrix.position;
 	}
 	/* a replay's playback has no local player: its view is the replay's camera */
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		struct observer_result const *camera = network_replay_camera();
 		if (camera)

@@ -356,7 +356,7 @@ static boolean file_stamp(
 
 /* ---------- the catalog */
 
-short map_share_file_hash(
+static short map_share_file_hash_unlocked(
 	char const *path,
 	short kind)
 {
@@ -409,7 +409,7 @@ short map_share_file_hash(
 	return (short)(file - globals->files);
 }
 
-short map_share_file_hashed(
+static short map_share_file_hashed_unlocked(
 	char const *path,
 	short kind,
 	unsigned long size,
@@ -417,7 +417,7 @@ short map_share_file_hashed(
 	long piece_count,
 	byte const *hash)
 {
-	short index = map_share_file_hash(path, kind);
+	short index = map_share_file_hash_unlocked(path, kind);
 	struct map_share_file *file = map_share_file_get(index);
 
 	if (!file || file->size != size || piece_count != map_share_piece_count(size))
@@ -821,7 +821,7 @@ boolean map_share_level_name_version(
 
 /* ---------- the hashing thread's work */
 
-void map_share_files_update(
+static void map_share_files_update_unlocked(
 	void)
 {
 	struct map_share_files_globals *globals = &map_share_files_globals;
@@ -919,4 +919,43 @@ void map_share_files_update(
 		if (hash_job_start(_hash_job_name, path, NONE))
 			return;
 	}
+}
+
+/* ---------- the catalog's changes, under map_share.c's lock (its
+connections' thread reads the catalog's files as it serves them) */
+
+short map_share_file_hash(
+	char const *path,
+	short kind)
+{
+	short index;
+
+	map_share_lock();
+	index = map_share_file_hash_unlocked(path, kind);
+	map_share_unlock();
+	return index;
+}
+
+short map_share_file_hashed(
+	char const *path,
+	short kind,
+	unsigned long size,
+	byte const *piece_hashes,
+	long piece_count,
+	byte const *hash)
+{
+	short index;
+
+	map_share_lock();
+	index = map_share_file_hashed_unlocked(path, kind, size, piece_hashes, piece_count, hash);
+	map_share_unlock();
+	return index;
+}
+
+void map_share_files_update(
+	void)
+{
+	map_share_lock();
+	map_share_files_update_unlocked();
+	map_share_unlock();
 }

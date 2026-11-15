@@ -106,12 +106,40 @@ extern unsigned long platform_custom_edition_shift;
 #define PORT_CUSTOM_EDITION_MOVE(address) \
 	((void *)((byte *)(address) + PORT_CUSTOM_EDITION_SHIFT))
 
+/* An MCC map's tags, which it was written for at its own base (MCC Tool's is
+0x50000000; port/linux/game/mcc_cache_format.c reads it from the map), 64 MB:
+where that range is taken (on the Switch, by the program's main stack or its
+own code, placed before it runs), port/linux/game/mcc_cache.c puts the tags
+elsewhere, and its addresses move by the distance, as Custom Edition's do.
+Only while such a map is loaded with its tags moved (the shift is 0
+otherwise, and nothing is taken for one of its addresses). The tags are
+placed clear of every range the game data is linked for, and the hosts keep
+their own memory out of 0x50000000's (port/switch/host/host_memory.c), so a
+value already moved is never moved again */
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+extern unsigned long platform_mcc_shift;
+extern unsigned long platform_mcc_linked_base;
+#define PORT_MCC_SHIFT (platform_mcc_shift)
+#define PORT_MCC_LINKED_BASE (platform_mcc_linked_base)
+#else
+#define PORT_MCC_SHIFT 0UL
+#define PORT_MCC_LINKED_BASE 0UL
+#endif
+#define PORT_MCC_LINKED_BYTES 0x04000000UL
+
+#define PORT_MCC_IS_LINKED(address) \
+	(PORT_MCC_SHIFT && (unsigned long)(address) - PORT_MCC_LINKED_BASE < PORT_MCC_LINKED_BYTES)
+
+#define PORT_MCC_MOVE(address) \
+	((void *)((unsigned char *)(address) + PORT_MCC_SHIFT))
+
 /* an address the game data was written with, moved to where the window (or
-Custom Edition's tag cache) actually is. A value that is not one (already
-moved, or a count) is left alone, so this can be done where the value is used
-even if that happens more than once for the same field */
+Custom Edition's tag cache, or an MCC map's tags) actually is. A value that is
+not one (already moved, or a count) is left alone, so this can be done where
+the value is used even if that happens more than once for the same field */
 #define PORT_WINDOW_REBASE(address) \
 	(PORT_WINDOW_IS_LINKED(address) ? PORT_WINDOW_MOVE(address) : \
-	 PORT_CUSTOM_EDITION_IS_LINKED(address) ? PORT_CUSTOM_EDITION_MOVE(address) : (void *)(address))
+	 PORT_CUSTOM_EDITION_IS_LINKED(address) ? PORT_CUSTOM_EDITION_MOVE(address) : \
+	 PORT_MCC_IS_LINKED(address) ? PORT_MCC_MOVE(address) : (void *)(address))
 
 #endif /* __HALO_PORT_WINDOW_H */

@@ -7,20 +7,25 @@ A dedicated server's log (server_log.h).
 #include "server_log.h"
 #include "server_mode.h"
 
-#if HALO_SERVER_BUILD
+#if HALO_HOST_BUILD
 
 #include "server_json.h"
 #include "posix_server.h"
 
+void platform_log(char const *format, ...);
+
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static struct
 {
 	pthread_mutex_t lock;
-	struct server_log_line lines[SERVER_LOG_RING_SIZE];
+	/* (on the heap at the first line: some 850 KB, which the guest images
+	have not room for, tools/guest_image_check.py) */
+	struct server_log_line *lines;
 	unsigned long latest;
 	int json;
 	void (*listener)(struct server_log_line const *line);
@@ -64,8 +69,17 @@ static void server_log_fill(struct server_log_line *line, int level, const char 
 /* the line kept, and given to the listener; under the lock */
 static struct server_log_line const *server_log_keep(int level, const char *category, const char *text)
 {
+	static struct server_log_line unkept;
 	struct server_log_line *line;
 
+	if (!server_log_globals.lines)
+		server_log_globals.lines = calloc(SERVER_LOG_RING_SIZE, sizeof(*server_log_globals.lines));
+	/* (no memory for the ring: the line given on, not kept) */
+	if (!server_log_globals.lines)
+	{
+		server_log_fill(&unkept, level, category, text);
+		return &unkept;
+	}
 	server_log_globals.latest++;
 	line = &server_log_globals.lines[server_log_globals.latest % SERVER_LOG_RING_SIZE];
 	line->number = server_log_globals.latest;
@@ -108,7 +122,15 @@ static void server_log_write(int level, const char *category, const char *text, 
 		server_log_fill(&copy, level, category, text);
 	}
 	posix_server_utc_text((unsigned long)(copy.time / 1000), when, sizeof(when));
-	if (server_log_globals.json)
+	/* (hosting from the menus: the game's log, as its other lines; no
+	standard output anyone reads) */
+	if (!halo_server_headless())
+	{
+		platform_log("server: %s %s: %s",
+			level == _server_log_error ? "ERROR" : level == _server_log_warning ? "WARN" : "INFO", copy.category,
+			copy.text);
+	}
+	else if (server_log_globals.json)
 	{
 		struct server_json json;
 
@@ -170,7 +192,7 @@ int server_log_read(unsigned long after, struct server_log_line *lines, int maxi
 		server_log_globals.latest - SERVER_LOG_RING_SIZE + 1 : 1;
 	*missed = after + 1 < oldest ? oldest - (after + 1) : 0;
 	number = after + 1 < oldest ? oldest : after + 1;
-	for (; number <= server_log_globals.latest && count < maximum; number++)
+	for (; server_log_globals.lines && number <= server_log_globals.latest && count < maximum; number++)
 		lines[count++] = server_log_globals.lines[number % SERVER_LOG_RING_SIZE];
 	*next = number - 1;
 	pthread_mutex_unlock(&server_log_globals.lock);

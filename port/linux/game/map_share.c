@@ -39,6 +39,20 @@ A machine still downloading does not hold the lobby: the machines that
 have the map start, and it joins the game in progress once the download is
 done. The host does not drop a machine that says it is downloading, while
 what it says it has grows.
+
+The connections run on a thread of their own (map_share_connections_thread):
+they are read, answered, served and written as they are ready, at the
+upload's cap by the clock, never once a frame, and on through a map's load.
+The game's thread keeps the rest: the messages over the game's connection,
+the host's offers and sources, a download's start, end and installing, and
+the screen. One lock (map_share_lock) is held by each side while it looks at
+what they share; what the connections' thread needs to know of the game
+(whether this machine is the host, sends maps, its upload's cap, the game's
+machines' addresses) the game's thread writes down for it (map_share_facts).
+That thread uses plain sockets (xnet.c's Winsock), not the game's transport
+endpoints, which allocate from the game's own allocator; and what it meets
+that only the game's thread may act on (a download that cannot be written,
+a part file to open) it leaves for that thread.
 */
 
 /* ---------- headers */
@@ -66,9 +80,12 @@ what it says it has grows.
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "map_share.h"
+#include "mcc_share.h"
 #include "server_director.h"
 #include "../src/p2p.h"
 
+#include <pthread.h>
+#include <xtl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,6 +132,9 @@ enum
 	INPUT_BYTES = 0x6000,
 	OUTPUT_BYTES = 0xC000,
 	MAXIMUM_FRAME_BYTES = INPUT_BYTES - 4,
+	/* reads of a connection a call at most, while it has more (64 input
+	buffers: 1.5 MB) */
+	MAXIMUM_READS_PER_CALL = 64,
 	/* pieces asked of one connection at once, and of all of them; pieces
 	another machine may ask of this one at once */
 	REQUESTS_PER_CONNECTION = 2,
@@ -261,6 +281,9 @@ enum
 	_file_checking,
 	_file_transferring,
 	_file_complete,
+	/* its pieces' hashes come, its part file to be opened by the game's
+	thread (download_file_open may start the hashing thread) */
+	_file_opening,
 };
 
 enum
@@ -431,7 +454,10 @@ struct connection
 	short source;
 	/* IPv4, host byte order */
 	unsigned long address;
-	struct transport_endpoint *endpoint;
+	/* its socket (xnet.c's Winsock: no transport endpoint, which the game's
+	allocator makes, on the connections' thread) */
+	SOCKET socket;
+	boolean socket_open;
 	unsigned long created_at;
 	/* connected or taken (its hello due by HELLO_TIMEOUT), and when it last
 	sent a whole frame */
@@ -512,7 +538,8 @@ struct map_share_globals
 	struct connection connections[MAXIMUM_CONNECTIONS];
 	short next_connection;
 	struct host_machine machines[MAP_SHARE_MACHINES];
-	struct transport_endpoint *listener;
+	SOCKET listener;
+	boolean listener_open;
 	unsigned long listen_tried_at;
 	boolean listen_failed_logged;
 	/* the upload's allowance (bytes) and when it was topped up */
@@ -525,11 +552,64 @@ struct map_share_globals
 	/* the part file of a map a download stopped in, kept to be taken up
 	again (one alone: the one before is deleted) */
 	char kept_part[MAP_SHARE_PATH_SIZE];
+	/* what the game's thread knows of the game, written down for the
+	connections' thread (map_share_facts): whether this machine is the
+	host, sends the game's files, its upload's cap (bytes a second), and
+	the game's machines' addresses (the host's: host byte order) */
+	boolean facts_host;
+	boolean facts_sending;
+	long facts_upload_limit;
+	unsigned long facts_addresses[MAP_SHARE_MACHINES];
+	/* why the download cannot go on, met by the connections' thread, for
+	the game's thread to fail it with ("": nothing) */
+	char failure[160];
+	/* the connections' thread: started, and whether the game's thread
+	still runs the connections itself (it could not be started) */
+	boolean thread_started;
+	boolean thread_running;
 };
 
 /* ---------- globals */
 
 static struct map_share_globals map_share_globals;
+
+/* the lock both threads hold while they look at what they share
+(recursive: an entry point may reach another) */
+static pthread_mutex_t map_share_mutex;
+/* (made once: 0 not yet, 1 being made, 2 made. Not pthread_once, which the
+PS5's guest C library builds on cleanup handlers it has not) */
+static volatile long map_share_mutex_state;
+
+void map_share_lock(
+	void)
+{
+	if (map_share_mutex_state != 2)
+	{
+		if (__sync_bool_compare_and_swap(&map_share_mutex_state, 0, 1))
+		{
+			pthread_mutexattr_t attributes;
+
+			pthread_mutexattr_init(&attributes);
+			pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+			pthread_mutex_init(&map_share_mutex, &attributes);
+			pthread_mutexattr_destroy(&attributes);
+			__sync_synchronize();
+			map_share_mutex_state = 2;
+		}
+		else
+		{
+			while (map_share_mutex_state != 2)
+				__sync_synchronize();
+		}
+	}
+	pthread_mutex_lock(&map_share_mutex);
+}
+
+void map_share_unlock(
+	void)
+{
+	pthread_mutex_unlock(&map_share_mutex);
+}
 
 /* ---------- little-endian bytes */
 
@@ -641,10 +721,17 @@ boolean map_share_game_map_version(
 	return TRUE;
 }
 
-static boolean map_share_host(
+static boolean map_share_host_live(
 	void)
 {
 	return global_network_game_server_get() != NULL;
+}
+
+/* (as the game's thread last wrote it down: map_share_facts) */
+static boolean map_share_host(
+	void)
+{
+	return map_share_globals.facts_host;
 }
 
 /* the host's address as this client's connection has it (host byte
@@ -678,26 +765,65 @@ static unsigned long map_share_host_address(
 	return cached_address;
 }
 
-static long upload_limit(
+/* (map_share.h) the part of an upload's cap map uploads take now: all of it
+in the lobby and after a game, network.map_upload_in_game while one is
+being played here */
+long map_share_upload_percent(
 	void)
 {
-	boolean host = map_share_host();
+	if (!game_in_progress() || main_menu_is_active())
+		return 100;
+	return PIN(config_integer("network.map_upload_in_game"), 10, 100);
+}
+
+static long upload_limit_live(
+	void)
+{
+	boolean host = map_share_host_live();
 	long kilobytes = host ? config_integer("network.map_share_upload") : config_integer("network.map_seed_upload");
 
 	return PIN(kilobytes, MINIMUM_UPLOAD_KILOBYTES, host ? MAXIMUM_HOST_UPLOAD_KILOBYTES : MAXIMUM_SEED_UPLOAD_KILOBYTES) *
-		1024;
+		1024 / 100 * map_share_upload_percent();
 }
 
 /* whether this machine sends the game's files to the others: in a game on
 a Custom Edition map, as its settings say */
-static boolean map_share_sending(
+static boolean map_share_sending_live(
 	void)
 {
 	struct network_game *game = map_share_network_game();
 
 	if (!game || !custom_edition_level_name(game->map.name) || network_game_client_get_local_machine_index() == NONE)
 		return FALSE;
-	return map_share_host() ? config_boolean("network.map_share") != 0 : config_boolean("network.map_seed") != 0;
+	return map_share_host_live() ? config_boolean("network.map_share") != 0 : config_boolean("network.map_seed") != 0;
+}
+
+/* (the game's thread's own, as it last wrote it down) */
+static boolean map_share_sending(
+	void)
+{
+	return map_share_globals.facts_sending;
+}
+
+static long upload_limit(
+	void)
+{
+	return map_share_globals.facts_upload_limit;
+}
+
+/* (the game's thread, at each entry, under the lock) what the connections'
+thread needs to know of the game, written down for it */
+static void map_share_facts(
+	void)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	long index;
+
+	globals->facts_host = map_share_host_live();
+	globals->facts_sending = map_share_sending_live();
+	globals->facts_upload_limit = upload_limit_live();
+	for (index = 0; index < MAP_SHARE_MACHINES; index++)
+		globals->facts_addresses[index] = globals->facts_host ? network_game_server_machine_address(index) : 0;
 }
 
 /* a message's headers (voice_fill_header's) */
@@ -711,6 +837,7 @@ static void map_share_fill_header(
 	header->type = type;
 	header->count = 1;
 	header->game_time = game_in_progress() ? game_time_get() : 0;
+	header->checkpoint_epoch = 0; /* Transfers belong to the connection, not a checkpoint. */
 }
 
 /* a level name copied into a message's field, ended within it */
@@ -1038,8 +1165,8 @@ static void connection_free(
 			download->files[index].hashes_connection = NONE;
 		}
 	}
-	if (connection->endpoint)
-		delete_transport_endpoint(connection->endpoint);
+	if (connection->socket_open)
+		closesocket(connection->socket);
 	free(connection->input);
 	free(connection->output);
 	csmemset(connection, 0, sizeof(*connection));
@@ -1096,19 +1223,14 @@ static void connection_connect(
 	SOCKET socket_handle;
 
 	connection->address = address;
-	connection->endpoint = create_transport_endpoint(_map_share_endpoint_tcp);
-	if (!connection->endpoint)
-	{
-		connection_close(connection, "no endpoint");
-		return;
-	}
 	socket_handle = socket(AF_INET, SOCK_STREAM, 0);
 	if (socket_handle == INVALID_SOCKET)
 	{
 		connection_close(connection, "no socket");
 		return;
 	}
-	connection->endpoint->socket = (long)socket_handle;
+	connection->socket = socket_handle;
+	connection->socket_open = TRUE;
 	csmemset(&remote, 0, sizeof(remote));
 	remote.sin_family = AF_INET;
 	remote.sin_port = (word)SWAP2(MAP_SHARE_PORT);
@@ -1120,7 +1242,6 @@ static void connection_connect(
 		connection_close(connection, "could not connect");
 		return;
 	}
-	SET_FLAG(connection->endpoint->flags, _transport_endpoint_nonblocking_bit, TRUE);
 	connection->state = _connection_connecting;
 }
 
@@ -1129,7 +1250,7 @@ static boolean connection_connected(
 	struct connection *connection,
 	boolean *connected)
 {
-	SOCKET socket_handle = (SOCKET)connection->endpoint->socket;
+	SOCKET socket_handle = connection->socket;
 	fd_set writeable;
 	fd_set failed;
 	struct timeval timeout;
@@ -1151,8 +1272,6 @@ static boolean connection_connected(
 	if (!ready)
 		return FALSE;
 	*connected = !(failed.fd_count && __WSAFDIsSet(socket_handle, &failed));
-	if (*connected)
-		SET_FLAG(connection->endpoint->flags, _transport_endpoint_connected_bit, TRUE);
 	return TRUE;
 }
 
@@ -1165,7 +1284,7 @@ static boolean host_machine_address(
 
 	for (index = 0; index < MAP_SHARE_MACHINES; index++)
 	{
-		if (address && network_game_server_machine_address(index) == address)
+		if (address && map_share_globals.facts_addresses[index] == address)
 			return TRUE;
 	}
 	return FALSE;
@@ -1175,31 +1294,37 @@ static void connection_accept(
 	void)
 {
 	struct map_share_globals *globals = &map_share_globals;
-	struct transport_endpoint *endpoint;
 	struct connection *connection;
 	struct connection *oldest;
-	struct transport_address address;
 	short count;
 	short incoming;
 	short without_hello;
 	short index;
 
-	while (globals->listener && endpoint_readable(globals->listener, 0))
+	while (globals->listener_open)
 	{
+		struct sockaddr_in from;
+		int from_length = sizeof(from);
+		unsigned long nonblocking = 1;
+		unsigned long address;
+		SOCKET socket_handle;
+
 		count = 0;
 		incoming = 0;
 		without_hello = 0;
 		oldest = NULL;
-		endpoint = accept_endpoint(globals->listener);
-		if (!endpoint)
+		/* (xnet.c's accept: an internet play peer's stand-in reported as the
+		peer's address) */
+		csmemset(&from, 0, sizeof(from));
+		socket_handle = accept(globals->listener, (struct sockaddr *)&from, &from_length);
+		if (socket_handle == INVALID_SOCKET)
 			return;
-		csmemset(&address, 0, sizeof(address));
-		if (set_endpoint_blocking(endpoint, FALSE) != _transport_error_none ||
-			get_endpoint_address(endpoint, &address) != _transport_error_none ||
+		address = host_order(from.sin_addr.s_addr);
+		if (from.sin_family != AF_INET || ioctlsocket(socket_handle, FIONBIO, &nonblocking) != 0 ||
 			(!map_share_sending() && map_share_globals.download.state != _download_transferring) ||
-			(map_share_host() && !host_machine_address(address.address.long_words[0])))
+			(map_share_host() && !host_machine_address(address)))
 		{
-			delete_transport_endpoint(endpoint);
+			closesocket(socket_handle);
 			continue;
 		}
 		/* (a few from one address, and a few at once that have not said
@@ -1211,7 +1336,7 @@ static void connection_accept(
 
 			if (!other->used)
 				continue;
-			count += other->address == address.address.long_words[0];
+			count += other->address == address;
 			if (other->outgoing)
 				continue;
 			incoming++;
@@ -1232,11 +1357,12 @@ static void connection_accept(
 		connection = count < MAXIMUM_CONNECTIONS_PER_ADDRESS && incoming < MAXIMUM_INCOMING ? connection_new() : NULL;
 		if (!connection)
 		{
-			delete_transport_endpoint(endpoint);
+			closesocket(socket_handle);
 			continue;
 		}
-		connection->endpoint = endpoint;
-		connection->address = address.address.long_words[0];
+		connection->socket = socket_handle;
+		connection->socket_open = TRUE;
+		connection->address = address;
 		connection->state = _connection_open;
 		connection->outgoing = FALSE;
 		connection->opened_at = connection->created_at;
@@ -1252,40 +1378,42 @@ static void listener_update(
 	boolean want = map_share_network_game() &&
 		(map_share_sending() || globals->download.state == _download_transferring);
 	unsigned long now = system_milliseconds();
+	struct sockaddr_in address;
+	unsigned long nonblocking = 1;
+	int reuse = 1;
 
 	if (!want)
 	{
-		if (globals->listener)
+		if (globals->listener_open)
 		{
-			delete_transport_endpoint(globals->listener);
-			globals->listener = NULL;
+			closesocket(globals->listener);
+			globals->listener_open = FALSE;
 		}
 		return;
 	}
-	if (globals->listener || (globals->listen_tried_at && !elapsed(globals->listen_tried_at, now, LISTEN_RETRY_INTERVAL)))
+	if (globals->listener_open || (globals->listen_tried_at && !elapsed(globals->listen_tried_at, now, LISTEN_RETRY_INTERVAL)))
 		return;
 	globals->listen_tried_at = now | 1;
-	globals->listener = create_transport_endpoint(_map_share_endpoint_tcp);
-	if (globals->listener)
+	globals->listener = socket(AF_INET, SOCK_STREAM, 0);
+	if (globals->listener == INVALID_SOCKET)
+		return;
+	csmemset(&address, 0, sizeof(address));
+	address.sin_family = AF_INET;
+	address.sin_port = (word)SWAP2(MAP_SHARE_PORT);
+	address.sin_addr.s_addr = 0;
+	setsockopt(globals->listener, SOL_SOCKET, SO_REUSEADDR, (char const *)&reuse, sizeof(reuse));
+	if (bind(globals->listener, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+		listen(globals->listener, 8) != 0 || ioctlsocket(globals->listener, FIONBIO, &nonblocking) != 0)
 	{
-		struct transport_address address;
-
-		csmemset(&address, 0, sizeof(address));
-		address.address_length = IPV4_ADDRESS_LENGTH;
-		address.port = MAP_SHARE_PORT;
-		if (bind_endpoint(globals->listener, &address) != _transport_error_none ||
-			listen_endpoint(globals->listener) != _transport_error_none ||
-			set_endpoint_blocking(globals->listener, FALSE) != _transport_error_none)
+		if (!globals->listen_failed_logged)
 		{
-			if (!globals->listen_failed_logged)
-			{
-				error(_error_silent, "map sharing: cannot take connections on port %d (in use?)", MAP_SHARE_PORT);
-				globals->listen_failed_logged = TRUE;
-			}
-			delete_transport_endpoint(globals->listener);
-			globals->listener = NULL;
+			error(_error_silent, "map sharing: cannot take connections on port %d (in use?)", MAP_SHARE_PORT);
+			globals->listen_failed_logged = TRUE;
 		}
+		closesocket(globals->listener);
+		return;
 	}
+	globals->listener_open = TRUE;
 }
 
 /* ---------- the download */
@@ -1342,6 +1470,7 @@ static void download_end(
 	struct download *download = &globals->download;
 	short index;
 
+	globals->failure[0] = 0;
 	for (index = 0; index < MAXIMUM_CONNECTIONS; index++)
 	{
 		struct connection *connection = &globals->connections[index];
@@ -1462,7 +1591,7 @@ static byte files_wanted(
 	return wanted;
 }
 
-boolean map_share_download_begin(
+static boolean map_share_download_begin_unlocked(
 	char const *level_name,
 	unsigned long version,
 	char const *message)
@@ -1508,21 +1637,27 @@ boolean map_share_download_begin(
 	return TRUE;
 }
 
-boolean map_share_downloading(
+static boolean map_share_downloading_unlocked(
 	char const *level_name)
 {
 	struct download *download = &map_share_globals.download;
 
+	/* (MCC package sharing's download, a map of mcc_maps: mcc_share.c) */
+	if (mcc_share_game_downloading(level_name))
+		return TRUE;
 	return (download->state == _download_asking || download->state == _download_transferring) &&
 		level_name && !csstrcmp(download->level_name, level_name);
 }
 
-boolean map_share_holds_players(
+static boolean map_share_holds_players_unlocked(
 	void)
 {
 	struct download *download = &map_share_globals.download;
 	struct network_game *game = map_share_network_game();
 
+	/* (MCC package sharing's download: mcc_share.c) */
+	if (mcc_share_game_holds_players())
+		return TRUE;
 	/* (a client whose host has not named the game's map yet: whether this
 	machine has it is not known, and a game in progress would start it at
 	once. Asking: whether the game is in progress is not known yet) */
@@ -1816,7 +1951,10 @@ static void download_piece_had(
 	if (!file->stream || fseek(file->stream, (long)offset, SEEK_SET) != 0 ||
 		fwrite(data, 1, bytes, file->stream) != bytes)
 	{
-		download_fail("The map could not be written (is the disk full?).");
+		/* (failed by the game's thread: download_update) */
+		if (!map_share_globals.failure[0])
+			snprintf(map_share_globals.failure, sizeof(map_share_globals.failure),
+				"The map could not be written (is the disk full?).");
 		return;
 	}
 	file->have[piece >> 3] |= (byte)(1 << (piece & 7));
@@ -2499,24 +2637,26 @@ static void frame_hashes(
 	}
 	file->piece_hashes = file->hashes_coming;
 	file->hashes_coming = NULL;
-	if (!download_file_open(file, connection->download_file[body[0]]))
-		download_fail("The map could not be written to custom_maps.");
+	/* (its part file opened by the game's thread: download_update) */
+	file->state = _file_opening;
 }
 
 /* the frames read in, handled */
 static void connection_read(
 	struct connection *connection)
 {
+	long reads = 0;
+
 	for (;;)
 	{
-		long result;
+		long result = 0;
 		long offset = 0;
 
 		if (connection->input_size < INPUT_BYTES)
 		{
-			result = read_endpoint(connection->endpoint, connection->input + connection->input_size,
-				INPUT_BYTES - connection->input_size);
-			if (result == _transport_result_operation_would_block)
+			result = recv(connection->socket, (char *)connection->input + connection->input_size,
+				(int)(INPUT_BYTES - connection->input_size), 0);
+			if (result < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
 				result = 0;
 			else if (result <= 0)
 			{
@@ -2571,8 +2711,10 @@ static void connection_read(
 			csmemmove(connection->input, connection->input + offset, connection->input_size - offset);
 			connection->input_size -= offset;
 		}
-		/* (nothing more to read, or a frame not whole yet) */
-		if (connection->input_size < INPUT_BYTES)
+		/* (nothing more to read, or a frame not whole yet; while the last
+		read brought bytes, on: one buffer a call held a download to about a
+		block a frame, whatever the host sent) */
+		if (connection->input_size < INPUT_BYTES && (result <= 0 || ++reads >= MAXIMUM_READS_PER_CALL))
 			return;
 	}
 }
@@ -2583,9 +2725,9 @@ static void connection_flush(
 {
 	while (connection->output_size > 0)
 	{
-		long result = write_endpoint(connection->endpoint, connection->output, connection->output_size);
+		long result = send(connection->socket, (char const *)connection->output, (int)connection->output_size, 0);
 
-		if (result == _transport_result_operation_would_block)
+		if (result < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
 			return;
 		if (result <= 0)
 		{
@@ -2955,12 +3097,29 @@ static void download_update(
 			download_fail("The host did not answer the request for the map.");
 		return;
 	}
+	/* (met by the connections' thread) */
+	if (map_share_globals.failure[0])
+	{
+		char reason[sizeof(map_share_globals.failure)];
+
+		csmemcpy(reason, map_share_globals.failure, sizeof(reason));
+		map_share_globals.failure[0] = 0;
+		download_fail(reason);
+		return;
+	}
 	for (index = 0; index < download->file_count; index++)
 	{
 		struct download_file *file = &download->files[index];
 		byte *piece_hashes;
 		long piece_count;
 		unsigned long size;
+
+		/* (its pieces' hashes came on the connections' thread) */
+		if (file->state == _file_opening && !download_file_open(file, index))
+		{
+			download_fail("The map could not be written to custom_maps.");
+			return;
+		}
 
 		/* a part file checked: the pieces it has taken */
 		if (file->state == _file_checking &&
@@ -3064,21 +3223,27 @@ static boolean host_machine_downloading(
 		(!machine->offered || !elapsed(machine->advanced_at, now, DOWNLOADING_STALL_TIMEOUT));
 }
 
-boolean map_share_machine_downloading(
+static boolean map_share_machine_downloading_unlocked(
 	long machine_index)
 {
 	struct host_machine const *machine = host_machine_valid(machine_index) ?
 		&map_share_globals.machines[machine_index] : NULL;
 
+	/* (a machine fetching the game's MCC package: mcc_share.c) */
+	if (mcc_share_game_machine_active(machine_index))
+		return TRUE;
 	return machine && host_machine_downloading(machine);
 }
 
-boolean map_share_machine_needs_map(
+static boolean map_share_machine_needs_map_unlocked(
 	long machine_index)
 {
 	struct host_machine const *machine = host_machine_valid(machine_index) ?
 		&map_share_globals.machines[machine_index] : NULL;
 
+	/* (a machine fetching the game's MCC package: mcc_share.c) */
+	if (mcc_share_game_machine_needs_map(machine_index))
+		return TRUE;
 	return machine && !machine->downloaded && host_machine_downloading(machine);
 }
 
@@ -3421,7 +3586,7 @@ boolean map_share_handles_message(
 		header.type == _distributed_message_map_share_sources || header.type == _distributed_message_map_share_progress;
 }
 
-void map_share_handle_message(
+static void map_share_handle_message_unlocked(
 	long machine_index,
 	word const *message,
 	word size,
@@ -3505,7 +3670,9 @@ void map_share_handle_message(
 
 /* ---------- every frame */
 
-void map_share_update(
+void map_import_update(void);
+
+static void map_share_update_unlocked(
 	void)
 {
 	struct map_share_globals *globals = &map_share_globals;
@@ -3529,7 +3696,6 @@ void map_share_update(
 			if (globals->connections[index].used)
 				connection_close(&globals->connections[index], NULL);
 		}
-		connections_update();
 		listener_update();
 		csmemset(globals->machines, 0, sizeof(globals->machines));
 		return;
@@ -3539,12 +3705,189 @@ void map_share_update(
 		host_update();
 	download_update();
 	listener_update();
-	connection_accept();
-	connections_update();
-	serve_blocks();
+	/* (the connections' thread's, unless it could not be started) */
+	if (!globals->thread_running)
+	{
+		connection_accept();
+		connections_update();
+		serve_blocks();
+	}
+}
+
+static void map_share_render_unlocked(void);
+
+/* ---------- the connections' thread */
+
+/* each turn: the listener and the connections waited on (read, and written
+when there is something to write or a connect to finish) for at most a few
+milliseconds, then accepted, read, answered, served and written under the
+lock. A few milliseconds while pieces go either way (the upload's
+allowance tops up by the clock, so blocks go out as it does), longer while
+the connections are quiet; nothing open: a short sleep */
+enum
+{
+	CONNECTIONS_BUSY_WAIT = 3,
+	CONNECTIONS_QUIET_WAIT = 25,
+	CONNECTIONS_IDLE_SLEEP = 20,
+};
+
+static unsigned long __stdcall map_share_connections_thread(
+	void *unused)
+{
+	struct map_share_globals *globals = &map_share_globals;
+
+	(void)unused;
+	for (;;)
+	{
+		fd_set readable;
+		fd_set writeable;
+		struct timeval timeout;
+		boolean busy = FALSE;
+		short index;
+
+		readable.fd_count = 0;
+		writeable.fd_count = 0;
+		map_share_lock();
+		if (globals->listener_open)
+			readable.fd_array[readable.fd_count++] = globals->listener;
+		for (index = 0; index < MAXIMUM_CONNECTIONS && readable.fd_count < FD_SETSIZE; index++)
+		{
+			struct connection const *connection = &globals->connections[index];
+
+			if (!connection->used || !connection->socket_open)
+				continue;
+			readable.fd_array[readable.fd_count++] = connection->socket;
+			if (connection->state == _connection_connecting || connection->output_size)
+				writeable.fd_array[writeable.fd_count++] = connection->socket;
+			busy |= connection->serving_count || connection->request_count || connection->output_size ||
+				connection->state == _connection_connecting;
+		}
+		busy |= globals->download.state == _download_transferring;
+		map_share_unlock();
+		if (!readable.fd_count)
+		{
+			Sleep(CONNECTIONS_IDLE_SLEEP);
+			continue;
+		}
+		timeout.tv_sec = 0;
+		timeout.tv_usec = (busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_QUIET_WAIT) * 1000;
+		select(0, &readable, writeable.fd_count ? &writeable : NULL, NULL, &timeout);
+		map_share_lock();
+		connection_accept();
+		connections_update();
+		serve_blocks();
+		map_share_unlock();
+	}
+	return 0;
+}
+
+/* ---------- entries (the game's thread's: under the lock, what the
+connections' thread needs written down first) */
+
+void map_share_update(
+	void)
+{
+	struct map_share_globals *globals = &map_share_globals;
+
+	/* (MCC package sharing, a map of mcc_maps: mcc_share.c, whatever the Custom Edition maps do) */
+	mcc_share_game_update();
+	/* (the map lists' IMPORT: menu_functions.c, mcc_import.c) */
+	map_import_update();
+	map_share_lock();
+	map_share_facts();
+	if (!globals->thread_started)
+	{
+		globals->thread_started = TRUE;
+		globals->thread_running = CreateThread(NULL, 0, map_share_connections_thread, NULL, 0, NULL) != NULL;
+		if (!globals->thread_running)
+			error(_error_silent, "map sharing: no thread for the connections: they run once a frame");
+	}
+	map_share_update_unlocked();
+	map_share_unlock();
+}
+
+boolean map_share_download_begin(
+	char const *level_name,
+	unsigned long version,
+	char const *message)
+{
+	boolean result;
+
+	map_share_lock();
+	map_share_facts();
+	result = map_share_download_begin_unlocked(level_name, version, message);
+	map_share_unlock();
+	return result;
+}
+
+boolean map_share_downloading(
+	char const *level_name)
+{
+	boolean result;
+
+	map_share_lock();
+	result = map_share_downloading_unlocked(level_name);
+	map_share_unlock();
+	return result;
+}
+
+boolean map_share_holds_players(
+	void)
+{
+	boolean result;
+
+	map_share_lock();
+	map_share_facts();
+	result = map_share_holds_players_unlocked();
+	map_share_unlock();
+	return result;
+}
+
+boolean map_share_machine_downloading(
+	long machine_index)
+{
+	boolean result;
+
+	map_share_lock();
+	result = map_share_machine_downloading_unlocked(machine_index);
+	map_share_unlock();
+	return result;
+}
+
+boolean map_share_machine_needs_map(
+	long machine_index)
+{
+	boolean result;
+
+	map_share_lock();
+	result = map_share_machine_needs_map_unlocked(machine_index);
+	map_share_unlock();
+	return result;
+}
+
+void map_share_handle_message(
+	long machine_index,
+	word const *message,
+	word size,
+	boolean from_stream)
+{
+	map_share_lock();
+	map_share_facts();
+	map_share_handle_message_unlocked(machine_index, message, size, from_stream);
+	map_share_unlock();
 }
 
 void map_share_render(
+	void)
+{
+	/* (the MCC download's line: mcc_share.c's, not this lock's) */
+	mcc_share_game_render();
+	map_share_lock();
+	map_share_render_unlocked();
+	map_share_unlock();
+}
+
+static void map_share_render_unlocked(
 	void)
 {
 	struct download *download = &map_share_globals.download;

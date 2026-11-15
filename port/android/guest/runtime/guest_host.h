@@ -41,6 +41,11 @@ void host_set_tp(unsigned int thread);
 __guest_thread_start(thread); returns 0 or an errno value */
 int host_thread_create(unsigned int thread, unsigned int stack_size);
 
+/* MCC tag address space (host_mcc_memory.c), independent of the guest pools.
+Reserve returns the address or negative errno; release returns zero or negative errno. */
+long long host_mcc_memory_reserve(unsigned int address, unsigned int size);
+int host_mcc_memory_release(unsigned int address, unsigned int size);
+
 /* ---------- memory write tracking (port/linux/src/memory_watch.c) */
 
 void host_memory_watch_initialize(void);
@@ -225,5 +230,70 @@ many */
 unsigned int host_replay_store_read(unsigned int offset, unsigned int destination, unsigned int size);
 /* the kept replay let go */
 void host_replay_store_free(void);
+/* the map lists' IMPORT, done by the host (port/android/host/host_mcc_import.c, which
+says what each does; the guest's wrappers are port/linux/src/mcc_import.c's) */
+int host_mcc_import_start(unsigned int root, unsigned int custom_maps);
+int host_mcc_import_state(void);
+void host_mcc_import_progress(unsigned int text, unsigned int size);
+int host_mcc_import_question(unsigned int title, unsigned int title_size, unsigned int destination,
+	unsigned int destination_size);
+void host_mcc_import_answer(int question, int replace);
+int host_mcc_import_finish(unsigned int report, unsigned int size);
+/* an MCC map's conversion on the host's threads (port/android/host/host_mcc_convert.c, which says
+what each does; the guest's side is port/linux/game/mcc_convert.c's) */
+int host_mcc_convert_workers(void);
+int host_mcc_convert_submit(unsigned int request);
+int host_mcc_convert_wait(int id, int milliseconds);
+unsigned int host_mcc_convert_output_size(int id);
+void host_mcc_convert_release(int id);
+long long host_mcc_audio_append(int id, unsigned int slot);
+int host_mcc_audio_read(unsigned int slot, unsigned int offset, unsigned int size, unsigned int destination);
+void host_mcc_convert_reset(void);
+/* an MCC package's fingerprint (SHA-256 and CRC32) on the host's threads, with the CPU's
+instructions, and kept on the card (port/android/host/host_mcc_hash.c, which says what each
+does; the guest's side is port/linux/game/mcc_resource_check.inl's) */
+int host_mcc_hash_start(unsigned int request);
+int host_mcc_hash_wait(int id, int milliseconds, unsigned int result);
+void host_mcc_hash_cancel(int id);
+/* a file's plain SHA-256 and size, on the host's threads (an MCC package a host offers) */
+int host_sha256_start(unsigned int path);
+int host_sha256_poll(int id, unsigned int digest, unsigned int size);
+void host_sha256_cancel(int id);
+/* the Steam Workshop screen, whose Steam client is the host's (port/android/host/steam_downloads.c, which
+says what each does; the guest's wrappers are port/linux/src/steam_screen.c's) */
+void host_steam_open(unsigned int data_root);
+void host_steam_close(void);
+int host_steam_poll(void);
+int host_steam_count(void);
+int host_steam_view(void);
+int host_steam_first(void);
+void host_steam_set_first(int first);
+int host_steam_chosen(void);
+void host_steam_set_chosen(int chosen);
+void host_steam_row(int place, unsigned int name, int name_size, unsigned int state, int state_size);
+void host_steam_details(int place, unsigned int title, int title_size, unsigned int text, int text_size);
+void host_steam_choose(int place);
+int host_steam_back(void);
+int host_steam_picture(unsigned int key, unsigned int pixels);
+int host_steam_text_wanted(unsigned int initial, int initial_size, unsigned int secret);
+void host_steam_text_caption(int kind, unsigned int text, int text_size);
+void host_steam_text_typed(int kind, unsigned int text, int saved);
+int host_steam_qr(unsigned int modules, int capacity, unsigned int serial);
+/* a joiner's fetch of an MCC package's own bitmaps.map and sounds.map from
+the Workshop item it is, beside the host's download (steam_downloads.c):
+records of fixed-size fields (struct host_steam_fetch_file, _status there) */
+int host_steam_fetch_start(unsigned int data_root, unsigned int id_low, unsigned int id_high, unsigned int files,
+	int count);
+int host_steam_fetch_status(int index, unsigned int status);
+void host_steam_fetch_skip(int index);
+void host_steam_fetch_stop(void);
+/* MCC's shared sets (the base resources no host sends): queued when missing */
+int host_steam_shared_fetch(unsigned int data_root);
+int host_steam_shared_state(void);
+/* a whole Workshop item installed in mcc_maps for a joiner (a package with no resource maps of its own) */
+int host_steam_install_start(unsigned int data_root, unsigned int id_low, unsigned int id_high);
+int host_steam_install_status(void);
+/* files put in mcc_maps by the Steam downloader since the last ask (once) */
+int host_steam_take_rescan(void);
 
 #endif

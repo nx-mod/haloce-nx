@@ -244,6 +244,7 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     host_sources += [
         PORT_DIR / "host_main.c", PORT_DIR / "host_desktop.c", PORT_DIR / "host_vk_none.c",
         LINUX_DIR / "src" / "posix_files.c", LINUX_DIR / "src" / "posix_net.c",
+        LINUX_DIR / "src" / "posix_mcc_preview.c", LINUX_DIR / "src" / "posix_mcc_share.c",
         LINUX_DIR / "src" / "posix_trace_marker.c",
         TOML_DIR / "tomlc17.c",
     ]

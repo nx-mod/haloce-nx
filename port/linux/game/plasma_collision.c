@@ -690,9 +690,11 @@ static int pool_start(void)
 		struct trace_helper *helper = &pool.helper[pool.helpers];
 		pthread_attr_t attributes;
 		pthread_t thread;
-		helper->batch = (struct trace_batch *)calloc(1, sizeof(struct trace_batch));
+		/* (the game's malloc, which its free below takes - cseries.h - not calloc) */
+		helper->batch = (struct trace_batch *)malloc(sizeof(struct trace_batch));
 		if (!helper->batch)
 			break;
+		memset(helper->batch, 0, sizeof(struct trace_batch));
 		pthread_mutex_init(&helper->lock, NULL);
 		pthread_cond_init(&helper->wake, NULL);
 		pthread_attr_init(&attributes);

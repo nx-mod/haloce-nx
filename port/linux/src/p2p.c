@@ -117,8 +117,28 @@ enum
 	MAXIMUM_STUN_SERVERS = 4,
 	STREAM_BUFFER_SIZE = 16384,
 	STREAM_CHUNK_SIZE = 1024,
+	/* a stream's message between two SlipstreamCE machines: a KCP segment's
+	whole room (KCP_MTU less its 24-byte header, less the message's type).
+	An OpenCE peer closes a stream on a message over 1 + STREAM_CHUNK_SIZE,
+	so only to a peer known to be SlipstreamCE; any peer's is taken */
+	STREAM_CHUNK_LARGE = 1200 - 24 - 1,
+	/* a ping's and a pong's capability tail (after the type and the clock):
+	the magic, and the version */
+	SLIPSTREAM_PING_SIZE = 5 + 5,
 	/* the most unacknowledged messages a stream sends ahead */
 	STREAM_WINDOW = 128,
+	/* a map-sharing stream's (port P2P_MAP_SHARE_PORT): its window sized to
+	the upload's cap over the round trip, within these; all of them together
+	within BULK_WINDOW_BUDGET messages (each is a KCP segment kept until it
+	is acknowledged: about 1.2 KB); its receive window, and the received
+	data it holds for the local connection */
+	BULK_WINDOW_MINIMUM = 32,
+	BULK_WINDOW_MAXIMUM = 1024,
+	BULK_WINDOW_BUDGET = 4096,
+	BULK_RECEIVE_WINDOW = 1024,
+	BULK_BUFFER_SIZE = 256 * 1024,
+	/* the chunks it reads from the local connection a pass */
+	BULK_READS = 64,
 	KCP_MTU = 1200,
 
 	/* milliseconds */
@@ -146,8 +166,11 @@ enum
 	UPNP_JOIN_DELAY = 5000,
 	UPNP_RENEW_INTERVAL = 30 * 60 * 1000,
 	UPNP_RETRY_INTERVAL = 5 * 60 * 1000,
-	/* how long the game's exit waits for a request under way */
+	/* how long the game's exit waits for a request under way (a router's
+	request has no deadline of its own), and for the thread's last pass (it
+	may be waiting for a program at its start, p2p_register_url_scheme) */
 	UPNP_RELEASE_WAIT = 3000,
+	P2P_STOP_WAIT = 3000,
 
 	/* where a running copy of the game takes invites from another one
 	started to open a link (127.0.0.1), sealed with a key of the user's */
@@ -219,6 +242,10 @@ struct peer
 	/* the pings answered, and the shortest round trip of them */
 	int pongs;
 	unsigned long shortest_round_trip;
+	/* a SlipstreamCE machine (its pings and pongs carry SLIPSTREAM_MAGIC,
+	which an OpenCE peer's pong does not echo): its streams take full-size
+	messages (stream_chunk_size) */
+	int slipstream;
 	/* a public game's host probed for its ping (p2p_probe_start): none of
 	its traffic is the game's */
 	int probe;
@@ -291,6 +318,18 @@ struct stream
 	int remote_closed;
 	unsigned long created_time;
 	unsigned long closed_time;
+	/* a map-sharing stream (stream_tune): its window now, the share of the
+	ideal it may have (per mille: halved when the round trip grows or
+	resends rise, grown back slowly), the least round trip seen, the
+	resends counted at the last look, and when it was looked at; its larger
+	buffer for received data (pending's in its place) */
+	int bulk;
+	int window;
+	int share;
+	IINT32 base_rtt;
+	IUINT32 seen_xmit;
+	unsigned long tuned_time;
+	unsigned char *bulk_buffer;
 	unsigned char pending[STREAM_BUFFER_SIZE];
 	int pending_size;
 };
@@ -338,6 +377,10 @@ void p2p_profile_unlock(void)
 static struct
 {
 	int running;
+	int stopping;
+	int exit_registered;
+	HANDLE thread;
+	HANDLE upnp_thread;
 	unsigned long local_address;
 	int tunnel_socket;
 	unsigned short tunnel_port;
@@ -375,8 +418,6 @@ static struct
 	int hosting_lan_only;
 	int has_token;
 	unsigned char token[P2P_TOKEN_SIZE];
-	/* whether the server browser's exit hook is set (lobby_quit) */
-	int lobby_quit_registered;
 	/* whether the server browser listed this token (p2p_lobby.c): going
 	private makes a new one */
 	int token_listed;
@@ -438,8 +479,6 @@ static struct
 	int upnp_working;
 	int upnp_asked;
 	int upnp_forwarded;
-	int upnp_release_registered;
-	int upnp_released;
 	struct p2p_candidate upnp_candidate;
 	unsigned long upnp_time;
 	/* network.public_address, looked up (an address and port joiners reach
@@ -450,7 +489,7 @@ static struct
 	char public_text[256];
 	unsigned long public_time;
 	int public_logged;
-} p2p = { 0, 0, -1, 0, -1, .hosting_socket = -1 };
+} p2p = { .tunnel_socket = -1, .handoff_socket = -1, .hosting_socket = -1 };
 
 /* the proxy (its index + 1) with each local port (all of theirs are on
 p2p.local_address) */
@@ -912,14 +951,26 @@ static void peer_send(struct peer *peer, const unsigned char *inner, int size)
 	peer->sent_time = p2p_now();
 }
 
+/* 'SLP' and the version, after a ping's or pong's clock: a SlipstreamCE
+machine's. An OpenCE peer reads only the first five bytes of either and
+echoes five, so its pongs never carry it */
+static unsigned char const slipstream_magic[5] = { 'S', 'L', 'P', 1, 0 };
+
 static void peer_ping(struct peer *peer, const struct p2p_candidate *to)
 {
-	unsigned char inner[5];
+	unsigned char inner[SLIPSTREAM_PING_SIZE];
 	unsigned int now = (unsigned int)p2p_now();
 
 	inner[0] = _packet_ping;
 	memcpy(inner + 1, &now, 4);
+	memcpy(inner + 5, slipstream_magic, sizeof(slipstream_magic));
 	peer_send_to(peer, to, inner, sizeof(inner));
+}
+
+/* (a ping's or pong's) whether it carries the SlipstreamCE tail */
+static int slipstream_tail(const unsigned char *inner, int inner_size)
+{
+	return inner_size >= SLIPSTREAM_PING_SIZE && !memcmp(inner + 5, slipstream_magic, 4);
 }
 
 static void stream_free(struct stream *stream);
@@ -2052,8 +2103,9 @@ void p2p_socket_port(int socket, int stream, int listening, unsigned short port)
 		entry->listening |= (unsigned char)(listening != 0);
 	}
 	/* the game listens for connections while it hosts (on any port but map
-	sharing's, which every player of a game listens on) */
-	if (stream && listening && port != network_short(P2P_MAP_SHARE_PORT))
+	sharing's, which every player of a game listens on, and the MCC fast
+	path's, mcc_fast.c) */
+	if (stream && listening && port != network_short(P2P_MAP_SHARE_PORT) && port != network_short(P2P_MCC_FAST_PORT))
 		p2p.hosting_socket = socket;
 	/* (and no stand-in that closed has the port now) */
 	forget_closed(stream != 0, port);
@@ -2224,6 +2276,82 @@ static struct stream *stream_new(int peer_index, IUINT32 conversation)
 	return NULL;
 }
 
+/* where a stream holds the data received for its local connection, and how much */
+static unsigned char *stream_buffer(struct stream *stream)
+{
+	return stream->bulk_buffer ? stream->bulk_buffer : stream->pending;
+}
+
+static int stream_capacity(struct stream const *stream)
+{
+	return stream->bulk_buffer ? BULK_BUFFER_SIZE : STREAM_BUFFER_SIZE;
+}
+
+/* a map-sharing stream: its larger receive window and buffer (kept small
+when the buffer cannot be had); its send window is stream_tune's */
+static void stream_make_bulk(struct stream *stream)
+{
+	if (stream->bulk)
+		return;
+	stream->bulk = 1;
+	stream->window = STREAM_WINDOW;
+	stream->share = 1000;
+	stream->tuned_time = p2p_now();
+	stream->bulk_buffer = malloc(BULK_BUFFER_SIZE);
+	if (stream->bulk_buffer && stream->pending_size)
+		memcpy(stream->bulk_buffer, stream->pending, (size_t)stream->pending_size);
+	ikcp_wndsize(stream->kcp, BULK_WINDOW_MAXIMUM, stream->bulk_buffer ? BULK_RECEIVE_WINDOW : 256);
+}
+
+/* (each pass) a map-sharing stream's send window: what its upload's cap
+needs over twice the round trip, within BULK_WINDOW_MINIMUM..MAXIMUM and its
+part of BULK_WINDOW_BUDGET, times its share. The uploader paces what it
+sends at the cap (KCP's congestion control is off: nodelay), so a larger
+window only stops limiting it; a round trip well above the least seen (the
+path's buffers filling) or resends climbing halve the share, once a round
+trip, and it grows back a twentieth a round trip */
+static void stream_tune(struct stream *stream, int bulk_count)
+{
+	unsigned long now = p2p_now();
+	IINT32 rtt = stream->kcp->rx_srtt > 0 ? stream->kcp->rx_srtt : 100;
+	long kilobytes = p2p.hosting ? config_integer("network.map_share_upload") : config_integer("network.map_seed_upload");
+	long ideal, budget, window;
+	IUINT32 resent = stream->kcp->xmit - stream->seen_xmit;
+
+	if (!elapsed(stream->tuned_time, (unsigned long)(rtt > 50 ? rtt : 50)))
+		return;
+	stream->tuned_time = now;
+	stream->seen_xmit = stream->kcp->xmit;
+	if (stream->kcp->rx_srtt > 0 && (!stream->base_rtt || stream->kcp->rx_srtt < stream->base_rtt))
+		stream->base_rtt = stream->kcp->rx_srtt;
+	if (stream->base_rtt && (rtt > stream->base_rtt * 2 && rtt > stream->base_rtt + 50))
+		stream->share = stream->share / 2 > 125 ? stream->share / 2 : 125;
+	else if (resent > (IUINT32)(stream->window / 8 + 2))
+		stream->share = stream->share / 2 > 125 ? stream->share / 2 : 125;
+	else if (stream->share < 1000)
+		stream->share = stream->share + 50 < 1000 ? stream->share + 50 : 1000;
+	/* (the cap in KCP messages a second, over twice the round trip) */
+	ideal = (kilobytes > 0 ? kilobytes : 1024) * 1024 / STREAM_CHUNK_SIZE * 2 * rtt / 1000;
+	budget = BULK_WINDOW_BUDGET / (bulk_count > 0 ? bulk_count : 1);
+	window = ideal < budget ? ideal : budget;
+	if (window > BULK_WINDOW_MAXIMUM)
+		window = BULK_WINDOW_MAXIMUM;
+	window = window * stream->share / 1000;
+	if (window < BULK_WINDOW_MINIMUM)
+		window = BULK_WINDOW_MINIMUM;
+	if (window != stream->window)
+	{
+		stream->window = (int)window;
+		ikcp_wndsize(stream->kcp, (int)window, 0);
+	}
+}
+
+/* the messages a stream may have waiting to be acknowledged before it reads more */
+static int stream_window(struct stream const *stream)
+{
+	return stream->bulk ? stream->window : STREAM_WINDOW;
+}
+
 static void stream_free(struct stream *stream)
 {
 	/* (the game may not have taken the connection made for it yet) */
@@ -2232,15 +2360,23 @@ static void stream_free(struct stream *stream)
 	close_socket(&stream->socket);
 	if (stream->kcp)
 		ikcp_release(stream->kcp);
+	free(stream->bulk_buffer);
 	p2p.finished[p2p.finished_next++ % 16] = stream->conversation;
 	memset(stream, 0, offsetof(struct stream, pending));
 	stream->pending_size = 0;
 	stream->socket = -1;
 }
 
+/* the most a stream's message carries: full-size between two SlipstreamCE
+machines' map sharing streams, else what every peer takes */
+static int stream_chunk_size(struct stream const *stream)
+{
+	return stream->bulk && p2p.peers[stream->peer].slipstream ? STREAM_CHUNK_LARGE : STREAM_CHUNK_SIZE;
+}
+
 static void stream_message(struct stream *stream, unsigned char type, const void *data, int size)
 {
-	unsigned char message[1 + STREAM_CHUNK_SIZE];
+	unsigned char message[1 + STREAM_CHUNK_LARGE];
 
 	message[0] = type;
 	memcpy(message + 1, data, (size_t)size);
@@ -2299,6 +2435,9 @@ static void listener_readable(struct listener *listener)
 		}
 		stream->socket = socket;
 		stream->state = _stream_open_state;
+		if (listener->remote_port == network_short(P2P_MAP_SHARE_PORT) ||
+			listener->remote_port == network_short(P2P_MCC_FAST_PORT))
+			stream_make_bulk(stream);
 		put_short(open, listener->remote_port);
 		put_short(open + 2, from.sin_port);
 		stream_message(stream, _stream_open, open, sizeof(open));
@@ -2313,6 +2452,8 @@ static void stream_opened(struct stream *stream, const unsigned char *data, int 
 	if (stream->state != _stream_awaiting_open || size < 4)
 		return;
 	stream->remote_port = get_short(data + 2);
+	if (get_short(data) == network_short(P2P_MAP_SHARE_PORT) || get_short(data) == network_short(P2P_MCC_FAST_PORT))
+		stream_make_bulk(stream);
 	/* only to where the game listens: nothing else here is the peer's to
 	reach */
 	if (game_port_open(1, get_short(data)))
@@ -2373,9 +2514,11 @@ static void stream_received(struct peer *peer, const unsigned char *data, int si
 
 static void stream_flush_pending(struct stream *stream)
 {
+	unsigned char *buffer = stream_buffer(stream);
+
 	while (stream->pending_size > 0 && stream->socket >= 0 && stream->state == _stream_open_state)
 	{
-		int sent = posix_socket_send(stream->socket, stream->pending, stream->pending_size, 0);
+		int sent = posix_socket_send(stream->socket, buffer, stream->pending_size, 0);
 
 		if (sent < 0)
 		{
@@ -2383,14 +2526,14 @@ static void stream_flush_pending(struct stream *stream)
 				stream_local_closed(stream);
 			return;
 		}
-		memmove(stream->pending, stream->pending + sent, (size_t)(stream->pending_size - sent));
+		memmove(buffer, buffer + sent, (size_t)(stream->pending_size - sent));
 		stream->pending_size -= sent;
 	}
 }
 
 static void stream_update(struct stream *stream)
 {
-	unsigned char message[1 + STREAM_CHUNK_SIZE];
+	unsigned char message[1 + STREAM_CHUNK_LARGE];
 
 	ikcp_update(stream->kcp, p2p_now());
 	/* what the peer sent */
@@ -2408,7 +2551,7 @@ static void stream_update(struct stream *stream)
 		}
 		if (size <= 0)
 			break;
-		if (size - 1 > STREAM_BUFFER_SIZE - stream->pending_size)
+		if (size - 1 > stream_capacity(stream) - stream->pending_size)
 			break;
 		size = ikcp_recv(stream->kcp, (char *)message, size);
 		if (size <= 0)
@@ -2421,7 +2564,7 @@ static void stream_update(struct stream *stream)
 		case _stream_data:
 			if (stream->socket >= 0)
 			{
-				memcpy(stream->pending + stream->pending_size, message + 1, (size_t)(size - 1));
+				memcpy(stream_buffer(stream) + stream->pending_size, message + 1, (size_t)(size - 1));
 				stream->pending_size += size - 1;
 			}
 			break;
@@ -2448,12 +2591,14 @@ static void stream_update(struct stream *stream)
 
 static void stream_readable(struct stream *stream)
 {
-	unsigned char buffer[STREAM_CHUNK_SIZE];
+	unsigned char buffer[STREAM_CHUNK_LARGE];
+	int chunk = stream_chunk_size(stream);
 	int count;
 
-	for (count = 0; count < 8 && ikcp_waitsnd(stream->kcp) < STREAM_WINDOW && stream->socket >= 0; count++)
+	for (count = 0; count < (stream->bulk ? BULK_READS : 8) && ikcp_waitsnd(stream->kcp) < stream_window(stream) &&
+		stream->socket >= 0; count++)
 	{
-		int size = posix_socket_recv(stream->socket, buffer, sizeof(buffer), 0);
+		int size = posix_socket_recv(stream->socket, buffer, chunk, 0);
 
 		if (size == 0 || (size < 0 && !would_block()))
 		{
@@ -2523,11 +2668,21 @@ static void tunnel_received(const unsigned char *packet, int size, const struct 
 		if (inner_size >= 5)
 		{
 			struct p2p_candidate to;
+			unsigned char pong[SLIPSTREAM_PING_SIZE];
 
-			inner[0] = _packet_pong;
+			if (slipstream_tail(inner, inner_size) && !peer->slipstream)
+			{
+				peer->slipstream = 1;
+				platform_log("Internet play: %s is a SlipstreamCE machine", peer->name);
+			}
+			/* (the clock echoed, and this machine's tail: an OpenCE peer reads
+			five bytes) */
+			pong[0] = _packet_pong;
+			memcpy(pong + 1, inner + 1, 4);
+			memcpy(pong + 5, slipstream_magic, sizeof(slipstream_magic));
 			to.address = from->sin_addr.s_addr;
 			to.port = from->sin_port;
-			peer_send_to(peer, &to, inner, 5);
+			peer_send_to(peer, &to, pong, sizeof(pong));
 		}
 		break;
 	case _packet_pong:
@@ -2537,6 +2692,11 @@ static void tunnel_received(const unsigned char *packet, int size, const struct 
 			unsigned int sent;
 
 			memcpy(&sent, inner + 1, 4);
+			if (slipstream_tail(inner, inner_size) && !peer->slipstream)
+			{
+				peer->slipstream = 1;
+				platform_log("Internet play: %s is a SlipstreamCE machine", peer->name);
+			}
 			peer->round_trip = (unsigned int)p2p_now() - sent;
 			if (!peer->pongs++ || peer->round_trip < peer->shortest_round_trip)
 				peer->shortest_round_trip = peer->round_trip;
@@ -3385,7 +3545,7 @@ void p2p_set_game_player_counts(int count, int maximum)
 /* ---------- UPnP (posix_upnp.c): the router forwards a port here */
 
 /* the router asked, on a thread of its own (it takes seconds) */
-static void *upnp_thread(void *unused)
+static DWORD WINAPI upnp_thread(void *unused)
 {
 	unsigned short port, previous_port = 0;
 	posix_ulong address = 0;
@@ -3427,33 +3587,34 @@ static void *upnp_thread(void *unused)
 		platform_log("Internet play: UPnP: %s", error);
 	}
 	pthread_mutex_unlock(&p2p_lock);
-	return NULL;
+	return 0;
 }
 
-/* quitting: a game listed in the server browser is taken out of it at once
-(not when its listing lapses), as when it stops being hosted */
-static void lobby_quit(void)
-{
-	pthread_mutex_lock(&p2p_lock);
-	p2p_lobby_quit();
-	pthread_mutex_unlock(&p2p_lock);
-}
-
-/* the game exits: the router forwards the port no longer (after a request
-under way, which may forward one, if it ends soon) */
-static void upnp_release(void)
+/* Both workers should finish before exit closes stdio and the platform's
+services, but the exit waits for each a few seconds at most. Waiting with
+p2p_lock held would prevent their final pass. */
+static void p2p_shutdown(void)
 {
 	unsigned short external_port = 0;
-	unsigned long start = p2p_now();
 
 	pthread_mutex_lock(&p2p_lock);
-	p2p.upnp_released = 1;
-	while (p2p.upnp_working && !elapsed(start, UPNP_RELEASE_WAIT))
+	p2p.stopping = 1;
+	pthread_mutex_unlock(&p2p_lock);
+	posix_upnp_cancel();
+	if (p2p.thread)
 	{
-		pthread_mutex_unlock(&p2p_lock);
-		Sleep(50);
-		pthread_mutex_lock(&p2p_lock);
+		WaitForSingleObject(p2p.thread, P2P_STOP_WAIT);
+		CloseHandle(p2p.thread);
+		p2p.thread = NULL;
 	}
+	if (p2p.upnp_thread)
+	{
+		WaitForSingleObject(p2p.upnp_thread, UPNP_RELEASE_WAIT);
+		CloseHandle(p2p.upnp_thread);
+		p2p.upnp_thread = NULL;
+	}
+	pthread_mutex_lock(&p2p_lock);
+	p2p_lobby_quit();
 	/* (still under way: posix_upnp.c takes one caller at a time) */
 	if (p2p.upnp_forwarded && !p2p.upnp_working)
 	{
@@ -3495,7 +3656,6 @@ static void update_upnp(void)
 {
 	static int allowed = -1;
 	int ask;
-	pthread_t thread;
 
 	if (allowed < 0)
 		allowed = config_boolean("network.allow_upnp") ? 1 : 0;
@@ -3503,7 +3663,7 @@ static void update_upnp(void)
 	/* (a page cannot reach the router) */
 	allowed = 0;
 #endif
-	if (!allowed || p2p.upnp_working || p2p.upnp_released)
+	if (!allowed || p2p.upnp_working || p2p.stopping)
 		return;
 	if (p2p.upnp_forwarded)
 		ask = elapsed(p2p.upnp_time, UPNP_RENEW_INTERVAL);
@@ -3511,20 +3671,29 @@ static void update_upnp(void)
 		ask = upnp_needed() && (!p2p.upnp_asked || elapsed(p2p.upnp_time, UPNP_RETRY_INTERVAL));
 	if (!ask)
 		return;
+	if (p2p.upnp_thread)
+	{
+		/* working was cleared under this lock; the callback has no more
+		work. Release the lock while waiting for its thread wrapper. */
+		HANDLE finished = p2p.upnp_thread;
+
+		p2p.upnp_thread = NULL;
+		pthread_mutex_unlock(&p2p_lock);
+		WaitForSingleObject(finished, INFINITE);
+		CloseHandle(finished);
+		pthread_mutex_lock(&p2p_lock);
+		if (p2p.stopping)
+			return;
+	}
 	p2p.upnp_working = 1;
 	p2p.upnp_asked = 1;
-	if (!p2p.upnp_release_registered)
-	{
-		p2p.upnp_release_registered = 1;
-		atexit(upnp_release);
-	}
-	if (pthread_create(&thread, NULL, upnp_thread, NULL) != 0)
+	p2p.upnp_thread = CreateThread(NULL, 0, upnp_thread, NULL, 0, NULL);
+	if (!p2p.upnp_thread)
 	{
 		p2p.upnp_working = 0;
 		p2p.upnp_time = p2p_now();
 		return;
 	}
-	pthread_detach(thread);
 }
 
 const char *p2p_take_clipboard_text(void)
@@ -3688,7 +3857,7 @@ static void poll_invite_file(void)
 
 /* ---------- the thread */
 
-static void *p2p_thread(void *unused)
+static DWORD WINAPI p2p_thread(void *unused)
 {
 	enum
 	{
@@ -3723,7 +3892,7 @@ static void *p2p_thread(void *unused)
 	/* (here: it may wait for a program) */
 	p2p_register_url_scheme("halo", "Halo: Combat Evolved invite");
 #endif
-	for (;;)
+	while (!p2p.stopping)
 	{
 		int read_count = 0, write_count = 0, error_count = 0;
 		int asked_read_count, asked_write_count;
@@ -3767,7 +3936,7 @@ static void *p2p_thread(void *unused)
 				continue;
 			/* (not while the tunnel's window is full, which stream_readable
 			waits out, or the wait would return at once) */
-			if (stream->state == _stream_open_state && ikcp_waitsnd(stream->kcp) < STREAM_WINDOW)
+			if (stream->state == _stream_open_state && ikcp_waitsnd(stream->kcp) < stream_window(stream))
 			{
 				read_owners[read_count] = _owner_stream | index << 8;
 				read[read_count++] = stream->socket;
@@ -3799,6 +3968,8 @@ static void *p2p_thread(void *unused)
 			read_count = write_count = 0;
 		}
 		pthread_mutex_lock(&p2p_lock);
+		if (p2p.stopping)
+			break;
 #ifdef HALO_PROFILE
 		profile_trace_begin(p2p_profile_names.pass);
 #endif
@@ -3888,10 +4059,18 @@ static void *p2p_thread(void *unused)
 #ifdef HALO_PROFILE
 		profile_trace_begin(p2p_profile_names.kcp_update);
 #endif
-		for (index = 0; index < MAXIMUM_STREAMS; index++)
 		{
-			if (p2p.streams[index].used)
-				stream_update(&p2p.streams[index]);
+			int bulk_count = 0;
+
+			for (index = 0; index < MAXIMUM_STREAMS; index++)
+				bulk_count += p2p.streams[index].used && p2p.streams[index].bulk;
+			for (index = 0; index < MAXIMUM_STREAMS; index++)
+			{
+				if (p2p.streams[index].used && p2p.streams[index].bulk)
+					stream_tune(&p2p.streams[index], bulk_count);
+				if (p2p.streams[index].used)
+					stream_update(&p2p.streams[index]);
+			}
 		}
 #ifdef HALO_PROFILE
 		profile_trace_end(p2p_profile_names.kcp_update);
@@ -3914,11 +4093,6 @@ static void *p2p_thread(void *unused)
 			if (p2p_lobby_listed())
 			{
 				p2p.token_listed = 1;
-				if (!p2p.lobby_quit_registered)
-				{
-					p2p.lobby_quit_registered = 1;
-					atexit(lobby_quit);
-				}
 			}
 		}
 		/* the server browser closed: the brokers' connections it opened
@@ -3943,18 +4117,18 @@ static void *p2p_thread(void *unused)
 		profile_trace_end(p2p_profile_names.pass);
 #endif
 	}
-	return NULL;
+	pthread_mutex_unlock(&p2p_lock);
+	return 0;
 }
 
 void p2p_initialize(unsigned long local_address)
 {
 	char invite[256];
-	pthread_t thread;
 	long tunnel_port = config_integer("network.tunnel_port");
 	int index;
 
 	p2p_identifier();
-	if (p2p.running || !config_boolean("network.online"))
+	if (p2p.running || p2p.stopping || !config_boolean("network.online"))
 		return;
 	if (tunnel_port < 0 || tunnel_port > 65535)
 	{
@@ -3993,14 +4167,31 @@ void p2p_initialize(unsigned long local_address)
 		p2p.handoff_socket = open_socket(SOCK_DGRAM, network_long(0x7F000001), network_short(HANDOFF_PORT), NULL);
 #endif
 	stun_setup();
-	if (pthread_create(&thread, NULL, p2p_thread, NULL) != 0)
+	pthread_mutex_lock(&p2p_lock);
+	/* Install ownership before a worker can start, including an immediate
+	exit while it is still initializing. Failed starts retain the safe hook. */
+	if (!p2p.exit_registered)
+	{
+		if (atexit(p2p_shutdown) != 0)
+		{
+			platform_log("Internet play: cannot register shutdown; it is off");
+			close_socket(&p2p.tunnel_socket);
+			close_socket(&p2p.handoff_socket);
+			pthread_mutex_unlock(&p2p_lock);
+			return;
+		}
+		p2p.exit_registered = 1;
+	}
+	p2p.thread = CreateThread(NULL, 0, p2p_thread, NULL, 0, NULL);
+	if (!p2p.thread)
 	{
 		close_socket(&p2p.tunnel_socket);
 		close_socket(&p2p.handoff_socket);
+		pthread_mutex_unlock(&p2p_lock);
 		return;
 	}
-	pthread_detach(thread);
 	p2p.running = 1;
+	pthread_mutex_unlock(&p2p_lock);
 	if (command_line_invite(invite, sizeof(invite)))
 		p2p_join_invite(invite);
 }

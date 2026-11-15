@@ -1,0 +1,697 @@
+"""MCC canvas and full-resolution icon geometry, using the real C routines.
+
+The observed Ruby fixtures use 30x38 unflagged pause glyphs and 93x93
+half-HUD-scale pickup glyphs. Cover their independent sizing and text advances,
+including split-screen and the neutral Xbox/CE dispatch.
+"""
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+from harness import function
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="module")
+def unarmed_hud_tool(tmp_path_factory):
+    compiler = shutil.which("clang")
+    if not compiler:
+        pytest.skip("clang is needed for MCC HUD tests")
+    work = tmp_path_factory.mktemp("mcc-unarmed-hud")
+    body = function((ROOT / "port/linux/game/mcc_hud.c").read_text(), "mcc_hud_default")
+    code = r'''
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#define NONE (-1)
+#define _hud_anchor_center 4
+#define _error_silent 0
+struct tag_reference {long group_tag;char *name;long length,index;};
+struct weapon_hud_interface_definition {
+    struct tag_reference parent_hud;
+    struct {short corner;} absolute_placement;
+    unsigned char visuals[256];
+};
+struct hud_globals_definition {struct {struct tag_reference default_weapon_hud;} defaults;};
+struct mcc_runtime {unsigned char *tag_index;struct {uint32_t tag_count;} report;};
+static unsigned char arena[2097152], original[1048576];
+static unsigned used, calls, fail_at, warnings;
+static void *mcc_runtime_allocate(struct mcc_runtime *r,uint32_t bytes) {
+    void *p;(void)r;
+    if (++calls==fail_at || bytes>sizeof(arena)-used) return NULL;
+    p=arena+used;used=(used+bytes+15)&~15u;memset(p,0,bytes);return p;
+}
+static void error(short level,char const *text,...) {(void)level;(void)text;warnings++;}
+''' + body + r'''
+int main(int argc,char **argv) {
+    struct mcc_runtime r;
+    struct hud_globals_definition g, second;
+    struct weapon_hud_interface_definition *hud;
+    uint32_t empty=UINT32_MAX,*entry,count;unsigned i;int mode,ok;
+    if(argc!=2)return 2;mode=atoi(argv[1]);
+    memset(&g,0,sizeof(g));memset(original,0x51,sizeof(original));
+    g.defaults.default_weapon_hud.index=mode==1 ? 0x12340001 : NONE;
+    second=g;r.tag_index=original;count=mode==6 ? 32767 : 2;
+    r.report.tag_count=mode==2 ? 32768 : count;
+    if(mode>=3 && mode<=5)fail_at=mode-2;
+    ok=mcc_hud_default(&r,&g,&empty);
+    if(mode>=2 && mode<=5) return ok || g.defaults.default_weapon_hud.index!=NONE ||
+        r.tag_index!=original || empty!=UINT32_MAX;
+    if(!ok)return 3;
+    if(mode==1)return calls || warnings || r.tag_index!=original ||
+        g.defaults.default_weapon_hud.index!=0x12340001 || empty!=UINT32_MAX;
+    if(r.report.tag_count!=count+1 || memcmp(r.tag_index,original,count*32) || warnings!=1)return 4;
+    entry=(uint32_t *)(r.tag_index+count*32);
+    if(entry[0]!='wphi' || entry[1]!=UINT32_MAX || entry[2]!=UINT32_MAX ||
+       entry[3]!=empty || entry[6] || entry[7] ||
+       g.defaults.default_weapon_hud.group_tag!='wphi' ||
+       (uint32_t)g.defaults.default_weapon_hud.index!=empty ||
+       strcmp((char *)(uintptr_t)entry[4],"mcc_runtime\\unarmed_hud"))return 5;
+    hud=(void *)(uintptr_t)entry[5];
+    if(hud->parent_hud.index!=NONE || hud->parent_hud.group_tag!='wphi' ||
+       hud->absolute_placement.corner!=_hud_anchor_center)return 6;
+    for(i=0;i<sizeof(hud->visuals);i++)if(hud->visuals[i])return 7;
+    if(!mcc_hud_default(&r,&second,&empty) || calls!=3 || warnings!=1 ||
+       second.defaults.default_weapon_hud.index!=g.defaults.default_weapon_hud.index)return 8;
+    return 0;
+}
+'''
+    source = work / "unarmed.c"
+    source.write_text(code)
+    binary = work / "unarmed.exe"
+    target = ["--target=i686-pc-windows-msvc", "-fuse-ld=lld"] if sys.platform == "win32" else ["-m32"]
+    subprocess.run([compiler, *target, "-std=c89", "-Wall", "-Wextra", "-Werror",
+                    "-Wno-multichar", str(source), "-o", str(binary)], check=True, capture_output=True)
+    return binary
+
+
+@pytest.mark.parametrize("case", range(7))
+def test_missing_unarmed_hud_is_owned_empty_and_failure_safe(unarmed_hud_tool, case):
+    result = subprocess.run([str(unarmed_hud_tool), str(case)], capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.fixture(scope="module")
+def hud_tool(tmp_path_factory):
+    compiler = shutil.which("clang")
+    if not compiler:
+        pytest.skip("clang is needed for MCC HUD tests")
+    work = tmp_path_factory.mktemp("mcc-hud")
+    source = (ROOT / "port/linux/game/mcc_hud_draw.c").read_text()
+    functions = "\n".join(function(source, name) for name in [
+        "mcc_hud_glyphs_dispose", "mcc_hud_button_style", "mcc_hud_button_index", "mcc_hud_button_bitmap", "mcc_hud_button_draw",
+        "mcc_hud_canvas_scale", "mcc_hud_bitmap_scale", "mcc_hud_icon_draw"])
+    code = r'''
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+typedef float real;
+typedef unsigned char boolean;
+typedef unsigned long pixel32;
+typedef struct {short x,y;} point2d;
+typedef struct {short x0,y0,x1,y1;} rectangle2d;
+typedef struct {float x0,x1,y0,y1;} real_rectangle2d;
+struct bitmap_data {short width,height;unsigned long *hardware_format;};
+struct bitmap_group {unsigned flags;};
+struct dynamic_screen_vertex {struct {float x,y;}position,texture_coordinates;pixel32 color;};
+struct rasterizer_dynamic_screen_geometry_parameters {
+    struct bitmap_data *map[3];
+    struct {float i,j;}map_texture_scale[3],map_scale[3];
+    short framebuffer_blend_function;
+};
+struct icon_hud_element_definition {
+    short sequence_index,width_offset;point2d offset;
+    unsigned long color;char frame_rate;unsigned char flags;short text_index;
+};
+#define NONE (-1)
+#define TRUE 1
+#define FALSE 0
+#define _hud_anchor_bottom_left 2
+static int mcc,players,lookups,draws;
+static float drawn_scale;
+static point2d drawn_point;
+static pixel32 drawn_color;
+static real left,top,right,bottom;
+static struct bitmap_group group;
+static struct {struct bitmap_data *bitmap;long asset;boolean attempted;} mcc_buttons[14];
+static short mcc_buttons_style;
+static int high_res,style;
+/* (this fork's button styles, display.hud_button_style: 0 classic, 1 gems, 2 the menus' gems) */
+static char const *config_string(char const *name) {(void)name;return style==1 ? "gems" : style==2 ? "menu_gems" : "classic";}
+#define TAG_BLOCK_ADDRESS(block) ((block).address)
+static int config_boolean(char const *name) {(void)name;return high_res;}
+static struct {struct {struct {long count;void *address;} button_icons;} messaging;} globals,*hud_globals;
+static int allocations,registrations,deletions;
+static struct bitmap_data native_bitmap;
+static unsigned long hardware[2];
+static char const *assets[]={"ui\\shell\\bitmaps\\a_butn","ui\\shell\\bitmaps\\b_butn",
+    "ui\\shell\\bitmaps\\x_butn","ui\\shell\\bitmaps\\y_butn",
+    "mcc\\buttons\\black","mcc\\buttons\\white",
+    "ui\\hud\\buttons\\classic_a","ui\\hud\\buttons\\classic_b","ui\\hud\\buttons\\classic_x","ui\\hud\\buttons\\classic_y",
+    "ui\\hud\\buttons\\gem_a","ui\\hud\\buttons\\gem_b","ui\\hud\\buttons\\gem_x","ui\\hud\\buttons\\gem_y","ui\\hud\\buttons\\trigger_left","ui\\hud\\buttons\\trigger_right","ui\\hud\\buttons\\thumbstick_left","ui\\hud\\buttons\\thumbstick_right","ui\\hud\\buttons\\thumbstick-halfway_left","ui\\hud\\buttons\\thumbstick-halfway_right","ui\\hud\\buttons\\thumbstick-full_left","ui\\hud\\buttons\\thumbstick-full_right"};
+static long hud_hires_asset_count(void) {return sizeof(assets)/sizeof(*assets);}
+static char const *hud_hires_asset_tag(long i) {return assets[i];}
+static struct bitmap_data *bitmap_2d_new(short w,short h,short m,short f) {
+    if((w!=32&&w!=64)||h!=w||m||f!=11)abort();allocations++;
+    native_bitmap.width=w;native_bitmap.height=h;return &native_bitmap;
+}
+static int rasterizer_bitmap_new(struct bitmap_data *b) {b->hardware_format=hardware;return 1;}
+static void hud_hires_register_placeholder(long a,unsigned long const *t) {
+    if(a<0||a>=hud_hires_asset_count()||(t&&t!=hardware))abort();registrations+=t?1:-1;
+}
+static void xgpu_mcc_texture_unbind(unsigned long const *t) {if(t!=hardware)abort();}
+static void bitmap_delete(struct bitmap_data *b) {if(b!=&native_bitmap)abort();deletions++;}
+static void rasterizer_psuedo_dynamic_screen_quad_draw(
+    struct rasterizer_dynamic_screen_geometry_parameters *p,struct dynamic_screen_vertex *v) {
+    if(p->framebuffer_blend_function!=(native_bitmap.width==64?7:0)||p->map[0]!=&native_bitmap||p->map[1]||p->map[2])abort();
+    if(p->map_scale[0].i!=1||p->map_scale[0].j!=1||
+       p->map_texture_scale[0].i!=1||p->map_texture_scale[0].j!=1)abort();
+    if(v[0].texture_coordinates.x||v[0].texture_coordinates.y||
+       (native_bitmap.width==32 && (v[2].texture_coordinates.x!=21.0f/32||v[2].texture_coordinates.y!=26.0f/32)))abort();
+    left=v[0].position.x;top=v[0].position.y;right=v[2].position.x;bottom=v[2].position.y;
+    draws++;drawn_scale=(v[2].position.y-v[0].position.y)/26;
+    drawn_point.x=(short)v[0].position.x;drawn_point.y=(short)v[2].position.y;drawn_color=v[0].color;
+}
+static int mcc_cache_tags_loaded(void) {return mcc;}
+static long game_time_get(void) {return 0;}
+static int local_player_count(void) {return players;}
+static struct bitmap_group *bitmap_group_get(long id) {
+    if(id!=17)abort();lookups++;return &group;
+}
+static short draw_unicode_string_capital_middle(rectangle2d const *bounds,wchar_t const *text) {
+    if(text[0])abort();return (short)(bounds->y0+8);
+}
+static void hud_draw_bitmap_direct(struct bitmap_data const *bitmap,short corner,
+    point2d const *point,real_rectangle2d const *clip,real scale,real theta,
+    pixel32 color,boolean linear) {
+    (void)bitmap;(void)clip;
+    if(corner!=2||theta||linear)abort();
+    draws++;drawn_scale=scale;drawn_point=*point;drawn_color=color;
+}
+''' + (ROOT/'port/linux/game/hud_button_layout.h').read_text() + functions + r'''
+int main(int argc,char **argv) {
+    struct bitmap_data bitmap={256,256,NULL};
+    real_rectangle2d clip={0.0f,30.0f/256,0.0f,38.0f/256};
+    rectangle2d cursor={100,120,200,140},before=cursor;
+    struct icon_hud_element_definition icon={0,-6,{-2,15},0xFF123456,0,2,0},saved=icon;
+    struct icon_hud_element_definition buttons[18],*active=&icon;
+    int menu,handled;
+    if(argc!=6 && argc!=7 && argc!=8 && argc!=10 && argc!=12)return 2;
+    if(argc==12) {high_res=atoi(argv[10]);style=atoi(argv[11]);}
+    mcc=atoi(argv[1]);players=atoi(argv[2]);menu=atoi(argv[3]);
+    group.flags=(unsigned)atoi(argv[4]);icon.flags=(unsigned char)atoi(argv[5]);
+    if(argc==7)icon.offset.y=(short)atoi(argv[6]);saved=icon;
+    if(argc>=8) {
+        if(argc>=10) {icon.color=strtoul(argv[9],NULL,16);saved=icon;}
+        int b=atoi(argv[7]);if(b<0||b>=18)return 8;
+        memset(buttons,0,sizeof(buttons));buttons[b]=icon;buttons[b].sequence_index=99;
+        globals.messaging.button_icons.count=18;globals.messaging.button_icons.address=buttons;
+        hud_globals=&globals;active=&buttons[b];
+    }
+    if(!menu) {clip.x1=clip.y1=93.0f/256;}
+    handled=mcc_hud_icon_draw(17,&bitmap,&clip,&cursor,argc>=10 ? strtoul(argv[8],NULL,16) : 0xFFABCDEF,active,menu);
+    if(memcmp(&icon,&saved,sizeof(icon)))return 3;
+    if(!mcc && (memcmp(&cursor,&before,sizeof(cursor))||draws||lookups||handled))return 4;
+    if(mcc_hud_bitmap_scale(NONE)!=1.0f)return 5;
+    if(argc>=8 && mcc && !menu && (atoi(argv[7])<6 || (high_res && (atoi(argv[7])==6 || atoi(argv[7])==7 || atoi(argv[7])>=14)))) {
+        if(allocations!=1||registrations!=1||lookups)return 9;
+        if(mcc_hud_button_bitmap(mcc_hud_button_index(active))!=&native_bitmap||allocations!=1)return 10;
+        mcc_hud_glyphs_dispose();mcc_hud_glyphs_dispose();
+        if(registrations||deletions!=1)return 11;
+    } else if(allocations||registrations)return 12;
+    printf("%d %d %.3f %d %d %d %lu %.3f\n",handled,draws,drawn_scale,
+        drawn_point.x,drawn_point.y,cursor.x0,drawn_color,mcc_hud_canvas_scale());
+    if(argc==12)printf("%.6f %.6f %.6f %.6f\n",left,top,right,bottom);
+    return 0;
+}
+'''
+    path = work / "hud.c"
+    binary = work / ("hud.exe" if sys.platform == "win32" else "hud")
+    path.write_text(code)
+    command = [compiler, "-std=gnu99", "-Wall", "-Wextra", "-Werror", str(path), "-o", str(binary)]
+    if sys.platform == "win32":
+        command[1:1] = ["--target=i686-pc-windows-msvc", "-fuse-ld=lld"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return binary
+
+
+@pytest.mark.parametrize("players", [1, 2, 4])
+@pytest.mark.parametrize("menu", [False, True])
+@pytest.mark.parametrize("flags", [0, 0x10, 0x80, 0x90])
+@pytest.mark.parametrize("icon_flags", [0, 2, 4, 6])
+def test_icon_canvas_size_and_cursor_advance(hud_tool, players, menu, flags, icon_flags):
+    result = subprocess.run([str(hud_tool), "1", str(players), str(int(menu)), str(flags), str(icon_flags)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    handled, draws, scale, x, y, cursor, color, canvas = result.stdout.split()
+    viewport = 0.75 if players > 1 and not menu else 1.0
+    expected_scale = viewport * (0.25 if flags else 0.5)
+    offset_scale = viewport
+    expected_x = int(100 - 2 * offset_scale + int(menu))
+    expected_y = int(128 + 38 * expected_scale * 0.5) if menu else int(140 - 15 * offset_scale)
+    advance = -6 * offset_scale
+    if not icon_flags & 4:
+        advance += (30 if menu else 93) * expected_scale
+    assert (handled, draws) == ("1", "1")
+    assert float(scale) == pytest.approx(expected_scale, abs=0.0006)
+    assert (int(x), int(y), int(cursor)) == (expected_x, expected_y, int(expected_x + advance))
+    assert int(color) == (0xFF123456 if icon_flags & 2 else 0xFFABCDEF)
+    assert float(canvas) == 0.5
+
+
+@pytest.mark.parametrize("menu", [False, True])
+def test_xbox_and_ce_dispatch_are_neutral(hud_tool, menu):
+    result = subprocess.run([str(hud_tool), "0", "2", str(int(menu)), "16", "2"],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[:2] == ["0", "0"]
+    assert float(result.stdout.split()[-1]) == 1.0
+
+
+@pytest.mark.parametrize("players", [1, 2])
+@pytest.mark.parametrize("offset_y", [-5, 15])
+def test_messaging_offsets_preserve_stock_and_map_authored_values(hud_tool, players, offset_y):
+    # Xbox/Mercury/Nitra use -5; Ruby changes only Y to +15. These text
+    # offsets must survive independently of the MCC bitmap canvas factor.
+    result = subprocess.run([str(hud_tool), "1", str(players), "0", "16", "2", str(offset_y)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    viewport = 0.75 if players > 1 else 1.0
+    assert int(result.stdout.split()[4]) == int(140 - offset_y * viewport)
+
+
+@pytest.mark.parametrize("button", range(6))
+@pytest.mark.parametrize("players", [1, 2, 4])
+@pytest.mark.parametrize("flags", [0, 16, 128])
+def test_gameplay_native_buttons_ignore_mcc_sheet_and_offsets(hud_tool, button, players, flags):
+    result=subprocess.run([str(hud_tool),"1",str(players),"0",str(flags),"6","0",str(button)],
+                          capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    handled,draws,scale,x,y,cursor,color,canvas=result.stdout.split()
+    viewport=1.0 if players==1 else 0.75
+    assert (handled,draws)==("1","1")
+    assert int(x)==int(100+2*viewport)
+    assert float(scale)==pytest.approx(viewport*20/26,abs=0.0006)
+    assert int(y)==int(128+10*viewport)
+    assert int(cursor)==int(int(100+2*viewport)+(21*20/26-3)*viewport)
+    assert int(color)==0xFFFFFFFF
+
+
+@pytest.mark.parametrize("loaded,menu,button", [(0,0,0),(0,1,2),(1,1,0),(1,1,1),(1,0,6),(1,0,17)])
+def test_native_glyph_scope_preserves_menus_other_formats_and_icons(hud_tool, loaded, menu, button):
+    result=subprocess.run([str(hud_tool),str(loaded),"1",str(menu),"16","2","0",str(button)],
+                          capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
+@pytest.fixture(scope="module")
+def anchor_tool(tmp_path_factory):
+    compiler = shutil.which("clang")
+    if not compiler:
+        pytest.skip("clang is needed")
+    work = tmp_path_factory.mktemp("mcc-anchors")
+    source = (ROOT / "port/linux/game/mcc_hud_draw.c").read_text()
+    routines = "\n".join(function(source, n) for n in ["mcc_hud_weapon_frame_begin", "mcc_hud_weapon_frame_end",
+                            "mcc_hud_edge", "mcc_hud_frame_inset", "mcc_hud_anchor_point",
+                            "mcc_hud_anchor_bounds", "mcc_hud_anchor_number"])
+    code = r'''
+#include <stdlib.h>
+#include <stdio.h>
+typedef float real;
+typedef int boolean;
+typedef struct {short x,y;} point2d;
+typedef struct {short x0,y0,x1,y1;} rectangle2d;
+typedef struct {float x0,x1,y0,y1;} real_rectangle2d;
+struct bitmap_data {short width,height;point2d registration_point;};
+struct hud_placement_definition {point2d offset;short pad;};
+#define MCC_HUD_NATIVE_FRAME 0x4D53
+#define NONE (-1)
+static short mcc_weapon_frame=NONE;
+static boolean mcc_native_view;
+#define TRUE 1
+#define FALSE 0
+#define MIN(a,b) ((a)<(b)?(a):(b))
+static int loaded;
+struct weapon_hud_interface_definition {
+    struct {long index;} parent_hud;
+    struct {short corner,pad;} absolute_placement;
+    struct {long count;} statics,meters,numbers,overlays;
+};
+static struct weapon_hud_interface_definition hud[2];
+static void *tag_get(long group,long index) {(void)group;return index>=0&&index<2 ? hud+index : NULL;}
+static int mcc_cache_contains(void const *p,long size) {(void)size;return p==hud||p==hud+1;}
+static long halo_screen_width(void) {return 840;}
+static int mcc_cache_tags_loaded(void) {return loaded;}
+''' + routines + r'''
+int main(int argc,char **argv) {
+    struct hud_placement_definition placement={{10,20},0};
+    rectangle2d window={40,30,840,430},viewport={20,10,860,450};
+    point2d point={-99,-99};
+    real_rectangle2d bounds={-99,-99,-99,-99};
+    short cursor=-99,anchor;int a,b,c;float scale;
+    if(argc==2) {
+        int test=atoi(argv[1]);
+        loaded=test!=0;
+        hud[0].parent_hud.index=1;hud[1].parent_hud.index=NONE;
+        hud[0].absolute_placement.pad=hud[1].absolute_placement.pad=MCC_HUD_NATIVE_FRAME;
+        hud[0].meters.count=hud[1].numbers.count=1;
+        placement.pad=MCC_HUD_NATIVE_FRAME;
+        if(test==2)hud[0].absolute_placement.pad=0;
+        if(test==3)hud[1].absolute_placement.pad=0;
+        if(test==4)hud[1].parent_hud.index=0;
+        if(test==5)hud[1].parent_hud.index=9;
+        if(test==6) {hud[1].numbers.count=0;hud[1].absolute_placement.pad=0;}
+        if(test==7) {hud[1].numbers.count=0;hud[0].absolute_placement.pad=0;}
+        if(test==8)hud[1].absolute_placement.corner=1;
+        if(test==9)hud[0].absolute_placement.pad=hud[1].absolute_placement.pad=0;
+        mcc_hud_weapon_frame_begin(0);
+        a=mcc_hud_anchor_point(0,&placement,NULL,1,&window,&viewport,&point);
+        if(a!=(test==3 || test==4 || test==5 || test>=7))return 10;
+        if(a && (point.x!=16 || point.y!=26))return 11;
+        mcc_hud_weapon_frame_end();
+        if(mcc_weapon_frame!=NONE || mcc_hud_anchor_point(0,&placement,NULL,1,&window,&viewport,&point))return 12;
+        placement.pad=0;
+        if(mcc_hud_anchor_point(0,&placement,NULL,1,&window,&viewport,&point)!=loaded)return 13;
+        return 0;
+    }
+    if(argc!=4 && argc!=5)return 2;
+    if(argc==5) {
+        if(atoi(argv[4])==1) {window=(rectangle2d){64,36,422,236};viewport=(rectangle2d){0,0,426,240};}
+        else {window=(rectangle2d){180,30,700,430};}
+    }
+    loaded=atoi(argv[1]);anchor=(short)atoi(argv[2]);scale=(float)atof(argv[3]);
+    a=mcc_hud_anchor_point(anchor,&placement,NULL,scale,&window,&viewport,&point);
+    b=mcc_hud_anchor_bounds(anchor,200,80,&bounds);
+    c=mcc_hud_anchor_number(anchor,100,300,&cursor);
+    printf("%d %d %d %d %d %.1f %.1f %.1f %.1f %d",a,b,c,point.x,point.y,
+        bounds.x0,bounds.x1,bounds.y0,bounds.y1,cursor);
+    return 0;
+}
+'''
+    path=work / "anchors.c"
+    path.write_text(code)
+    binary=work / ("anchors.exe" if sys.platform=="win32" else "anchors")
+    command=[compiler,"-std=gnu89","-fsanitize=undefined","-fsanitize-trap=undefined",str(path),"-o",str(binary)]
+    if sys.platform=="win32":
+        command[1:1]=["--target=i686-pc-windows-msvc","-fuse-ld=lld"]
+    result=subprocess.run(command,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    return binary
+
+
+@pytest.mark.parametrize("case",range(10))
+def test_weapon_frame_keeps_parent_and_child_together_and_resets(anchor_tool,case):
+    result=subprocess.run([str(anchor_tool),str(case)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
+@pytest.fixture(scope="module")
+def child_anchor_tool(tmp_path_factory):
+    compiler=shutil.which("clang")
+    if not compiler:pytest.skip("clang is needed")
+    work=tmp_path_factory.mktemp("mcc-child-anchors")
+    source=(ROOT/"port/linux/game/mcc_hud_draw.c").read_text()
+    code=r'''
+#include <stdlib.h>
+#include <string.h>
+struct hud_absolute_placement_definition {short corner,pad;long unused[8];};
+static int loaded;
+static int mcc_cache_tags_loaded(void) {return loaded;}
+'''+function(source,"mcc_hud_child_placement")+r'''
+int main(int argc,char **argv) {
+    unsigned short header[18]={0};
+    struct hud_absolute_placement_definition parent={4,71,{22}},saved=parent,out={-1,0,{0}};
+    struct hud_absolute_placement_definition const *result;
+    int child;
+    if(argc!=3)return 2;loaded=atoi(argv[1]);child=atoi(argv[2]);header[3]=(unsigned short)child;
+    result=mcc_hud_child_placement(&parent,loaded?header:NULL,&out);
+    if(memcmp(&parent,&saved,sizeof(parent)))return 3;
+    if(loaded && child>=1 && child<=9) {
+        if(result!=&out||out.corner!=child-1||out.pad!=71||out.unused[0]!=22)return 4;
+    } else if(result!=&parent||out.corner!=-1)return 5;
+    /* Each element must start from the parent, not the previous override. */
+    header[3]=0;result=mcc_hud_child_placement(&parent,header,&out);
+    return result!=&parent||result->corner!=4;
+}
+'''
+    path=work/"child.c";path.write_text(code)
+    binary=work/("child.exe" if sys.platform=="win32" else "child")
+    command=[compiler,"-std=gnu89","-Wall","-Wextra","-Werror",str(path),"-o",str(binary)]
+    if sys.platform=="win32":command[1:1]=["--target=i686-pc-windows-msvc","-fuse-ld=lld"]
+    result=subprocess.run(command,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    return binary
+
+
+@pytest.mark.parametrize("loaded",[0,1])
+@pytest.mark.parametrize("child",[-1,*range(11),32767])
+def test_child_anchors_are_mcc_only_bounded_and_do_not_mutate_parent(child_anchor_tool, loaded, child):
+    result=subprocess.run([str(child_anchor_tool),str(loaded),str(child)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize("scale", [1.0, 0.75])
+@pytest.mark.parametrize("anchor,origin,direction,bounds,cursor", [
+    (5, (420,6), (1,1), (-100,100,0,80), 350),
+    (6, (420,434), (1,-1), (-100,100,-80,0), 350),
+    (7, (6,220), (1,1), (0,200,-40,40), 400),
+    (8, (834,220), (-1,1), (-200,0,-40,40), 300)])
+def test_mcc_edge_anchors_follow_player_window(anchor_tool,scale,anchor,origin,direction,bounds,cursor):
+    result=subprocess.run([str(anchor_tool),"1",str(anchor),str(scale)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    values=list(map(float,result.stdout.split()))
+    assert values[:3]==[1,1,1]
+    assert values[3:5]==[int(origin[0]+10*scale*direction[0]),int(origin[1]+20*scale*direction[1])]
+    assert values[5:9]==list(bounds)
+    assert values[9]==cursor
+
+
+@pytest.mark.parametrize("loaded,anchor", [(0,n) for n in range(10)]+[(1,n) for n in [-1,4,9]])
+def test_edge_dispatch_preserves_legacy_and_unknown_anchors(anchor_tool,loaded,anchor):
+    result=subprocess.run([str(anchor_tool),str(loaded),str(anchor),"1"],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    assert list(map(float,result.stdout.split()))==[0,0,0]+[-99]*7
+
+
+@pytest.fixture(scope="module")
+def terminal_tool(tmp_path_factory):
+    compiler=shutil.which("clang")
+    if not compiler:
+        pytest.skip("clang is needed")
+    work=tmp_path_factory.mktemp("mcc-terminal")
+    source=(ROOT / "port/linux/game/mcc_terminal.c").read_text()
+    routines="\n".join(function(source,n) for n in ["mcc_terminal_scale","mcc_terminal_line_height","mcc_terminal_draw"])
+    code=r'''
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+typedef float real;typedef int boolean;
+typedef struct {short x0,y0,x1,y1;} rectangle2d;
+struct font_header {short ascending_height,descending_height,leading_height;};
+#define TRUE 1
+#define FALSE 0
+#define NONE (-1)
+static int loaded,calls,draws,lookups;
+static real current=1,used,origin_x,origin_y;
+static rectangle2d drawn;
+static struct font_header font;
+static int mcc_cache_tags_loaded(void) {return loaded;}
+static struct font_header *font_definition_get(long index) {if(index!=7)abort();lookups++;return &font;}
+static void rasterizer_text_set_scale(real scale,real x,real y) {current=scale;calls++;if(scale!=1){origin_x=x;origin_y=y;}}
+static void rasterizer_draw_string(rectangle2d const *b,void *clip,void *cursor,short height,char const *text) {
+    if(clip||cursor||height||strcmp(text,"100% unchanged"))abort();draws++;drawn=*b;used=current;
+}
+'''+routines+r'''
+int main(int argc,char **argv) {
+    rectangle2d bounds={100,400,740,415};struct font_header saved;short h;int handled;
+    if(argc!=3)return 2;loaded=atoi(argv[1]);font.ascending_height=(short)atoi(argv[2]);saved=font;
+    h=mcc_terminal_line_height(7,font.ascending_height);
+    handled=mcc_terminal_draw(7,&bounds,"100% unchanged");
+    if(memcmp(&saved,&font,sizeof(font))||current!=1)return 3;
+    if(!loaded && lookups)return 4;
+    printf("%d %d %d %d %.6f %.1f %.1f %d %d",h,handled,calls,draws,used,origin_x,origin_y,drawn.x1,drawn.y1);
+    return 0;
+}
+'''
+    path=work / "terminal.c";path.write_text(code)
+    binary=work / ("terminal.exe" if sys.platform=="win32" else "terminal")
+    command=[compiler,"-std=gnu89",str(path),"-o",str(binary)]
+    if sys.platform=="win32":command[1:1]=["--target=i686-pc-windows-msvc","-fuse-ld=lld"]
+    result=subprocess.run(command,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    return binary
+
+
+@pytest.mark.parametrize("loaded,height",[(0,33),(0,15),(0,-1),(1,15),(1,12),(1,33),(1,30),(1,32767)])
+def test_terminal_scales_only_oversized_mcc_text(terminal_tool,loaded,height):
+    result=subprocess.run([str(terminal_tool),str(loaded),str(height)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    values=list(map(float,result.stdout.split()))
+    if loaded and height>15:
+        assert values[:4]==[15,1,2,1]
+        assert values[4]==pytest.approx(15/height,abs=0.000001)
+        assert values[5:7]==[100,400]
+        assert values[7:]==[min(32767,int(100+640/(15/height))),min(32767,401+height)]
+    else:
+        assert values[:4]==[height,0,0,0]
+
+
+def test_shoulder_redraws_match_native_controller_order():
+    import json
+    import struct
+    assets = ROOT / "port/assets/buttons"
+    entries = json.loads((assets / "buttons.json").read_text())["assets"]
+    by_tag = {entry["tag"]: entry for entry in entries}
+    source = (ROOT / "port/linux/game/mcc_hud_draw.c").read_text()
+    # Controller entries 4/5 are black/white; physical RB/LB map to them.
+    body = function(source, "mcc_hud_button_bitmap")
+    assert body.index('buttons\\\\black') < body.index('buttons\\\\white')
+    for color in ("black", "white"):
+        entry = by_tag["mcc\\buttons\\" + color]
+        assert entry["crc"] == 0
+        assert (entry["width"], entry["height"], entry["scale"]) == (32, 32, 8)
+        png = (assets / (entry["name"] + ".png")).read_bytes()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack_from(">II", png, 16) == (256, 256)
+        assert png[24:26] == bytes((8, 6))  # RGBA8
+
+
+@pytest.mark.parametrize("anchor,expected", [(0,(16,26)),(1,(824,26)),(2,(16,414)),(3,(824,414))])
+def test_mcc_corner_anchors_use_mcc_safe_frame(anchor_tool, anchor, expected):
+    result=subprocess.run([str(anchor_tool),"1",str(anchor),"1"],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    values=list(map(float,result.stdout.split()))
+    assert values[:3]==[1,0,0]
+    assert values[3:5]==list(expected)
+
+
+@pytest.mark.parametrize("layout,anchor,expected", [(1,1,(412,32)),(1,3,(412,216)),(2,0,(128,26))])
+def test_mcc_safe_frame_preserves_split_seams_and_zoom_inset(anchor_tool,layout,anchor,expected):
+    result=subprocess.run([str(anchor_tool),"1",str(anchor),"1",str(layout)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    assert list(map(float,result.stdout.split()))[3:5]==list(expected)
+
+
+@pytest.mark.parametrize("button", range(6))
+@pytest.mark.parametrize("flags,prompt,authored,expected", [
+    (2, 0x7FABCDEF, 0xFF123456, 0xFFFFFFFF),
+    (2, 0x7FABCDEF, 0x40123456, 0x40FFFFFF),
+    (0, 0x7FABCDEF, 0xFF123456, 0x7FFFFFFF),
+    (0, 0, 0xFF123456, 0x00FFFFFF),
+])
+def test_gameplay_button_authored_opacity(hud_tool, button, flags, prompt, authored, expected):
+    result = subprocess.run([str(hud_tool), "1", "1", "0", "0", str(flags), "0", str(button),
+                             f"{prompt:x}", f"{authored:x}"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert int(result.stdout.split()[6]) == expected
+
+
+@pytest.mark.parametrize("style", range(3))
+@pytest.mark.parametrize("button", range(4))
+@pytest.mark.parametrize("players", [1, 2])
+def test_high_res_mcc_button_visible_size(hud_tool, style, button, players):
+    import numpy as np
+    from PIL import Image
+    result = subprocess.run([str(hud_tool), "1", str(players), "0", "0", "2", "0", str(button),
+                             "7fffffff", "ffffffff", "1", str(style)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.split()
+    left, top, right, bottom = map(float, fields[8:])
+    letter = "abxy"[button]
+    name = ("classic_" + letter if style == 0 else "gem_" + letter if style == 1 else letter + "_butn") + "__0.png"
+    alpha = np.asarray(Image.open(ROOT / "port/assets/buttons" / name))[..., 3]
+    ys, xs = np.where(alpha >= 128)
+    viewport = 1.0 if players == 1 else 0.75
+    scale = viewport
+    assert (right-left) * (xs.max()+1-xs.min()) / 168 == pytest.approx(21*scale, abs=0.0001)
+    assert (bottom-top) * (ys.max()+1-ys.min()) / 208 == pytest.approx(26*scale, abs=0.0001)
+    assert left + xs.min()*(right-left)/168 == pytest.approx(100+4*viewport, abs=0.0001)
+    assert top + ys.min()*(bottom-top)/208 == pytest.approx(128-13*viewport, abs=0.0001)
+    assert int(fields[5]) == int(100+22*viewport)
+
+
+@pytest.mark.parametrize("style", range(3))
+@pytest.mark.parametrize("button", [6,7,14,15,16,17])
+@pytest.mark.parametrize("players", [1,2])
+def test_high_res_mcc_controls_visible_size(hud_tool, style, button, players):
+    import numpy as np
+    from PIL import Image
+    result = subprocess.run([str(hud_tool), "1", str(players), "0", "0", "0", "0", str(button),
+                             "7fabcdef", "ffffffff", "1", str(style)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.split()
+    left, top, right, bottom = map(float, fields[8:])
+    name = ('trigger_' if button<8 else 'thumbstick_') + ('left' if button%2==0 else 'right')
+    alpha = np.asarray(Image.open(ROOT/'port/assets/buttons'/(name+'__0.png')))[...,3]
+    ys,xs=np.where(alpha>=128)
+    viewport=1.0 if players==1 else 0.75
+    scale=viewport
+    cw,ch=(400,280) if button<8 else (288,320)
+    w,h=(44,33) if button<8 else (32,34)
+    assert (right-left)*(xs.max()+1-xs.min())/cw == pytest.approx(w*scale, abs=0.0001)
+    assert (bottom-top)*(ys.max()+1-ys.min())/ch == pytest.approx(h*scale, abs=0.0001)
+    assert left+xs.min()*(right-left)/cw == pytest.approx(100+4*viewport, abs=0.0001)
+    assert top+ys.min()*(bottom-top)/ch == pytest.approx(128-h*viewport/2, abs=0.0001)
+    assert int(fields[5]) == int(100+(w+1)*viewport)
+    assert int(fields[6]) == 0x7fabcdef
+
+@pytest.fixture(scope="module")
+def message_frame_tool(tmp_path_factory):
+    compiler = shutil.which("clang")
+    if not compiler:
+        pytest.skip("clang is needed")
+    work = tmp_path_factory.mktemp("mcc-message-frame")
+    source = (ROOT / "port/linux/game/mcc_hud.c").read_text()
+    code = r'''
+#include <stdlib.h>
+#define MCC_HUD_NATIVE_FRAME 0x4d53
+struct hud_placement_definition {
+    struct {short x,y;} offset;
+    float scale_x,scale_y;
+    unsigned short multiplayer_scaling_flags;
+    short pad;
+};
+struct hud_messaging_parameters_definition {
+    struct {short corner;} absolute_placement;
+    struct hud_placement_definition placement;
+};
+''' + function(source,"mcc_hud_offset") + '\n' + function(source,"mcc_hud_message_frame") + r'''
+int main(int argc,char **argv) {
+    struct hud_messaging_parameters_definition message;
+    short x,y;unsigned flags;
+    int expected;
+    if(argc!=6)return 1;
+    message.absolute_placement.corner=(short)atoi(argv[1]);
+    x=message.placement.offset.x=(short)atoi(argv[2]);
+    y=message.placement.offset.y=(short)atoi(argv[3]);
+    flags=message.placement.multiplayer_scaling_flags=(unsigned short)atoi(argv[4]);
+    message.placement.pad=MCC_HUD_NATIVE_FRAME;
+    expected=atoi(argv[5]);
+    mcc_hud_offset(&message.placement);
+    mcc_hud_message_frame(&message);
+    return (message.placement.pad==MCC_HUD_NATIVE_FRAME)!=expected ||
+        message.placement.offset.x!=(flags&4 ? x : x/2) ||
+        message.placement.offset.y!=(flags&4 ? y : y/2) ||
+        message.placement.multiplayer_scaling_flags!=(flags&~4u);
+}
+'''
+    path=work/'message.c';path.write_text(code);binary=work/'message.exe'
+    target=["--target=i686-pc-windows-msvc","-fuse-ld=lld"] if sys.platform=="win32" else ["-m32"]
+    result=subprocess.run([compiler,*target,"-std=gnu89","-Wall","-Wextra","-Werror",str(path),"-o",str(binary)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    return binary
+
+
+@pytest.mark.parametrize("anchor,x,y,flags,native", [
+    (0,0,120,0,1),(0,0,60,4,1),(0,37,85,4,0),(0,2,120,0,0),
+    (0,0,118,0,0),(0,0,122,0,0),(1,0,120,0,0),(4,0,120,0,0),
+    (5,0,120,0,0),(0,0,120,4,0),(0,0,120,3,1)])
+def test_stock_message_margin_preserves_authored_positions(message_frame_tool,anchor,x,y,flags,native):
+    result=subprocess.run([str(message_frame_tool),*map(str,(anchor,x,y,flags,native))],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr

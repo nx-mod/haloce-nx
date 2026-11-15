@@ -369,6 +369,9 @@ enum
 	/* the port each machine takes the others' map sharing connections on:
 	its game listens there without hosting */
 	P2P_MAP_SHARE_PORT = 5153,
+	/* where a SlipstreamCE host takes another SlipstreamCE machine's MCC
+	package connection (port/linux/game/mcc_fast.c): an OpenCE host has none */
+	P2P_MCC_FAST_PORT = 5154,
 };
 
 /* the identifier (6 bytes) and key hash of the internet play peer of this

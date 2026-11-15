@@ -31,7 +31,12 @@ struct game_state_header
 	/* and how far the port had moved the game's own image, whose addresses
 	the state holds too (halo_port_window.h's PORT_IMAGE_SHIFT) */
 	unsigned long image_shift;
-	long unused[5];
+	/* and how far an MCC map's tags were from the base they were written for
+	(halo_port_window.h's PORT_MCC_SHIFT), whose addresses the state holds
+	as it does a map's tag data's; 0 in a save from before this was kept,
+	when they were always at their base (0x134) */
+	unsigned long mcc_tag_shift;
+	long unused[4];
 	unsigned long checksum; // 0x148
 };
 
@@ -86,7 +91,18 @@ struct game_state_relocation
 	unsigned long window_delta;
 	/* this run's PORT_IMAGE_SHIFT less the saved game's */
 	unsigned long image_delta;
+	/* where an MCC map's tags were in the saved game, and how far this run's
+	are from there (0 when they are where they were, or for another map) */
+	unsigned long mcc_from;
+	unsigned long mcc_delta;
 };
+
+/* how far an address the saved game held of the map's tag data moves: by
+the MCC tags' distance where they hold live (this run's address), else by
+the window's */
+unsigned long game_state_relocation_tag_delta(
+	struct game_state_relocation const *relocation,
+	void const *live);
 
 /* where the image holds what this run's game state has at live */
 void *game_state_relocation_pointer(
@@ -108,6 +124,8 @@ void game_state_save_core(
 	const char *name);
 boolean game_state_reverted(
 	void);
+/* port: checked MCC sidecar storage uses the otherwise-unused CPU tail. */
+void *game_state_port_cpu_region(unsigned long *used, unsigned long *capacity);
 void *game_state_malloc(
 	const char *name,
 	const char *type,

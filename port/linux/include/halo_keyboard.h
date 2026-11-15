@@ -72,6 +72,8 @@ enum halo_chat_pad_button
 	HALO_CHAT_PAD_X,
 	HALO_CHAT_PAD_Y,
 	HALO_CHAT_PAD_START,
+	/* the right shoulder (the Xbox's black button): the line's channel */
+	HALO_CHAT_PAD_RIGHT_SHOULDER,
 	/* the left stick, pushed most of the way */
 	HALO_CHAT_PAD_STICK_UP,
 	HALO_CHAT_PAD_STICK_DOWN,

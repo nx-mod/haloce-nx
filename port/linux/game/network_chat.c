@@ -10,8 +10,9 @@ whose keys the stick moves through and A types, a tap types (the
 touchscreen), and the controller then drives nothing else (xinput_sdl.c's
 halo_chat_pad_buttons, halo_chat_taps). The lines are
 drawn above the motion sensor, at half the HUD font's size, each with its
-player's name in their team's colour, wrapped to a column a little over half
-the view wide, and fade after a while; where the motion sensor is not drawn
+player's name in their team's colour, the host's name white, wrapped to a
+column a little over half the view wide, and fade after a while; where the
+motion sensor is not drawn
 (its player dead), where it was last drawn in a view of that size. While a
 line is typed, Page Up and Page Down (and the mouse wheel) scroll back through
 the last CHAT_MAXIMUM_LINES. Where the touch controls hold the bottom left
@@ -62,6 +63,10 @@ the minutes are up (or the host unmutes it) and is told for how long; every
 machine is told of each mute and unmute, a line of the host's alone in the
 chat (_chat_line_notice_bit). A client's /mute is not sent: only the host
 mutes.
+
+A dedicated server takes a player's "!switch" or "!team" (the whole line)
+as their asking to change teams (server_team_switch.c): the line is sent on
+to no one, and the host's notices say what came of it.
 */
 
 #include "cseries.h"
@@ -70,6 +75,7 @@ mutes.
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "bots.h"
 #include "input/input.h"
 #include "interface/hud.h"
 #include "interface/hud_draw.h"
@@ -90,8 +96,10 @@ mutes.
 #include "network_chat.h"
 #include "text_filter.h"
 #include "halo_keyboard.h"
+#include "halo_onscreen_keyboard.h" /* port: onscreen_keyboard.c */
 #include "server_director.h"
 #include "network_replay.h"
+#include "server_team_switch.h"
 
 #include <stdio.h>
 
@@ -109,6 +117,8 @@ int p2p_joined_listed_dedicated(void);
 /* server_mode.c's: a dedicated server (halo --server) */
 int halo_server_mode(void);
 void platform_log(char const *format, ...);
+/* the machine this game is played on (network_game_globals.c) */
+short network_game_client_get_local_machine_index(void);
 
 /* ---------- constants */
 
@@ -164,36 +174,11 @@ enum
 	CHAT_MAXIMUM_MUTES = MAXIMUM_TRACKED_PLAYERS,
 	/* (chat_name_match) a name more than one player's begins with */
 	CHAT_NAME_AMBIGUOUS = -2,
-	/* the on-screen keyboard: its columns, and its rows (the last of wide
-	keys, each CHAT_KEYBOARD_WIDE_COLUMNS of the columns) */
-	CHAT_KEYBOARD_COLUMNS = 10,
-	CHAT_KEYBOARD_ROWS = 5,
-	CHAT_KEYBOARD_WIDE_COLUMNS = 2,
-	/* a direction held: the key moves once, then again after the first
-	delay and at each repeat */
-	CHAT_KEYBOARD_REPEAT_FIRST_MILLISECONDS = 350,
-	CHAT_KEYBOARD_REPEAT_MILLISECONDS = 120,
-	/* its width, in hundredths of the window's: at the bottom right, clear
-	of the lines above the motion sensor; on Android at the bottom in the
-	middle, between the touch controls (the lines are at the top left) */
-	CHAT_KEYBOARD_WIDTH_PERCENT = 40,
-	CHAT_KEYBOARD_WIDTH_PERCENT_ANDROID = 36,
 };
 
 /* the lines' size, of the HUD font's: laid out at its size, then drawn scaled
 about the column's corner (not with the touch controls, on a phone's screen) */
 #define CHAT_TEXT_SCALE 0.5f
-
-/* the on-screen keyboard's last row's wide keys */
-enum
-{
-	_chat_key_shift,
-	_chat_key_symbols,
-	_chat_key_space,
-	_chat_key_delete,
-	_chat_key_send,
-	NUMBER_OF_CHAT_WIDE_KEYS
-};
 
 /* the line's flags */
 enum
@@ -204,6 +189,9 @@ enum
 	_chat_line_vehicle_bit,
 	/* the host's notice (a mute's): its text alone, from no player */
 	_chat_line_notice_bit,
+	/* the sender is a person on the machine running the game. the host
+	sets it when it sends the line on. a name so marked is drawn white */
+	_chat_line_host_bit,
 };
 
 /* the host's chat settings' flags (_distributed_message_chat_config) */
@@ -213,6 +201,9 @@ enum
 	_chat_config_allowed_bit,
 	/* their lines may have links */
 	_chat_config_links_bit,
+	/* pad[0] is the machine running the game. a build that does not set
+	this leaves that byte 0, which is that machine when it joined first */
+	_chat_config_host_machine_bit,
 };
 
 /* who a line is to (network_chat.h's _chat_channel_*) */
@@ -223,6 +214,8 @@ enum
 	_chat_color_red,
 	_chat_color_blue,
 	_chat_color_notice,
+	/* a person on the machine running the game */
+	_chat_color_host,
 };
 
 /* what a typed line asks (chat_command_parse) */
@@ -323,37 +316,22 @@ static struct
 /* the keyboard's chat actions held last frame (a press starts a line) */
 static unsigned long chat_actions_held;
 
-/* the on-screen keyboard, for a controller (D-pad Up opens it) and the
-touchscreen (its keys tapped) */
+/* the on-screen keyboard (onscreen_keyboard.c: its keys, the menus' text
+fields' too), for a controller (D-pad Up opens it) and the touchscreen (its
+keys tapped) */
 static struct
 {
 	boolean open;
 	unsigned long opening_buttons;
-	/* the key picked */
-	short row;
-	short column;
-	/* capitals; the symbols' page */
-	boolean shift;
-	boolean symbols;
-	/* the controller's buttons last frame (a press acts), and (system_
-	milliseconds) when a held direction moves the key again */
+	/* its keys: the one picked, capitals, the page, where they were drawn */
+	struct onscreen_keyboard keys;
+	/* the controller's buttons last frame (a press acts) */
 	unsigned long held;
-	unsigned long repeat_at;
-	/* where its keys were last drawn, in thousandths of the window across
-	and down (a tap's place: halo_chat_taps) */
-	boolean drawn;
-	short left;
-	short top;
-	short right;
-	short bottom;
+	/* the viewport it was drawn in, whose 0 to 1 a tap's place is
+	(halo_chat_taps) */
+	short viewport_width;
+	short viewport_height;
 } chat_keyboard;
-
-/* its keys' characters but the last row's, the letters' and the symbols' */
-static char const *const chat_keyboard_letters[CHAT_KEYBOARD_ROWS - 1] =
-	{ "1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.?" };
-/* (no "|": chat_text_clean) */
-static char const *const chat_keyboard_symbols[CHAT_KEYBOARD_ROWS - 1] =
-	{ "1234567890", "!@#$%^&*()", "-_=+[]{};:", "\"'<>/\\?~,." };
 
 /* the host's */
 static struct chat_rate chat_rates[MAXIMUM_CHAT_MACHINES];
@@ -368,6 +346,9 @@ static struct
 	byte flags;
 	/* (the host, system_milliseconds) */
 	unsigned long sent;
+	/* the machine running the game, once its settings have named it */
+	boolean host_named;
+	short host_machine;
 } chat_config;
 
 /* each local player's motion sensor as last drawn (the window's units),
@@ -550,6 +531,19 @@ static char const *chat_command_word(
 	return text + index;
 }
 
+/* whether a line (chat_text_clean's) is a dedicated server's player's team
+change, "!switch" or "!team" and nothing more, in either case (one with more
+is said: "!team push" is talk) */
+static boolean chat_team_switch_command(
+	char const *text)
+{
+	char const *rest = chat_command_word(text, "!switch");
+
+	if (!rest)
+		rest = chat_command_word(text, "!team");
+	return rest && !*rest;
+}
+
 /* what a typed line (chat_text_clean's) asks: "/mute <player> [minutes]" or
 "/unmute <player>", the word in either case; the player's name as typed (at
 most name_size with its end: it may have spaces) and the minutes (a mute's
@@ -725,59 +719,6 @@ static char const *chat_minutes_plural(
 	short minutes)
 {
 	return minutes == 1 ? "" : "s";
-}
-
-/* the character of an on-screen keyboard's key (rows: its page's characters,
-but the last row's), a letter in capitals with shift; 0 for a key of the
-last row, or none */
-static char chat_keyboard_character(
-	char const *const *rows,
-	short row,
-	short column,
-	boolean shift)
-{
-	char character;
-
-	if (row < 0 || row >= CHAT_KEYBOARD_ROWS - 1 || column < 0 || column >= CHAT_KEYBOARD_COLUMNS)
-		return 0;
-	character = rows[row][column];
-	if (shift && character >= 'a' && character <= 'z')
-		character = (char)(character - 'a' + 'A');
-	return character;
-}
-
-/* the on-screen keyboard's key picked moved by rows down and columns right,
-round its edges; on the last row a column is its wide key's first */
-static void chat_keyboard_move(
-	short *row,
-	short *column,
-	short rows_down,
-	short columns_right)
-{
-	short width;
-
-	*row = (short)((*row + rows_down % CHAT_KEYBOARD_ROWS + CHAT_KEYBOARD_ROWS) % CHAT_KEYBOARD_ROWS);
-	width = *row == CHAT_KEYBOARD_ROWS - 1 ? CHAT_KEYBOARD_WIDE_COLUMNS : 1;
-	*column = (short)(*column - *column % width);
-	*column = (short)((*column + columns_right * width % CHAT_KEYBOARD_COLUMNS + CHAT_KEYBOARD_COLUMNS) %
-		CHAT_KEYBOARD_COLUMNS);
-}
-
-/* the on-screen keyboard's key at a place in it (0 to 1 across and down);
-FALSE outside it */
-static boolean chat_keyboard_key_at(
-	real x,
-	real y,
-	short *row,
-	short *column)
-{
-	if (x < 0.0f || x >= 1.0f || y < 0.0f || y >= 1.0f)
-		return FALSE;
-	*row = (short)(y * CHAT_KEYBOARD_ROWS);
-	*column = (short)(x * CHAT_KEYBOARD_COLUMNS);
-	if (*row == CHAT_KEYBOARD_ROWS - 1)
-		*column = (short)(*column - *column % CHAT_KEYBOARD_WIDE_COLUMNS);
-	return TRUE;
 }
 
 static boolean chat_alphanumeric(
@@ -1021,19 +962,30 @@ static void chat_host_update_config(
 {
 	byte flags = chat_host_config_flags();
 	unsigned long now = system_milliseconds();
+	short host_machine = network_game_client_get_local_machine_index();
 	struct
 	{
 		struct distributed_message_header header;
 		struct distributed_chat_config config;
 	} message;
 
-	if (chat_config.known && flags == chat_config.flags && now - chat_config.sent < CHAT_CONFIG_MILLISECONDS)
+	if (chat_config.known && flags == chat_config.flags &&
+		chat_config.host_named == (host_machine != NONE) &&
+		(!chat_config.host_named || chat_config.host_machine == host_machine) &&
+		now - chat_config.sent < CHAT_CONFIG_MILLISECONDS)
 		return;
 	chat_config.known = TRUE;
 	chat_config.flags = flags;
+	chat_config.host_named = host_machine != NONE;
+	chat_config.host_machine = host_machine;
 	chat_config.sent = now;
 	csmemset(&message, 0, sizeof(message));
 	message.config.flags = flags;
+	if (host_machine != NONE)
+	{
+		message.config.flags |= (byte)FLAG(_chat_config_host_machine_bit);
+		message.config.pad[0] = (byte)host_machine;
+	}
 	chat_send_to_clients(&message, _distributed_message_chat_config, (word)sizeof(message));
 }
 
@@ -1047,7 +999,9 @@ void network_chat_handle_config(
 		return;
 	csmemcpy(&config, entries, sizeof(config));
 	chat_config.known = TRUE;
-	chat_config.flags = config.flags;
+	chat_config.host_named = TEST_FLAG(config.flags, _chat_config_host_machine_bit) != 0;
+	chat_config.host_machine = chat_config.host_named ? (short)config.pad[0] : 0;
+	chat_config.flags = (byte)(config.flags & (byte)~(byte)FLAG(_chat_config_host_machine_bit));
 }
 
 word network_chat_config_entry_size(
@@ -1230,11 +1184,43 @@ static short chat_local_players(
 
 static short chat_local_hearers(struct player_datum const *sender, short player_index, short channel);
 
-/* a line shown, from a player (absolute index) */
+/* the machine running the game: this one, when it is the host; the machine
+its settings named; or the first machine, which a host that does not say
+still is */
+static short chat_host_machine(
+	void)
+{
+	if (chat_host())
+		return network_game_client_get_local_machine_index();
+	if (chat_config.host_named)
+		return chat_config.host_machine;
+	return 0;
+}
+
+/* a person on the machine running the game. a client says so from that
+machine, including when the host did not mark the line. a bot's machine is
+not this one */
+static boolean chat_player_is_host(
+	struct player_datum const *player)
+{
+	short host_machine;
+	short machine;
+
+	if (!player)
+		return FALSE;
+	host_machine = chat_host_machine();
+	machine = (short)player->network_player_data.machine_index;
+	if (host_machine == NONE || machine != host_machine)
+		return FALSE;
+	return !bots_machine_is_bot(machine);
+}
+
+/* a line shown, from a player (absolute index). host_name: their name is white */
 static void chat_add_line(
 	short player_index,
 	short channel,
-	char const *text)
+	char const *text,
+	boolean host_name)
 {
 	struct player_datum *player = distributed_player(player_index);
 	struct chat_line *line;
@@ -1244,9 +1230,12 @@ static void chat_add_line(
 	and its lines, here alone) */
 	if (!player || network_voice_machine_muted(player->network_player_data.machine_index))
 		return;
+	if (!host_name)
+		host_name = chat_player_is_host(player);
 	line = chat_new_line(text);
 	csmemcpy(line->name, player->name, chat_player_name_length(player) * sizeof(line->name[0]));
-	line->color = game_engine_has_teams() && player->team_index == 0 ? _chat_color_red : _chat_color_blue;
+	line->color = host_name ? _chat_color_host :
+		game_engine_has_teams() && player->team_index == 0 ? _chat_color_red : _chat_color_blue;
 	line->channel = channel;
 	line->hearers = chat_local_hearers(player, player_index, channel);
 	/* (debug.txt has the lines, in ASCII) */
@@ -1365,12 +1354,18 @@ static void chat_host_send(
 	struct chat_message message;
 	short index;
 	short local_player_index;
+	byte flags;
+	boolean host_name;
 
 	if (!sender || sender->quit_out_of_game)
 		return;
 	sender_vehicle = chat_player_vehicle(sender);
+	host_name = chat_player_is_host(sender);
+	flags = chat_channel_flags(channel);
+	if (host_name)
+		flags |= (byte)FLAG(_chat_line_host_bit);
 	server_event_chat(player_index, channel, text);
-	chat_message_new(&message, player_index, chat_channel_flags(channel), text);
+	chat_message_new(&message, player_index, flags, text);
 	for (index = 0; index < count; index++)
 	{
 		struct data_iterator iterator;
@@ -1402,7 +1397,7 @@ static void chat_host_send(
 				chat_hears(channel, has_teams, sender->team_index, player_get(local_index)->team_index,
 					sender_vehicle, chat_player_vehicle(player_get(local_index)))))
 		{
-			chat_add_line(player_index, channel, text);
+			chat_add_line(player_index, channel, text, host_name);
 			break;
 		}
 	}
@@ -1602,6 +1597,24 @@ void network_chat_handle_up(
 	}
 	/* (a muted player's line goes no further: they are told for how long) */
 	chat_player_name_ascii(sender, name);
+	/* (a dedicated server's player's "!switch" or "!team", the whole line,
+	muted or not: said to no one, they are moved to the other team and
+	everyone told, or told why not: server_team_switch.c) */
+	if (halo_server_mode() && chat_team_switch_command(text))
+	{
+		char notice[CHAT_TEXT_SIZE];
+
+		if (server_team_switch(DATUM_INDEX_NEW(line.player_index, sender->identifier), name, notice,
+				(long)sizeof(notice)))
+		{
+			chat_host_notice(NONE, notice);
+		}
+		else
+		{
+			chat_host_notice(machine_index, notice);
+		}
+		return;
+	}
 	if ((mute = chat_mute_find(chat_mutes, NUMBEROF(chat_mutes), name, now)) != NULL)
 	{
 		short minutes = chat_mute_minutes_left(mute, now);
@@ -1670,7 +1683,8 @@ void network_chat_handle_down(
 	}
 	if (distributed_player_from_byte(line.player_index) == NONE)
 		return;
-	chat_add_line(line.player_index, chat_channel_from_flags(line.flags), text);
+	chat_add_line(line.player_index, chat_channel_from_flags(line.flags), text,
+		TEST_FLAG(line.flags, _chat_line_host_bit));
 }
 
 /* ---------- typing */
@@ -1844,7 +1858,7 @@ static void chat_input_end(
 	chat_input.active = FALSE;
 	chat_keyboard.open = FALSE;
 	chat_keyboard.opening_buttons = 0;
-	chat_keyboard.drawn = FALSE;
+	chat_keyboard.keys.drawn = FALSE;
 	chat_scroll = 0;
 }
 
@@ -1863,31 +1877,17 @@ capitals, the page, a space, a delete, or the line sent */
 static void chat_keyboard_press(
 	void)
 {
-	if (chat_keyboard.row < CHAT_KEYBOARD_ROWS - 1)
-	{
-		char typed[2];
+	char typed[2] = { 0, 0 };
 
-		typed[0] = chat_keyboard_character(chat_keyboard.symbols ? chat_keyboard_symbols : chat_keyboard_letters,
-			chat_keyboard.row, chat_keyboard.column, chat_keyboard.shift);
-		typed[1] = 0;
-		chat_text_append(chat_input.text, typed);
-		return;
-	}
-	switch (chat_keyboard.column / CHAT_KEYBOARD_WIDE_COLUMNS)
+	switch (onscreen_keyboard_press(&chat_keyboard.keys, typed))
 	{
-	case _chat_key_shift:
-		chat_keyboard.shift = !chat_keyboard.shift;
+	case _onscreen_press_character:
+		chat_text_append(chat_input.text, typed);
 		break;
-	case _chat_key_symbols:
-		chat_keyboard.symbols = !chat_keyboard.symbols;
-		break;
-	case _chat_key_space:
-		chat_text_append(chat_input.text, " ");
-		break;
-	case _chat_key_delete:
+	case _onscreen_press_delete:
 		chat_input_delete();
 		break;
-	default:
+	case _onscreen_press_done:
 		chat_send(chat_input.channel, chat_input.text, TRUE, TRUE);
 		chat_input_end();
 		break;
@@ -1895,10 +1895,11 @@ static void chat_keyboard_press(
 }
 
 /* the on-screen keyboard's controller (pressed: the buttons pressed this
-frame, held: those held) and taps: B closes it, Start sends the line, D-pad
-Up and Down turn it to everyone, the team or the vehicle, the stick (and
-D-pad Left and Right) moves the key picked, A presses it, X deletes, Y
-gives capitals; a tap presses the key under it */
+frame, held: those held) and taps: B closes it, Start sends the line, R
+turns it to everyone, the team or the vehicle, the stick and the d-pad move
+the key picked, A presses it, X deletes, Y gives capitals; a tap presses
+the key under it. On the Switch its buttons are a menu's while it is up
+(xinput_sdl.c's menu_buttons_swapped): A, the right one, types */
 static void chat_keyboard_update(
 	unsigned long pressed,
 	unsigned long held)
@@ -1920,43 +1921,32 @@ static void chat_keyboard_update(
 		chat_input_end();
 		return;
 	}
-	if (TEST_FLAG(pressed, HALO_CHAT_PAD_UP))
-		chat_input.channel = (short)((chat_input.channel + NUMBER_OF_CHAT_CHANNELS - 1) % NUMBER_OF_CHAT_CHANNELS);
-	if (TEST_FLAG(pressed, HALO_CHAT_PAD_DOWN))
+	/* (R turns it to everyone, the team or the vehicle in turn) */
+	if (TEST_FLAG(pressed, HALO_CHAT_PAD_RIGHT_SHOULDER))
 		chat_input.channel = (short)((chat_input.channel + 1) % NUMBER_OF_CHAT_CHANNELS);
-	/* (a direction pressed moves the key at once, held, again after a while
-	and then quickly) */
-	if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_UP))
+	/* (a direction pressed, the stick's or the d-pad's, moves the key at once,
+	held, again after a while and then quickly) */
+	if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_UP) || TEST_FLAG(held, HALO_CHAT_PAD_UP))
 		rows_down = -1;
-	else if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_DOWN))
+	else if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_DOWN) || TEST_FLAG(held, HALO_CHAT_PAD_DOWN))
 		rows_down = 1;
 	if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_LEFT) || TEST_FLAG(held, HALO_CHAT_PAD_LEFT))
 		columns_right = -1;
 	else if (TEST_FLAG(held, HALO_CHAT_PAD_STICK_RIGHT) || TEST_FLAG(held, HALO_CHAT_PAD_RIGHT))
 		columns_right = 1;
-	if (!rows_down && !columns_right)
-	{
-		chat_keyboard.repeat_at = 0;
-	}
-	else if (!chat_keyboard.repeat_at || (long)(now - chat_keyboard.repeat_at) >= 0)
-	{
-		chat_keyboard_move(&chat_keyboard.row, &chat_keyboard.column, rows_down, columns_right);
-		chat_keyboard.repeat_at = now + (chat_keyboard.repeat_at ? CHAT_KEYBOARD_REPEAT_MILLISECONDS :
-			CHAT_KEYBOARD_REPEAT_FIRST_MILLISECONDS);
-	}
+	onscreen_keyboard_steer(&chat_keyboard.keys, rows_down, columns_right, now);
 	if (TEST_FLAG(pressed, HALO_CHAT_PAD_A))
 		chat_keyboard_press();
 	if (chat_input.active && TEST_FLAG(pressed, HALO_CHAT_PAD_X))
 		chat_input_delete();
 	if (chat_input.active && TEST_FLAG(pressed, HALO_CHAT_PAD_Y))
-		chat_keyboard.shift = !chat_keyboard.shift;
+		chat_keyboard.keys.shift = !chat_keyboard.keys.shift;
 	/* (a tap on a key presses it; elsewhere it closes the keyboard, as the
 	touch controls, B among them, hide while it is up: touch_input.c) */
-	if (chat_input.active && chat_input.controller == 0 && halo_chat_taps(&x, &y) && chat_keyboard.drawn)
+	if (chat_input.active && chat_input.controller == 0 && halo_chat_taps(&x, &y) && chat_keyboard.keys.drawn)
 	{
-		if (chat_keyboard_key_at((real)(x * 1000.0f - chat_keyboard.left) / (real)(chat_keyboard.right - chat_keyboard.left),
-			(real)(y * 1000.0f - chat_keyboard.top) / (real)(chat_keyboard.bottom - chat_keyboard.top),
-			&chat_keyboard.row, &chat_keyboard.column))
+		if (onscreen_keyboard_pick_at(&chat_keyboard.keys, (short)(x * chat_keyboard.viewport_width),
+			(short)(y * chat_keyboard.viewport_height)))
 		{
 			chat_keyboard_press();
 		}
@@ -2026,6 +2016,8 @@ void network_chat_update(
 	if (!chat_network_game() || !game_in_progress())
 	{
 		chat_config.known = FALSE;
+		chat_config.host_named = FALSE;
+		chat_config.host_machine = 0;
 		chat_in_game = FALSE;
 	}
 	else
@@ -2084,7 +2076,7 @@ void network_chat_update(
 		the on-screen keyboard; not while the overlay menu is open, whose up
 		it is: port/linux/game/overlay_menu.c, nor in a replay's playback,
 		whose up is its camera's: network_replay_playback.c) */
-		if ((pressed || (TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP) && !network_replay_playing())) &&
+		if ((pressed || (TEST_FLAG(pad_pressed, HALO_CHAT_PAD_UP) && !network_replay_viewing())) &&
 			!console_is_active() && !overlay_menu_open())
 		{
 			/* (no typing where the host has the chat off: it says so, once a
@@ -2107,12 +2099,8 @@ void network_chat_update(
 				chat_keyboard.opening_buttons = halo_chat_pad_buttons();
 				chat_keyboard.held = 0;
 				chat_keyboard.open = TRUE;
+				onscreen_keyboard_reset(&chat_keyboard.keys);
 				error(_error_log, "chat: the on-screen keyboard opened");
-				chat_keyboard.row = 1;
-				chat_keyboard.column = 0;
-				chat_keyboard.shift = FALSE;
-				chat_keyboard.symbols = FALSE;
-				chat_keyboard.repeat_at = 0;
 			}
 		}
 		return;
@@ -2237,14 +2225,15 @@ static boolean chat_style_white(
 	return white;
 }
 
-/* a name's colour: its team's (a notice's a pale gold), or white */
+/* a name's colour: its team's (a notice's a pale gold), the host's white,
+or every name white */
 static void chat_color(
 	short color,
 	real alpha,
 	real_argb_color *result)
 {
 	result->alpha = alpha;
-	if (chat_style_white())
+	if (chat_style_white() || color == _chat_color_host)
 	{
 		result->red = result->green = result->blue = 1.0f;
 	}
@@ -2553,95 +2542,57 @@ static void chat_line_name(
 	name[length] = 0;
 }
 
-/* the on-screen keyboard, at the window's bottom right (with the touch
-controls in the middle, between them: chat_touch_layout), the key picked
-lit; where its keys are kept, for taps */
+/* the on-screen keyboard's screen (onscreen_keyboard.c), as the menus' text
+fields have it, over the game, which shows through it: the channel the
+line goes to, the line in its box, the keys and the buttons, laid out as
+in the menus' 640x480, scaled to the window's height and centred in it; the
+viewport it is drawn in kept, for taps */
 static void chat_keyboard_draw(
 	long font_index,
 	rectangle2d const *window,
 	short line_height)
 {
-	short percent = chat_touch_layout() ? CHAT_KEYBOARD_WIDTH_PERCENT_ANDROID : CHAT_KEYBOARD_WIDTH_PERCENT;
+	/* (the right shoulder named, not pictured: the menus' text pictures it
+	as the Xbox's black button) */
+#if defined(HALO_SWITCH)
+#define CHAT_CHANNEL_HINT "R Channel"
+#elif defined(HALO_PS5)
+#define CHAT_CHANNEL_HINT "R1 Channel"
+#else
+#define CHAT_CHANNEL_HINT "RB Channel"
+#endif
+	static wchar_t const *const hints[] = { L"%a-button Type", L"%x-button Delete", L"%y-button Shift",
+		L"" CHAT_CHANNEL_HINT, L"%b-button Cancel" };
+	static char const *const hint_words[] = { "Type", "Delete", "Shift", CHAT_CHANNEL_HINT, "Cancel" };
 	short window_width = (short)(window->x1 - window->x0);
 	short window_height = (short)(window->y1 - window->y0);
-	short key_width = (short)(window_width * percent / 100 / CHAT_KEYBOARD_COLUMNS);
-	short key_height = (short)MAX(key_width * 3 / 4, line_height + 4);
-	rectangle2d keys;
-	rectangle2d panel;
-	short row;
+	struct onscreen_keyboard_screen screen;
+	rectangle2d area;
 
-	if (window_width <= 0 || window_height <= 0 || key_width <= 4)
+	(void)line_height;
+	if (window_width <= 0 || window_height <= 0)
 		return;
-	if (chat_touch_layout())
-		keys.x0 = (short)((window->x0 + window->x1 - key_width * CHAT_KEYBOARD_COLUMNS) / 2);
-	else
-		keys.x0 = (short)(window->x1 - window_width / 25 - key_width * CHAT_KEYBOARD_COLUMNS);
-	keys.x1 = (short)(keys.x0 + key_width * CHAT_KEYBOARD_COLUMNS);
-	keys.y1 = (short)(window->y1 - line_height);
-	keys.y0 = (short)(keys.y1 - key_height * CHAT_KEYBOARD_ROWS);
-	panel = keys;
-	panel.x0 -= 4;
-	panel.y0 -= 4;
-	panel.x1 += 4;
-	panel.y1 += 4;
-	draw_quad(&panel, 0xA0000000);
-	for (row = 0; row < CHAT_KEYBOARD_ROWS; row++)
-	{
-		short span = row == CHAT_KEYBOARD_ROWS - 1 ? CHAT_KEYBOARD_WIDE_COLUMNS : 1;
-		short column;
-
-		for (column = 0; column < CHAT_KEYBOARD_COLUMNS; column += span)
-		{
-			boolean picked = row == chat_keyboard.row && column == chat_keyboard.column;
-			boolean lit = row == CHAT_KEYBOARD_ROWS - 1 && column / span == _chat_key_shift && chat_keyboard.shift;
-			real_argb_color color = { 1.0f, 1.0f, 1.0f, 1.0f };
-			rectangle2d key;
-			rectangle2d bounds;
-			wchar_t label[8] = { 0 };
-
-			key.x0 = (short)(keys.x0 + column * key_width + 2);
-			key.x1 = (short)(keys.x0 + (column + span) * key_width - 2);
-			key.y0 = (short)(keys.y0 + row * key_height + 2);
-			key.y1 = (short)(keys.y0 + (row + 1) * key_height - 2);
-			draw_quad(&key, picked ? 0xF05682DC : lit ? 0xC0406090 : 0x90283848);
-			if (row < CHAT_KEYBOARD_ROWS - 1)
-			{
-				label[0] = (wchar_t)(unsigned char)chat_keyboard_character(chat_keyboard.symbols ? chat_keyboard_symbols :
-					chat_keyboard_letters, row, column, chat_keyboard.shift);
-			}
-			else
-			{
-				static wchar_t const *const wide[NUMBER_OF_CHAT_WIDE_KEYS] =
-					{ L"Aa", L"#+=", L"space", L"DEL", L"SEND" };
-				wchar_t const *text = column / span == _chat_key_symbols && chat_keyboard.symbols ? L"ABC" :
-					wide[column / span];
-				short index;
-
-				for (index = 0; text[index] && index < (short)NUMBEROF(label) - 1; index++)
-					label[index] = text[index];
-			}
-			bounds = key;
-			bounds.y0 = (short)(key.y0 + (key.y1 - key.y0 - line_height) / 2);
-			bounds.y1 = (short)(bounds.y0 + line_height);
-			draw_string_set_draw_mode(font_index, NONE, 2 /* centred */, 0, &color);
-			rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, label);
-		}
-	}
-	/* (in thousandths of the viewport, which fills the screen as a tap's
-	place is of it: the window inside it can be smaller, as on Android; the
-	keys are drawn from the viewport's top left) */
-	{
-		short viewport_width = (short)(render.camera.viewport_bounds.x1 - render.camera.viewport_bounds.x0);
-		short viewport_height = (short)(render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0);
-
-		if (viewport_width <= 0 || viewport_height <= 0)
-			return;
-		chat_keyboard.drawn = TRUE;
-		chat_keyboard.left = (short)(keys.x0 * 1000 / viewport_width);
-		chat_keyboard.right = (short)(keys.x1 * 1000 / viewport_width);
-		chat_keyboard.top = (short)(keys.y0 * 1000 / viewport_height);
-		chat_keyboard.bottom = (short)(keys.y1 * 1000 / viewport_height);
-	}
+	area.y0 = window->y0;
+	area.y1 = window->y1;
+	area.x0 = (short)((window->x0 + window->x1) / 2 - (long)window_height * 640 / 480 / 2);
+	area.x1 = (short)(area.x0 + (long)window_height * 640 / 480);
+	screen.caption = chat_input.channel == _chat_channel_team ? "SAY TO YOUR TEAM" :
+		chat_input.channel == _chat_channel_vehicle ? "SAY TO YOUR VEHICLE" : "SAY TO EVERYONE";
+	screen.text = chat_input.text;
+	screen.masked = FALSE;
+	screen.done_label = "SEND";
+	screen.translucent = TRUE;
+	screen.hints = hints;
+	screen.hint_words = hint_words;
+	screen.hint_count = (short)NUMBEROF(hints);
+	onscreen_keyboard_draw_screen(&chat_keyboard.keys, &area, &screen, font_index);
+	/* (the keys are drawn from the viewport's top left, which fills the
+	screen as a tap's place is of it: the window inside it can be smaller,
+	as on Android) */
+	chat_keyboard.viewport_width = (short)(render.camera.viewport_bounds.x1 - render.camera.viewport_bounds.x0);
+	chat_keyboard.viewport_height = (short)(render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0);
+	if (chat_keyboard.viewport_width <= 0 || chat_keyboard.viewport_height <= 0)
+		chat_keyboard.keys.drawn = FALSE;
 }
 
 void network_chat_draw(
@@ -2760,11 +2711,16 @@ void network_chat_draw(
 		layout.rows = 1;
 		layout.starts[0] = start;
 		layout.lengths[0] = (short)(length + 1 - start);
-		chat_draw_layout(font_index, &layout, left, right, touch ? edge : (short)(edge - line_height), line_height,
-			prompt, &color, text, &text_color, 1.0f);
+		/* (the line typed on the on-screen keyboard is in its box, not
+		among the lines: chat_keyboard_draw) */
+		if (!chat_keyboard.open)
+		{
+			chat_draw_layout(font_index, &layout, left, right, touch ? edge : (short)(edge - line_height),
+				line_height, prompt, &color, text, &text_color, 1.0f);
+			edge = (short)(edge + (touch ? line_height : -line_height));
+			rows--;
+		}
 		text_filter_resume();
-		edge = (short)(edge + (touch ? line_height : -line_height));
-		rows--;
 		if (chat_keyboard.open)
 		{
 			/* (the on-screen keyboard at its own size) */

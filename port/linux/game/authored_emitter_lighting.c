@@ -42,7 +42,7 @@ static int identities_ready;
 static float prong_reach(struct object_datum const *object)
 {
 	/* a replay's playback has no local player: its view is the replay's camera */
-	int i, replaying = network_replay_playing(), count = replaying ? 1 : local_player_count();
+	int i, replaying = network_replay_viewing(), count = replaying ? 1 : local_player_count();
 	float nearest = 36.0f;
 	if (!count || (replaying && !network_replay_camera())) return 1.0f;
 	for (i = 0; i < count; i++)

@@ -7,7 +7,7 @@ A dedicated server's events (server_events.h).
 #include "server_events.h"
 #include "server_mode.h"
 
-#if HALO_SERVER_BUILD
+#if HALO_HOST_BUILD
 
 #include "posix_server.h"
 

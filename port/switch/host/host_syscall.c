@@ -1343,6 +1343,45 @@ int host_guest_posix_set_file_times(const char *path, posix_ulong access_seconds
 	return result;
 }
 
+/* posix_mcc_share_open's descriptor, which the guest wraps with its own
+ * fdopen (an MCC package's files, read to be hashed, served or copied:
+ * port/linux/game/mcc_share_storage.c): the host's, filed in the guest's
+ * table like any it opens. Handed back as it was, it named another of the
+ * guest's files or none, so the host's hashing read a size of nothing and
+ * refused every download ("could not read the files"), and a joiner could not
+ * copy a resource it had (a Workshop download's). */
+int host_guest_posix_mcc_share_open(const char *path)
+{
+	int host_fd;
+	int guest_fd;
+
+	host_sd_lock();
+	host_fd = posix_mcc_share_open(path);
+	host_sd_unlock();
+	if (host_fd < 0)
+		return -1;
+	sd_note_path(path, host_fd);
+	guest_fd = guest_descriptor(host_fd);
+	if (guest_fd < 0)
+	{
+		host_sd_lock();
+		posix_mcc_share_close(host_fd);
+		host_sd_unlock();
+		errno = EMFILE;
+		return -1;
+	}
+	return guest_fd;
+}
+
+void host_guest_posix_mcc_share_close(int descriptor)
+{
+	if (guest_descriptor_is_open(descriptor))
+	{
+		sd_note_close(host_descriptor(descriptor));
+		guest_descriptor_forget(descriptor);
+	}
+}
+
 int host_guest_posix_fstat(int descriptor, struct posix_file_information *information)
 {
 	int host_fd = host_descriptor(descriptor);

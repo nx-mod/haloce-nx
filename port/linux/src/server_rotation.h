@@ -12,7 +12,10 @@ to a game's variant and options, and checks each against its game engine.
     entry    := map [ ":" gametype { "+" rule } ]
     map      := name | "custom_maps\" name | a level's path
     gametype := a built-in's name | an OpenCE gametype's | a gametype file's name
-                | "file=" a saved gametype's name | "coop"
+                | "file=" a saved gametype's name (gametypes/<name>.gametype)
+                | "saved=" the name of a gametype in the game's saved games
+                  (made in Edit Gametypes; %XX for a byte of its UTF-8 that
+                  is not a letter, digit, "_", "-" or ".") | "coop"
     rule     := key "=" value
 */
 
@@ -26,7 +29,9 @@ enum
 	SERVER_RULES_MAXIMUM = 48,
 	SERVER_ENTRY_TEXT_SIZE = 256,
 	SERVER_MAP_SIZE = 128,
-	SERVER_GAMETYPE_SIZE = 64,
+	/* (room for saved=<name> of a saved gametype's 11 characters, each
+	not ASCII) */
+	SERVER_GAMETYPE_SIZE = 112,
 	SERVER_RULE_KEY_SIZE = 32,
 	SERVER_RULE_VALUE_SIZE = 32,
 	SERVER_REASON_SIZE = 160,
@@ -91,6 +96,9 @@ enum
 	_server_map_name,
 	_server_map_custom,
 	_server_map_path,
+	/* an MCC map, mcc_maps\[package\]name: the MCC catalog's
+	(port/linux/game/mcc_maps.c), not a file in the maps folders */
+	_server_map_mcc,
 };
 
 struct server_entry

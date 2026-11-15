@@ -40,3 +40,5 @@ reference/
 # SPIR-V a glslangValidator run leaves in the current folder (tools/vk_shader_check.py writes under build/)
 /*.spv
 .DS_Store
+# User-supplied Halo 1 MCC maps and resources
+mcc_maps/

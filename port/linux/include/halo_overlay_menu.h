@@ -28,6 +28,10 @@ enum halo_overlay_pad_button
 	HALO_OVERLAY_PAD_LEFT_SHOULDER,
 	HALO_OVERLAY_PAD_RIGHT_SHOULDER,
 	HALO_OVERLAY_PAD_DPAD_DOWN,
+	/* X and Y, which the overlay does not use (the host's screen does:
+	halo_host_dashboard.h) */
+	HALO_OVERLAY_PAD_X,
+	HALO_OVERLAY_PAD_Y,
 	NUMBER_OF_HALO_OVERLAY_PAD_BUTTONS
 };
 

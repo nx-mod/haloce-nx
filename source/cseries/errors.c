@@ -129,6 +129,8 @@ char *error_get(
 /* port/linux/src/port_config.c's */
 int config_boolean(const char *name);
 unsigned long config_changes(void);
+/* port: debug.txt made 0666 (port/linux/src/msvc_crt.c) */
+void platform_share_file(FILE *file);
 
 /* port: config.toml's debug.log_files (read again as the settings change):
 false writes no debug.txt, not even opened */
@@ -243,11 +245,12 @@ static void debug_file_port_write(
 		if (!file)
 		{
 			/* (after the first time, write_to_debug_file prints them) */
-			if (halo_server_mode() && !halo_server_debug_echo() && !debug_file_port_unwritable)
+			if (halo_server_headless() && !halo_server_debug_echo() && !debug_file_port_unwritable)
 				fwrite(text, 1, (size_t)size, stderr);
 			debug_file_port_unwritable = TRUE;
 			return;
 		}
+		platform_share_file(file);
 		fseek(file, 0, SEEK_END);
 		debug_file_port_size = ftell(file);
 		if (debug_file_port_size < 0)
@@ -281,6 +284,7 @@ static void debug_file_port_write(
 		{
 			return;
 		}
+		platform_share_file(file);
 		debug_file_port = file;
 		debug_file_port_size = 0;
 		debug_file_port_rolled = TRUE;
@@ -375,7 +379,7 @@ static void write_to_debug_file(
 	/* port: a dedicated server's debug.txt also on the standard error
 	(server.log_debug_echo), and there alone when the file cannot be written
 	(a read-only data root) */
-	if (halo_server_mode() && (halo_server_debug_echo() || debug_file_port_unwritable))
+	if (halo_server_headless() && (halo_server_debug_echo() || debug_file_port_unwritable))
 		fprintf(stderr, "debug: %s%s", string, string[0] && string[csstrlen(string) - 1] == '\n' ? "" : "\n");
 	urgent = debug_file_port_urgent || !strncmp(string, "EXCEPTION", 9);
 	if (!urgent)

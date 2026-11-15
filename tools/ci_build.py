@@ -224,6 +224,16 @@ def main() -> int:
     # the menus' XML parser (port/third_party/expat), in every build, whose
     # MIT license asks copies to carry its notice
     shutil.copy2(ROOT / "port/third_party/expat/COPYING", dist / "expat-COPYING.txt")
+    # MCC's texture decoder is distributed under bcdec's MIT option.
+    shutil.copy2(ROOT / "port/third_party/bcdec/LICENSE", dist / "bcdec-LICENSE.txt")
+    if args.platform in ("android", "switch", "ps5"):
+        # the Steam Workshop screen's Steam client (port/android/host/steam_*.c,
+        # in these hosts): Zstandard's decoder (BSD, which asks binaries to
+        # carry its notice), stb_image (MIT or public domain) and its QR code
+        # (qrcodegen, MIT); the LZMA SDK's decoder is public domain
+        shutil.copy2(ROOT / "port/third_party/zstd/LICENSE", dist / "zstd-LICENSE.txt")
+        shutil.copy2(ROOT / "port/third_party/stb/LICENSE", dist / "stb-LICENSE.txt")
+        shutil.copy2(ROOT / "port/third_party/qrcodegen/LICENSE", dist / "qrcodegen-LICENSE.txt")
     # voice chat's codec (port/third_party/opus), in every build, whose BSD
     # license asks binaries to carry its notice
     shutil.copy2(ROOT / "port/third_party/opus/COPYING", dist / "opus-COPYING.txt")
@@ -256,11 +266,6 @@ def main() -> int:
     # its buttons, port/assets/buttons/platforms), CC0: not required, but
     # credited (the PS5's release has it in licenses/: tools/ps5_build.py)
     shutil.copy2(ROOT / "port/assets/buttons/platforms/Kenney-LICENSE.txt", dist / "Kenney-LICENSE.txt")
-    if args.platform == "switch":
-        # the link page's QR code (port/third_party/qrcodegen, Project
-        # Nayuki's, in the Switch's build alone), whose MIT license asks
-        # copies to carry its notice
-        shutil.copy2(ROOT / "port/third_party/qrcodegen/LICENSE", dist / "qrcodegen-LICENSE.txt")
     if args.platform == "switch":
         # and the Switch's menus' title font (port/switch/host/host_ui.c),
         # under the same license

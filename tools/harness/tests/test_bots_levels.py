@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, function, mutated, read, run, structure  # noqa: E402
 
 CASES = ["levels-kept", "levels-ordered", "settings", "reaction", "aim", "firing", "melee", "grenades", "retreat",
-         "moves"]
+         "moves", "skill-pick"]
 
 # a fault in bots.c (the table, the settings) or bots_combat.c (the rules), and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -46,6 +46,11 @@ NEGATIVE_CONTROLS = {
                                      "\tcase _bots_skill_normal: chance"), "moves"),
     "crouches-without-a-wait": ("bots_combat.c", ("if (now < state->next || random >= chance / TICKS)",
                                                   "if (random >= chance / TICKS)"), "moves"),
+    "random-pick-skips-legendary": ("bots_combat.c", ("(long)(random_a * (float)NUMBER_OF_BOTS_SKILLS)",
+                                                      "(long)(random_a * (float)(NUMBER_OF_BOTS_SKILLS - 1))"),
+                                    "skill-pick"),
+    "normal-pick-too-wide": ("bots_combat.c", ("picked = level + (long)floor(normal + 0.5);",
+                                               "picked = level + (long)floor(2.0 * normal + 0.5);"), "skill-pick"),
     "low-ground-credited": ("bots_combat.c", ("\tif (height_above <= 0.0f)\n\t\treturn 0.0f;\n", ""), "moves"),
 }
 
@@ -104,7 +109,9 @@ def unused(bots, rules_header, rules):
 
 
 def wiring(bots):
-    return unused(bots, read("port/linux/game/bots_combat.h"), read("port/linux/game/bots_combat.c"))
+    # (the group levels' pick is the server commands', sv_bot_add)
+    return unused(bots + read("port/linux/game/server_commands.c"), read("port/linux/game/bots_combat.h"),
+                  read("port/linux/game/bots_combat.c"))
 
 
 def test_every_level_rule_is_asked():

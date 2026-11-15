@@ -89,7 +89,7 @@ def build(test, generated, flags=()):
     work.mkdir(parents=True, exist_ok=True)
     for name, text in generated:
         (work / name).write_text(text)
-    executable = work / test
+    executable = work / (test + (".exe" if os.name == "nt" else ""))
     command = [os.environ.get("CC", "clang"), "-m32", "-std=gnu99", "-O2", "-Wall", "-Werror", "-Wno-unused-function",
                "-Wno-unused-variable", "-I", str(HARNESS / "include"), "-I", str(work), *flags,
                str(HARNESS / "tests" / f"{test}.c"), "-o", str(executable), "-lm"]

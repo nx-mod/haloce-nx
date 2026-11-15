@@ -37,7 +37,7 @@ static const struct observer_result *observer_get_camera(short p) { return &came
 /* a replay's playback: no local player, and the replay's own camera */
 static int replaying;
 static struct observer_result replay_camera;
-static int network_replay_playing(void) { return replaying; }
+static int network_replay_viewing(void) { return replaying; }
 static const struct observer_result *network_replay_camera(void) { return &replay_camera; }
 static real distance3d(const real_point3d *a,const real_point3d *b) { return a->x-b->x; }
 long light_port_glow_definition_get(void) { return missing?NONE:99; }

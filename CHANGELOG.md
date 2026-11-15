@@ -1,5 +1,88 @@
 # Changelog
 
+## Build 142: MCC and Hosted Servers!
+
+Thanks to:
+
+1. **puginatux**, for brainstorming the UX and for testing.
+2. **chester**, for the MCC compatibility base.
+3. **watanoge**, for the Steam Workshop integration base.
+
+### Host Server
+
+- New: host a dedicated server from the menus, with no player of your own, on Android, the Switch and the PS5. Multiplayer > HOST SERVER opens the Host Hub. It lists your playlists (A hosts, X edits, Y deletes, START opens Server Settings) beside the rounds of the playlist you've picked. While hosting, the host's screen shows the match, the players and the next round, and has a player menu for kick, ban (for a day or for good), mute and notices. (thelinkin3000)
+- Playlist Builder: maps and rounds side by side. A on a map picks its gametype and adds the round, Y removes a round, the shoulder buttons move it, SAVE keeps the playlist under its name. It lists custom_maps' subfolders, MCC maps, and the gametypes you made in Edit Gametypes (always the latest version of them). It also has Round Options. (thelinkin3000)
+- Server Settings: name, password, listing, players, lobby countdown, map sharing, vote kicking and message of the day. LISTING is INTERNET: PUBLIC, INTERNET: PRIVATE or LAN, like Create Game's choices. A public server now shows in the server browser like a player's game, and asks the router for its port. (thelinkin3000)
+- Watch your server's game live with the Theater's cameras: R on the host's screen, or WATCH in a player's menu. Behind, eyes, free and cinematic views; Back shows the scores. (thelinkin3000)
+- Bots can fill a hosted server (BOTS in Server Settings). An MCC map in the rotation loads after the first round. The host stopping the server no longer shows a network error. (thelinkin3000)
+
+### MCC maps
+
+- Settings > Network Setup > STEAM WORKSHOP: sign in with Steam (password with Steam Guard, or a QR code) and download Halo: CE Anniversary's shared maps and Halo 1 Workshop items, on Android, the Switch and the PS5. The Steam client comes from Halo Content Evolved. (thelinkin3000)
+- IMPORT on the map lists now takes CE maps, zips of maps, Workshop packages and MCC resource sets on every platform. Android opens the file picker. The Switch and the PS5 show an upload page's address and QR code on your local network. An import of a package you already have asks whether to REPLACE it or KEEP VERSION ON DISK. (thelinkin3000)
+- MCC maps load much faster: sounds and textures are converted on the host's spare cores, not one by one on the game's thread (a Switch campaign map took 87 s). The shared bitmaps.map and sounds.map are no longer read in full for their checksum at every load, and BC7 textures are kept at a quarter of the memory. (thelinkin3000)
+- Switch: MCC maps no longer fail with "the MCC tag address window at 50000000 (64 MiB) is unavailable". (thelinkin3000)
+- MCC map lists and the MCC lobby no longer redo work every frame. (thelinkin3000)
+
+### Map transfers
+
+- Joining a game on an MCC map you don't have: with a Steam sign-in and a Workshop map, the big resource files come from the Workshop while the host sends the rest. With no other source, the whole package installs from Steam. You're asked to download from the host only when the host is the only source. (thelinkin3000)
+- Between two SlipstreamCE machines, an MCC package goes over its own fast connection at the upload's full speed, not in small chunks once a frame. OpenCE hosts and joiners work as before. (thelinkin3000)
+- Map sharing over internet play is much faster on slow connections: the tunnel's window now follows the upload limit and the round trip (it was capped near 1.3 MB/s at 100 ms). Sharing runs on its own thread, not once a frame. (thelinkin3000)
+- A host says why it refuses a download. The Switch can download MCC maps without stalling the game, and a file it can't read is reported. (thelinkin3000)
+
+### Bots
+
+- New second bot type, Proving Grounds (Bots > Kind): a new bot brain we wrote from scratch (no Project Proving Grounds code). It reacts only to what it sees, hears or is told, aims like a human, has team play for Slayer, CTF, King, Oddball and Race, and eight personalities, dealt so both teams match. (thelinkin3000)
+- Birchwood's CTF play redone: a home guard, a forward line, pushes and wingmen, so attacks no longer stall one by one. One flag carrier per team, who hides while its own flag is away. Birchwood bots also use the plasma pistol's overcharge. (thelinkin3000)
+- Bots find their way to upper floors and use ladders and teleporters. Vehicles keep to ground they fit on and drive around walls, and a Warthog's driver calls its crew. Proving Grounds bots got Birchwood's fire ranges, power-ups and retreats. (thelinkin3000)
+
+### Menus and keyboard
+
+- Text fields (server name and password, message of the day, playlist name, Create Game, the server browser's password) are typed on a new on-screen keyboard in the menus' style, with a controller, a tap or a keyboard. The Switch had no keyboard for these fields before. The text chat uses the same keyboard, now larger and see-through. On the Switch, A types, B cancels and R changes the chat channel. (thelinkin3000)
+- Switch: the touchscreen works in the menus in handheld mode. (thelinkin3000)
+- Server browser: a touch drag scrolls the list again, instead of changing its sort order. Network Setup's rows no longer overlap the help text. (thelinkin3000)
+
+### Fixes
+
+- Theater: replays recorded before the MCC update, and before network version 42, play again ("This replay has no game to play"). (thelinkin3000)
+- The loading screen's trails cover the whole width on Vulkan and on the Switch. (thelinkin3000)
+- config.toml, debug.txt, gamestate.txt and halo.log can be read and replaced over FTP or from a file manager. (thelinkin3000)
+
+### From OpenCE
+
+#### MCC
+
+- Halo 1 MCC map support, with its documentation. (chestahh)
+- MCC package discovery is on by default and finds missions with lowercase metadata. (chestahh)
+- MCC mod compatibility; fixes for MCC model limits, damage acceleration, HUD placement and projectile offsets. (chestahh, MrBruh)
+- MCC hotfix 1.0.1: dedicated servers can host MCC maps, map sharing is better, and local mods install. (chestahh)
+- An MCC game starts without waiting for players still downloading its package. (Guven)
+- A dedicated server's lobby no longer restarts an MCC map's check every second. (Guven)
+
+#### Gameplay and servers
+
+- Players can stand on, ride and jump from moving vehicles. (Mootjuh)
+- Dedicated servers: players change teams with !switch. (Guven)
+- A player whose machine left while held for a map download is taken out. (Guven)
+- Co-op cutscene music and dialogue no longer play again and again on dedicated servers. (Guven)
+- Quitting split-screen multiplayer no longer crashes the game. (Brenden Hyde)
+- Map sharing: a download keeps reading while its connection has more. (PeterRichardsonGolf)
+- The host's name is drawn white in chat. (justinfilip)
+
+#### Sound
+
+- Xbox-style 3D audio, HRTF and DSP processing restored. (chestahh)
+- Fixes for Doppler pitch limits, listener resets and nested sound flushes. (chestahh)
+- A looping sound fading out of range no longer crashes. A sound already out of range skips the wall test. (Mootjuh, justinfilip)
+
+#### Graphics and interface
+
+- Widescreen keeps the stock loading effects, and the Xbox chant is back. (chestahh)
+- Optional keyboard glyphs on gameplay prompts and pause menus. (chestahh)
+- Reverse shader animations no longer trip map-loading assertions. (chestahh)
+- Android: fixes for frame-buffer reuse and cached-map display. A SKIP button shows on the touchscreen during cutscenes, and a co-op client's tap counts as a vote. (chestahh, Guven)
+
 ## Build 141
 
 ### Dynamic lighting

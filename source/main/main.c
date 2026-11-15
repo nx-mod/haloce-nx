@@ -386,6 +386,7 @@ symbols in this file:
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
 #include "network_aim_assist.h" /* port: port/linux/game/network_aim_assist.c */
 #include "network_shield_effects.h" /* port: port/linux/game/network_shield_effects.c */
+#include "network_riding_map.h" /* port: port/linux/game/network_riding_map.c */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #ifdef HALO_PROFILE
@@ -406,6 +407,8 @@ symbols in this file:
 #include "text/font_group.h"
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
+#include "mcc_cache.h" /* port: port/linux/game/mcc_cache.h */
+#include "mcc_main.h" /* port: port/linux/game/mcc_main.h */
 #include "view_fov.h" /* port: display.fov, before the projection and culling */
 
 #if defined(HALO_WINDOWS) || defined(HALO_ANDROID) || defined(__linux__)
@@ -1087,6 +1090,14 @@ void main_switch_structure_bsp(
 	return;
 }
 
+/* port: whether the main menu's map is the one loaded (hosting from the menus
+begins there: port/linux/game/host_dashboard.c) */
+boolean main_menu_scenario_is_loaded(
+	void)
+{
+	return main_globals.main_menu_scenario_loaded;
+}
+
 void main_goto_main_menu(
 	void)
 {
@@ -1279,6 +1290,9 @@ short main_get_solo_level_from_name(
 {
 	char lower_name[128] = { 0 };
 	short level;
+
+	if (mcc_level_name(name))
+		return NONE;
 
 	/* port: a Custom Edition map (custom_maps\a30) is never one of the
 	campaign's levels, whatever its name holds
@@ -1482,6 +1496,9 @@ static void main_new_map(
 	}
 	else
 	{
+		/* port: an MCC map that fails to load goes back to the menus (mcc_main.c) */
+		if (mcc_main_load_failed(options->map_name))
+			return;
 		error(_error_immediate, "game_load() failed.");
 	}
 
@@ -1938,6 +1955,9 @@ void main_load_ui_scenario(
 void main_roll_credits(
 	void)
 {
+	/* port: standalone MCC scenarios finish through their own menu transition. */
+	if (mcc_main_map_completed())
+		return;
 	error(_error_silent, "congratulations, you won the game!");
 	main_menu_load();
 	game_end_credits_start();
@@ -2428,6 +2448,14 @@ static void main_won_map_private(
 {
 	short level;
 	short local_player_index;
+
+	/* port: explicit MCC campaigns own their mission order and host decision.
+	 * The Xbox/CE level table below cannot represent package mission identities. */
+	if (mcc_main_campaign_won())
+	{
+		main_globals.won_map = FALSE;
+		return;
+	}
 
 	/* port: when a network co-op level is won, the round ends for everyone as
 	in multiplayer, back to the lobby, and the next round is the campaign's
@@ -3238,7 +3266,7 @@ void halt_and_catch_fire(
 #endif
 	/* port: a dedicated server has no screen to halt on: its error logged,
 	it ends with exit code 1 (port/linux/game/server_director.c) */
-	if (halo_server_mode())
+	if (halo_server_headless())
 		server_fatal(error_get());
 	if (!global_screenshot_count.halt_recursion_lock)
 	{
@@ -3364,7 +3392,7 @@ void main_loop_of_death(
 	void)
 {
 	/* port: as halt_and_catch_fire, on a dedicated server */
-	if (halo_server_mode())
+	if (halo_server_headless())
 		server_fatal(error_get());
 	while (TRUE)
 	{
@@ -3448,7 +3476,7 @@ static void main_game_render(
 			local player 0's, as film playback's is above, so that it is drawn
 			as a player's, with the playback's own view of the player watched
 			(port/linux/game/network_replay_playback.c) */
-			if (window_index == 0 && network_replay_playing() && network_replay_camera())
+			if (window_index == 0 && network_replay_viewing() && network_replay_camera())
 			{
 				last_local_player_index = 0;
 				window->local_player_index = 0;
@@ -3668,6 +3696,9 @@ static boolean main_loop_iteration(
 		event_manager_update();
 		telnet_console_process();
 		overlay_menu_update();
+		/* port: the host's screen, hosting from the menus
+		(port/linux/game/host_dashboard.c) */
+		host_dashboard_update();
 		link_page_update();
 		/* port: the Theater's replay page (port/linux/game/network_replay_page.c) */
 		network_replay_page_update();
@@ -3690,6 +3721,8 @@ static boolean main_loop_iteration(
 			network_aim_assist_update();
 			/* port: the host's shield effects, for every machine (port/linux/game/network_shield_effects.c) */
 			network_shield_effects_update();
+			/* port: the map's riding choice, for every machine (port/linux/game/network_riding_map.c) */
+			network_riding_map_update();
 			/* port: map sharing, in the lobby and in game (port/linux/game/map_share.c) */
 			map_share_update();
 			/* port: network games' text chat (port/linux/game/network_chat.c) */
@@ -3735,7 +3768,7 @@ static boolean main_loop_iteration(
 
 			/* port: a dedicated server's frames paced by its clock, with no
 			display to wait for (port/linux/src/server_mode.c) */
-			if (halo_server_mode())
+			if (halo_server_headless())
 			{
 				server_mode_pace_frame();
 				profile_scope(main_update_time_section, main_update_time_unthrottled();)
@@ -3799,6 +3832,12 @@ static boolean main_loop_iteration(
 						render_frame = main_globals.main_menu_scenario_loaded ||
 							(main_globals.halt_time_scale && game_time_get()>0);
 					render_frame &= !game_engine_running() || game_time_get()>=3;
+					/* port: hosting from the menus, the host's screen every frame:
+					back in the lobby after a game, with nobody in it, the
+					game's clock stands still with its engine set up, which
+					drew nothing (port/linux/game/host_dashboard.c) */
+					if (halo_server_hosting())
+						render_frame = TRUE;
 					/* port: a replay's skip ahead: the frame it holds drawn, and its
 					held frames with its lines, though they run no tick or many
 					(port/linux/game/network_replay_playback.c) */
@@ -3829,14 +3868,14 @@ static boolean main_loop_iteration(
 				}
 			}
 			/* port: nothing drawn on a dedicated server, nor waited for */
-			else if (!halo_server_mode())
+			else if (!halo_server_headless())
 			{
 				profile_render_start();
 				main_pregame_render();
 				profile_render_end();
 			}
 
-			if (!halo_server_mode())
+			if (!halo_server_headless())
 				profile_scope(main_throttle_section, main_rasterizer_throttle();)
 
 			if (render_frame && !debug_no_drawing)

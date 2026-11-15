@@ -641,8 +641,8 @@ static int SDLCALL master_thread_main(void *unused)
 		for (index = 0; index < master.master_count; index++)
 			withdrawing |= master.masters[index].published;
 		/* (a player's host: its PUBLIC, which the listing says) */
-		if (!due || (!withdrawing && ((halo_server_mode() && !config_boolean("server.public")) ||
-			!config_boolean("network.online"))))
+		if (!due || (!withdrawing && ((halo_server_mode() && !server_director_public()) ||
+			(halo_server_mode() ? !server_director_online() : !config_boolean("network.online")))))
 		{
 			SDL_WaitConditionTimeout(master.wake, master.lock, 1000);
 			continue;

@@ -644,6 +644,31 @@ FILE *platform_fopen_host(const char *path, const char *mode)
 	return fopen(path, mode);
 }
 
+/* a file the game made that the player reads, edits or deletes from outside
+it (config.toml, debug.txt, gamestate.txt): 0666, whatever the umask, so an
+FTP server, a file manager or another user may too */
+/* (libc's; the game's <sys/stat.h> here is MSVC's, which has none) */
+int fchmod(int descriptor, mode_t mode);
+
+void platform_share_file(FILE *file)
+{
+	if (file)
+		fchmod(fileno(file), 0666);
+}
+
+/* ... and one by its host path, opened to be changed if it is there (none
+of the consoles' hosts has the guest's chmod by path, only by descriptor) */
+void platform_share_path(const char *path)
+{
+	/* (libc's fopen here, untranslated: platform_fopen_host's) */
+	FILE *file = fopen(path, "rb");
+
+	if (!file)
+		return;
+	platform_share_file(file);
+	fclose(file);
+}
+
 /* ... and removed or renamed by them (remove and rename in the game's code
 are halo_linux_remove's and halo_linux_rename's, which translate) */
 int platform_remove_host(const char *path)

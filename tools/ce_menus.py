@@ -99,9 +99,9 @@ CHILD_OFFSETS = {
        port_settings.main_menu_item_place(item)
        for item in ("load_camp", "multiplayer", "profile", "settings", "quit_game")},
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_gametypes_item"): (0, 358),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_gametypes_item"): (0, 381),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_screen",
-     "ui\\shell\\main_menu\\blueline"): (64, 349),
+     "ui\\shell\\main_menu\\blueline"): (64, 376),
     # the profile settings' rows, eleven in the nine's room
     # (port_settings.PROFILE_ROWS)
     **{("ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_edit\\profile_edit_select_list",
@@ -189,9 +189,9 @@ MENU_ICONS = {
 }
 # the frames a picture has past the PC version's, for the rows it has past them: the number of the frame's file (another
 # frame's for the same picture again, a MENU_ICONS' for a new one), or None for nothing. Multiplayer's Create Internet,
-# Create LAN, Co-op and Edit Gametypes; the profile settings' Gameplay
+# Create LAN, Co-op, Host Server and Edit Gametypes; the profile settings' Gameplay
 MENU_EXTRA_FRAMES = {
-    "shell/main_menu/multiplayer_type_select/mp_options": [0, 1, None, 6],
+    "shell/main_menu/multiplayer_type_select/mp_options": [0, 1, None, 0, 6],
     "shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options": [9],
 }
 MENU_ICON_ARTWORK = 302
@@ -769,6 +769,8 @@ def main() -> None:
         shutil.copy2(MENUS / "controllers" / f"{controller}.svg", MENUS / "port_svg/controllers" / f"{controller}.svg")
     lines += [art.port_picture(name, frames) for name, frames in port_settings.layout_overlay_pictures()]
     lines += [art.port_picture(name, frames) for name, frames in port_settings.browser_hint_pictures()]
+    # (Host Server's screens' tabs, panels, rows and pills: port_settings._host)
+    lines += [art.port_picture(name, frames) for name, frames in port_settings.host_pictures()]
     # (nothing: what a game map draws for a frame of ui.map's it has not,
     # menu_tags.c)
     lines.append(art.port_picture("blank", [

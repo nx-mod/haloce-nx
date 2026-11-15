@@ -85,7 +85,7 @@ boolean local_player_is_first_person(
 	person through the watched player's eyes (their weapon's particles
 	those of the arms drawn: first_person_weapons.c), and the player is
 	not looked up (port/linux/game/network_replay_playback.c) */
-	if (network_replay_playing())
+	if (network_replay_viewing())
 		return local_player_index == 0 && network_replay_viewing_eyes();
 	if (!result)
 	{

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->
+<menus>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/screen" type="column_list" width="640" height="480" bitmap="bitmaps/gradient" flags="pass_unhandled_to_focused_child up_down_tabs_children">
+		<on event="b" back="true"/>
+		<on event="back" back="true"/>
+		<on event="deleted" run="port map import page closed"/>
+		<data input="port map import page update"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/back" x="195" y="430"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/description" x="40" y="70"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/map_import_qr_text"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/title" x="40" y="24"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/title" type="text" width="560" height="40" text="IMPORT MAPS" font="ui\large_ui" color="#FF2896FF">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/description" type="text" controller="1" width="560" height="170" font="ui\small_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+		<data input="port map import page text"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/map_import_qr_text" type="text" controller="1" left="125" top="392" width="390" height="18" text="Scan it to upload maps." font="ui\small_ui" color="#FFFFFFFF" align="center" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/map_import_page/back" type="text" width="250" height="32" text="BACK" font="ui\large_ui" color="#FF2896FF" align="center">
+		<on event="a" back="true"/>
+		<on event="start" back="true"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+</menus>

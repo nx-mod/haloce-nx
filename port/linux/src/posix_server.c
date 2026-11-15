@@ -2,13 +2,14 @@
 POSIX_SERVER.C
 
 A dedicated server's signals, standard input and output, and the process's
-use of memory and processor (posix_server.h), on Linux. None on Android and
-the web, which have no dedicated server.
+use of memory and processor (posix_server.h), on Linux. Android, the Switch
+and the PS5 have its clock and files alone, for hosting from the menus
+(server_mode.h); the web none.
 */
 
 #include "posix_server.h"
 
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__) && !defined(HALO_ANDROID) && !defined(HALO_PS5) && !defined(__EMSCRIPTEN__)
 
 #include <errno.h>
 #include <fcntl.h>
@@ -223,6 +224,131 @@ void posix_server_utc_text(unsigned long seconds, char *text, int size)
 	struct tm utc;
 
 	if (!gmtime_r(&when, &utc) || !strftime(text, (size_t)size, "%Y-%m-%dT%H:%M:%SZ", &utc))
+		snprintf(text, (size_t)size, "%lu", seconds);
+}
+
+void posix_server_local_text(unsigned long seconds, char *text, int size)
+{
+	time_t when = (time_t)seconds;
+	struct tm local;
+
+	if (!localtime_r(&when, &local) || !strftime(text, (size_t)size, "%Y-%m-%d %H:%M:%S", &local))
+		snprintf(text, (size_t)size, "%lu", seconds);
+}
+
+#elif !defined(__EMSCRIPTEN__)
+
+/* Android, the Switch and the PS5, which host from the menus
+(server_mode.h's HALO_HOST_BUILD) but are no dedicated server: no signals,
+standard input or process figures; the clock and the files as on Linux */
+
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+void posix_server_signals_install(void)
+{
+}
+
+int posix_server_signals_take(int *quit_signal)
+{
+	*quit_signal = 0;
+	return 0;
+}
+
+void posix_server_quit_deadline(int seconds, int exit_code)
+{
+	(void)seconds;
+	(void)exit_code;
+}
+
+void posix_server_stdout_line_buffered(void)
+{
+}
+
+int posix_server_stdin_is_terminal(void)
+{
+	return 0;
+}
+
+int posix_server_stdin_read(char *buffer, int size)
+{
+	(void)buffer;
+	(void)size;
+	return -1;
+}
+
+unsigned long posix_server_resident_bytes(void)
+{
+	return 0;
+}
+
+unsigned long posix_server_cpu_milliseconds(void)
+{
+	return 0;
+}
+
+int posix_server_rename(const char *from, const char *to)
+{
+	return rename(from, to) == 0;
+}
+
+int posix_server_write_file(const char *path, const char *text, unsigned long size)
+{
+	char temporary[4200];
+	FILE *file;
+	int written;
+
+	if (snprintf(temporary, sizeof(temporary), "%s.tmp", path) >= (int)sizeof(temporary))
+		return 0;
+	file = fopen(temporary, "wb");
+	if (!file)
+		return 0;
+	written = fwrite(text, 1, size, file) == size;
+	if (fclose(file) != 0 || !written)
+	{
+		unlink(temporary);
+		return 0;
+	}
+	return posix_server_rename(temporary, path);
+}
+
+int posix_server_private_file(const char *path)
+{
+	(void)path;
+	return 1;
+}
+
+int posix_server_write_private_file(const char *path, const void *data, unsigned long size)
+{
+	return posix_server_write_file(path, (const char *)data, size);
+}
+
+int posix_server_remove(const char *path)
+{
+	return unlink(path) == 0;
+}
+
+unsigned long posix_server_unix_seconds(void)
+{
+	return (unsigned long)time(NULL);
+}
+
+long long posix_server_unix_milliseconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+void posix_server_utc_text(unsigned long seconds, char *text, int size)
+{
+	time_t when = (time_t)seconds;
+	struct tm *utc = gmtime(&when);
+
+	if (!utc || !strftime(text, (size_t)size, "%Y-%m-%dT%H:%M:%SZ", utc))
 		snprintf(text, (size_t)size, "%lu", seconds);
 }
 

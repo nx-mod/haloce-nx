@@ -26,6 +26,20 @@ enum
 
 #define BOTS_COMBAT_TICKS_PER_SECOND 30
 
+/* how a group of bots added at once gets its levels (the Host Server
+screen's BOTS, sv_bot_add): each the level given, any level alike, or about
+the level given (a normal distribution, a level's spread) */
+enum
+{
+	_bots_skill_pick_fixed = 0,
+	_bots_skill_pick_random,
+	_bots_skill_pick_normal,
+	NUMBER_OF_BOTS_SKILL_PICKS,
+};
+
+/* a bot's level by the pick (from two random numbers 0 to 1) */
+short bots_combat_skill_pick(short pick, short level, float random_a, float random_b);
+
 /* a number from 0 to 1 made from two others (the bot's player and a tick):
 the same for the same pair, spread evenly; a decision's own random number,
 which takes nothing from the bot's */

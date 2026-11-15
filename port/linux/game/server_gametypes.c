@@ -27,7 +27,181 @@ bad gametype never reaches the wire, where the clients play by it.
 #include <stdio.h>
 #include <string.h>
 
-#if HALO_SERVER_BUILD
+/* (the characters playlist_profile_get_display_name fills: the XDK's,
+port/include/xdk/xdk_xbox.h) */
+#ifndef MAX_GAMENAME
+#define MAX_GAMENAME 128
+#endif
+
+/* a saved gametype's name as a rotation's saved=<name> (server_rotation.h):
+its UTF-8, a letter, digit, "_", "-" or "." as it is and any other byte as
+%XX; FALSE if it does not fit */
+boolean server_gametype_saved_reference(
+	wchar_t const *name,
+	char *text,
+	long size)
+{
+	static char const hex[] = "0123456789ABCDEF";
+	long length;
+
+	if (size < 8 || !name || !name[0])
+		return FALSE;
+	strcpy(text, "saved=");
+	length = 6;
+	for (; *name; name++)
+	{
+		unsigned long character = (unsigned long)*name & 0xFFFF;
+		unsigned char bytes[3];
+		int count, index;
+
+		if (character < 0x80)
+			bytes[0] = (unsigned char)character, count = 1;
+		else if (character < 0x800)
+		{
+			bytes[0] = (unsigned char)(0xC0 | (character >> 6));
+			bytes[1] = (unsigned char)(0x80 | (character & 0x3F));
+			count = 2;
+		}
+		else
+		{
+			bytes[0] = (unsigned char)(0xE0 | (character >> 12));
+			bytes[1] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+			bytes[2] = (unsigned char)(0x80 | (character & 0x3F));
+			count = 3;
+		}
+		for (index = 0; index < count; index++)
+		{
+			unsigned char byte = bytes[index];
+
+			if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') ||
+				byte == '_' || byte == '-' || byte == '.')
+			{
+				if (length + 1 >= size)
+					return FALSE;
+				text[length++] = (char)byte;
+			}
+			else
+			{
+				if (length + 3 >= size)
+					return FALSE;
+				text[length++] = '%';
+				text[length++] = hex[byte >> 4];
+				text[length++] = hex[byte & 0xF];
+			}
+		}
+	}
+	text[length] = 0;
+	return TRUE;
+}
+
+static int server_gametype_hex_digit(
+	char character)
+{
+	return character >= '0' && character <= '9' ? character - '0' :
+		character >= 'a' && character <= 'f' ? character - 'a' + 10 :
+		character >= 'A' && character <= 'F' ? character - 'A' + 10 : -1;
+}
+
+boolean server_gametype_saved_name(
+	char const *reference,
+	wchar_t *name,
+	long size)
+{
+	unsigned char bytes[SERVER_GAMETYPE_SIZE];
+	long count = 0, index, length = 0;
+
+	/* (the %XX undone, into bytes) */
+	for (; *reference; reference++)
+	{
+		int high, low;
+
+		if (count >= (long)sizeof(bytes))
+			return FALSE;
+		if (*reference != '%')
+		{
+			bytes[count++] = (unsigned char)*reference;
+			continue;
+		}
+		high = server_gametype_hex_digit(reference[1]);
+		low = high < 0 ? -1 : server_gametype_hex_digit(reference[2]);
+		if (low < 0)
+			return FALSE;
+		bytes[count++] = (unsigned char)(high << 4 | low);
+		reference += 2;
+	}
+	/* (then the UTF-8 read: no more than three bytes a character, as the
+	game's names have) */
+	for (index = 0; index < count; )
+	{
+		unsigned long character;
+		unsigned char byte = bytes[index];
+
+		if (byte < 0x80)
+			character = byte, index += 1;
+		else if ((byte & 0xE0) == 0xC0 && index + 1 < count && (bytes[index + 1] & 0xC0) == 0x80)
+		{
+			character = (unsigned long)(byte & 0x1F) << 6 | (bytes[index + 1] & 0x3F);
+			index += 2;
+		}
+		else if ((byte & 0xF0) == 0xE0 && index + 2 < count && (bytes[index + 1] & 0xC0) == 0x80 &&
+			(bytes[index + 2] & 0xC0) == 0x80)
+		{
+			character = (unsigned long)(byte & 0x0F) << 12 | (unsigned long)(bytes[index + 1] & 0x3F) << 6 |
+				(bytes[index + 2] & 0x3F);
+			index += 3;
+		}
+		else
+			return FALSE;
+		if (length + 1 >= size)
+			return FALSE;
+		name[length++] = (wchar_t)character;
+	}
+	name[length] = 0;
+	return length > 0;
+}
+
+#if HALO_HOST_BUILD
+
+/* the gametype in the game's saved games (not one of the built-in ones it
+keeps there too) whose name is `name`, its own case first, then in any case
+of its ASCII letters; NONE if none */
+static long server_gametype_saved_find(
+	wchar_t const *name)
+{
+	long indices[256];
+	word count = (word)NUMBEROF(indices);
+	long found = NONE;
+	word index;
+
+	playlist_profiles_enumerate_available_to_local_player_index(0, &count, indices);
+	for (index = 0; index < count; index++)
+	{
+		wchar_t shown[MAX_GAMENAME];
+		long character;
+
+		if (TEST_FLAG(indices[index], _saved_game_file_index_read_only_bit) ||
+			!playlist_profile_get_display_name(indices[index], shown))
+		{
+			continue;
+		}
+		if (!ustrcmp(shown, name))
+			return indices[index];
+		for (character = 0; shown[character] && name[character]; character++)
+		{
+			wchar_t left = shown[character], right = name[character];
+
+			if (left >= L'A' && left <= L'Z')
+				left = (wchar_t)(left + 32);
+			if (right >= L'A' && right <= L'Z')
+				right = (wchar_t)(right + 32);
+			if (left != right)
+				break;
+		}
+		if (!shown[character] && !name[character] && found == NONE)
+			found = indices[index];
+	}
+	return found;
+}
 
 /* the built-in gametypes, by name, and what the lobby and the server
 browser call them (11 characters) */
@@ -153,6 +327,16 @@ static void server_gametype_flag(
 	SET_FLAG(variant->universal_variant.flags, bit, value != 0);
 }
 
+/* a team's vehicle set by team_vehicles' word: the vehicle set's
+(gametype), PC's, the counts (custom), or one of the vehicle options' sets */
+static byte server_gametype_team_vehicles(
+	long value,
+	struct universal_variant const *universal)
+{
+	return value == 1 ? VARIANT_VEHICLE_SET_PC : value == 2 ? VARIANT_VEHICLE_SET_CUSTOM :
+		value >= 3 ? (byte)(value - 3) : (byte)universal->vehicle_set;
+}
+
 /* a rule over the variant and options (its engine already checked) */
 static void server_gametype_rule(
 	struct server_rule const *rule,
@@ -182,6 +366,7 @@ static void server_gametype_rule(
 	else if (!strcmp(key, "no_shields")) server_gametype_flag(variant, _game_variant_no_shields_bit, value);
 	else if (!strcmp(key, "invisible")) server_gametype_flag(variant, _game_variant_always_invisible_bit, value);
 	else if (!strcmp(key, "generic_equipment")) server_gametype_flag(variant, _game_variant_generic_starting_equipment_bit, value);
+	else if (!strcmp(key, "vehicle_riding")) server_gametype_flag(variant, _game_variant_vehicle_riding_bit, value);
 	else if (!strcmp(key, "weapon_set")) universal->weapon_set = value;
 	else if (!strcmp(key, "vehicle_set")) universal->vehicle_set = value;
 	else if (!strcmp(key, "goal_radar")) universal->goal_radar = value;
@@ -196,14 +381,15 @@ static void server_gametype_rule(
 	else if (!strcmp(key, "secondary_weapon")) options->secondary_weapon = (byte)value;
 	else if (!strcmp(key, "no_map_weapons")) options->no_map_weapons = (boolean)(value != 0);
 	else if (!strcmp(key, "hardcore")) options->hardcore = (boolean)(value != 0);
+	else if (!strcmp(key, "force_team_spawns")) options->force_team_spawns = (boolean)(value != 0);
 	else if (!strcmp(key, "team_vehicles"))
 	{
-		byte set = value == 1 ? VARIANT_VEHICLE_SET_PC : value == 2 ? VARIANT_VEHICLE_SET_CUSTOM :
-			(byte)universal->vehicle_set;
-
-		options->vehicle_set[0] = options->vehicle_set[1] = set;
+		options->vehicle_set[0] = options->vehicle_set[1] = server_gametype_team_vehicles(value, universal);
 		*team_vehicles_given = TRUE;
 	}
+	/* (blue's own: applied last, server_gametype_apply_blue) */
+	else if (!strncmp(key, "blue_", 5))
+		;
 	else if (!strcmp(key, "assault")) variant->game_engine_variant.ctf.assault = (boolean)(value != 0);
 	else if (!strcmp(key, "reset_on_capture")) variant->game_engine_variant.ctf.reset_on_capture = (boolean)(value != 0);
 	else if (!strcmp(key, "flag_must_reset")) variant->game_engine_variant.ctf.flag_must_reset = (boolean)(value != 0);
@@ -233,6 +419,58 @@ static void server_gametype_rule(
 			}
 		}
 	}
+}
+
+/* each team's vehicles after the rules: the vehicle set's unless said, a
+count's making them custom (blue's own come after: server_gametype_apply_blue) */
+static void server_gametype_vehicles_settle(
+	struct game_variant *variant,
+	struct game_variant_options *options,
+	long vehicle_set_before,
+	boolean team_vehicles_given,
+	boolean vehicle_counts_given)
+{
+	if (vehicle_counts_given && !team_vehicles_given)
+		options->vehicle_set[0] = options->vehicle_set[1] = VARIANT_VEHICLE_SET_CUSTOM;
+	else if (!team_vehicles_given && vehicle_set_before != variant->universal_variant.vehicle_set)
+		options->vehicle_set[0] = options->vehicle_set[1] = (byte)variant->universal_variant.vehicle_set;
+}
+
+/* blue's own vehicles (blue_team_vehicles, blue_<vehicle>), over what the
+other rules gave both teams: its counts alone make its set custom */
+static void server_gametype_apply_blue(
+	struct server_rule const *rules,
+	long rule_count,
+	struct game_variant *variant,
+	struct game_variant_options *options)
+{
+	static char const *const vehicles[NUMBER_OF_VARIANT_VEHICLES] =
+		{ "warthogs", "ghosts", "scorpions", "rocket_warthogs", "banshees", "gun_turrets" };
+	boolean set_given = FALSE, counts_given = FALSE;
+	long index, vehicle;
+
+	for (index = 0; index < rule_count; index++)
+	{
+		char const *key = rules[index].key;
+
+		if (strncmp(key, "blue_", 5))
+			continue;
+		if (!strcmp(key + 5, "team_vehicles"))
+		{
+			options->vehicle_set[1] = server_gametype_team_vehicles(rules[index].value, &variant->universal_variant);
+			set_given = TRUE;
+		}
+		for (vehicle = 0; vehicle < NUMBER_OF_VARIANT_VEHICLES; vehicle++)
+		{
+			if (!strcmp(key + 5, vehicles[vehicle]))
+			{
+				options->vehicle_counts[1][vehicle] = (byte)rules[index].value;
+				counts_given = TRUE;
+			}
+		}
+	}
+	if (counts_given && !set_given)
+		options->vehicle_set[1] = VARIANT_VEHICLE_SET_CUSTOM;
 }
 
 /* the rules over the variant, each of its engine: FALSE and why if one is
@@ -283,6 +521,9 @@ boolean server_gametype_build(
 	boolean team_vehicles_given = FALSE;
 	boolean vehicle_counts_given = FALSE;
 	struct universal_variant before;
+	/* (a gametype file's, whose blue_ rules are applied last too) */
+	struct server_gametype_file file;
+	boolean have_file = FALSE;
 
 	csmemset(variant, 0, sizeof(*variant));
 	csmemset(options, 0, sizeof(*options));
@@ -313,11 +554,37 @@ boolean server_gametype_build(
 			return FALSE;
 		}
 	}
+	else if (!strncmp(gametype, "saved=", 6))
+	{
+		/* a gametype in the game's saved games (Edit Gametypes'), found by
+		its name each time, so that its later changes are played */
+		wchar_t name[NUMBEROF(variant->human_readable_game_description)];
+		long profile_index;
+
+		if (!server_gametype_saved_name(gametype + 6, name, NUMBEROF(name)))
+		{
+			snprintf(reason, (size_t)reason_size, "\"%s\" is not a saved gametype's name", gametype + 6);
+			return FALSE;
+		}
+		profile_index = server_gametype_saved_find(name);
+		if (profile_index == NONE || !playlist_profile_get(profile_index, variant) ||
+			!playlist_profile_get_options(profile_index, options))
+		{
+			snprintf(reason, (size_t)reason_size, "there is no saved gametype named %s (Edit Gametypes')",
+				gametype + 6);
+			return FALSE;
+		}
+		if (variant->game_engine_index < game_engine_ctf || variant->game_engine_index > game_engine_race)
+		{
+			snprintf(reason, (size_t)reason_size, "the saved gametype %s has no game engine", gametype + 6);
+			return FALSE;
+		}
+	}
 	else if (!server_gametype_base(gametype, variant, options))
 	{
-		struct server_gametype_file file;
 		int absent;
 
+		have_file = TRUE;
 		if (!server_gametype_file_read(gametype, &file, &absent))
 		{
 			if (absent)
@@ -375,12 +642,10 @@ boolean server_gametype_build(
 	{
 		return FALSE;
 	}
-	/* (each team's vehicles: the vehicle set's unless said, a count's
-	making them custom) */
-	if (vehicle_counts_given && !team_vehicles_given)
-		options->vehicle_set[0] = options->vehicle_set[1] = VARIANT_VEHICLE_SET_CUSTOM;
-	else if (!team_vehicles_given && before.vehicle_set != variant->universal_variant.vehicle_set)
-		options->vehicle_set[0] = options->vehicle_set[1] = (byte)variant->universal_variant.vehicle_set;
+	server_gametype_vehicles_settle(variant, options, before.vehicle_set, team_vehicles_given, vehicle_counts_given);
+	if (have_file)
+		server_gametype_apply_blue(file.rules, file.rule_count, variant, options);
+	server_gametype_apply_blue(rules, rule_count, variant, options);
 	/* (CTF always has teams) */
 	if (variant->game_engine_index == game_engine_ctf)
 		variant->universal_variant.teams = TRUE;
@@ -483,6 +748,211 @@ void server_gametype_check_entry(
 	}
 }
 
+/* a rule's value in a variant and options, as the rule sets it (the
+inverse of server_gametype_rule); FALSE for the vehicles' rules, which
+server_gametype_rules_text takes together, and a rule of no field */
+static boolean server_gametype_rule_get(
+	char const *key,
+	struct game_variant const *variant,
+	struct game_variant_options const *options,
+	long *value)
+{
+	struct universal_variant const *universal = &variant->universal_variant;
+	union game_engine_variant const *engine = &variant->game_engine_variant;
+
+#define FLAG_OF(bit) (TEST_FLAG(universal->flags, bit) ? 1 : 0)
+	if (!strcmp(key, "score_to_win")) *value = universal->score_to_win;
+	else if (!strcmp(key, "lives")) *value = universal->lives;
+	else if (!strcmp(key, "respawn_time")) *value = universal->respawn_time / TICKS_PER_SECOND;
+	else if (!strcmp(key, "respawn_time_growth")) *value = universal->respawn_time_growth / TICKS_PER_SECOND;
+	else if (!strcmp(key, "suicide_penalty")) *value = universal->suicide_penalty / TICKS_PER_SECOND;
+	else if (!strcmp(key, "health")) *value = (long)(universal->health * 100.0f + 0.5f);
+	else if (!strcmp(key, "teams")) *value = universal->teams != 0;
+	else if (!strcmp(key, "odd_man_out")) *value = universal->odd_man_out != 0;
+	else if (!strcmp(key, "radar")) *value = FLAG_OF(_game_variant_draw_object_in_motion_sensor_bit);
+	else if (!strcmp(key, "friend_indicators")) *value = FLAG_OF(_game_variant_allow_friendly_navpoints_bit);
+	else if (!strcmp(key, "infinite_grenades")) *value = FLAG_OF(_game_variant_infinite_grenades_bit);
+	else if (!strcmp(key, "no_shields")) *value = FLAG_OF(_game_variant_no_shields_bit);
+	else if (!strcmp(key, "invisible")) *value = FLAG_OF(_game_variant_always_invisible_bit);
+	else if (!strcmp(key, "generic_equipment")) *value = FLAG_OF(_game_variant_generic_starting_equipment_bit);
+	else if (!strcmp(key, "vehicle_riding")) *value = FLAG_OF(_game_variant_vehicle_riding_bit);
+	else if (!strcmp(key, "weapon_set")) *value = universal->weapon_set;
+	else if (!strcmp(key, "goal_radar")) *value = universal->goal_radar;
+	else if (!strcmp(key, "time_limit")) *value = options->time_limit;
+	else if (!strcmp(key, "friendly_fire")) *value = options->friendly_fire;
+	else if (!strcmp(key, "friendly_fire_penalty")) *value = options->friendly_fire_penalty;
+	else if (!strcmp(key, "vehicle_respawn_time")) *value = options->vehicle_respawn_time;
+	else if (!strcmp(key, "auto_team_balance")) *value = options->auto_team_balance != 0;
+	else if (!strcmp(key, "radar_players")) *value = options->radar_players;
+	else if (!strcmp(key, "loadout")) *value = options->loadout;
+	else if (!strcmp(key, "primary_weapon")) *value = options->primary_weapon;
+	else if (!strcmp(key, "secondary_weapon")) *value = options->secondary_weapon;
+	else if (!strcmp(key, "no_map_weapons")) *value = options->no_map_weapons != 0;
+	else if (!strcmp(key, "hardcore")) *value = options->hardcore != 0;
+	else if (!strcmp(key, "force_team_spawns")) *value = options->force_team_spawns != 0;
+	else if (!strcmp(key, "assault")) *value = engine->ctf.assault != 0;
+	else if (!strcmp(key, "reset_on_capture")) *value = engine->ctf.reset_on_capture != 0;
+	else if (!strcmp(key, "flag_must_reset")) *value = engine->ctf.flag_must_reset != 0;
+	else if (!strcmp(key, "flag_at_home_to_score")) *value = engine->ctf.flag_at_home_to_score != 0;
+	else if (!strcmp(key, "single_flag_time")) *value = engine->ctf.single_flag_time / TICKS_PER_SECOND;
+	else if (!strcmp(key, "no_death_bonus")) *value = engine->slayer.no_death_bonus != 0;
+	else if (!strcmp(key, "no_kill_penalty")) *value = engine->slayer.no_kill_penalty != 0;
+	else if (!strcmp(key, "kill_in_order")) *value = engine->slayer.kill_in_order != 0;
+	else if (!strcmp(key, "moving_hill")) *value = engine->king.moving_hill != 0;
+	else if (!strcmp(key, "random_start")) *value = engine->oddball.random_start != 0;
+	else if (!strcmp(key, "ball_spawn_delay")) *value = engine->oddball.ball_spawn_delay != 0;
+	else if (!strcmp(key, "speed_with_ball")) *value = engine->oddball.speed_with_ball;
+	else if (!strcmp(key, "trait_with_ball")) *value = engine->oddball.trait_with_ball;
+	else if (!strcmp(key, "trait_without_ball")) *value = engine->oddball.trait_without_ball;
+	else if (!strcmp(key, "ball_type")) *value = engine->oddball.oddball_ball_type;
+	else if (!strcmp(key, "ball_spawn_count")) *value = engine->oddball.ball_spawn_count;
+	else if (!strcmp(key, "race_type")) *value = engine->race.race_type;
+	else if (!strcmp(key, "team_scoring")) *value = engine->race.team_scoring;
+	else
+		return FALSE;
+#undef FLAG_OF
+	return TRUE;
+}
+
+/* "+key=value" appended to text (the rule's alias if it has one: the
+shorter); FALSE when it does not fit, or its value is not the rule's */
+static boolean server_gametype_rule_append(
+	struct server_rule_definition const *definition,
+	long value,
+	char *text,
+	long size,
+	long *length,
+	int *count)
+{
+	char value_text[32];
+	int written;
+
+	if (definition->type == _server_rule_boolean)
+		snprintf(value_text, sizeof(value_text), "%s", value ? "on" : "off");
+	else if (definition->type == _server_rule_choice)
+	{
+		long index;
+
+		for (index = 0; definition->choices[index] && index < value; index++)
+			;
+		if (value < 0 || index != value || !definition->choices[index])
+			return FALSE;
+		snprintf(value_text, sizeof(value_text), "%s", definition->choices[index]);
+	}
+	else
+	{
+		if (value < definition->minimum || value > definition->maximum)
+			return FALSE;
+		snprintf(value_text, sizeof(value_text), "%ld", value);
+	}
+	written = snprintf(text + *length, (size_t)(size - *length), "+%s=%s",
+		definition->alias ? definition->alias : definition->key, value_text);
+	if (written < 0 || *length + written >= size)
+		return FALSE;
+	*length += written;
+	(*count)++;
+	return TRUE;
+}
+
+/* team_vehicles' word's value for a team's vehicle set */
+static long server_gametype_team_vehicles_word(
+	byte set)
+{
+	return set == VARIANT_VEHICLE_SET_PC ? 1 : set == VARIANT_VEHICLE_SET_CUSTOM ? 2 : 3 + (long)set;
+}
+
+/* whether a team's vehicles are not the same (its set, or a custom set's
+counts) */
+static boolean server_gametype_team_vehicles_differ(
+	struct game_variant_options const *a,
+	struct game_variant_options const *b,
+	short side)
+{
+	return a->vehicle_set[side] != b->vehicle_set[side] || (b->vehicle_set[side] == VARIANT_VEHICLE_SET_CUSTOM &&
+		memcmp(a->vehicle_counts[side], b->vehicle_counts[side], sizeof(a->vehicle_counts[side])));
+}
+
+boolean server_gametype_rules_text(
+	struct game_variant const *base_variant,
+	struct game_variant_options const *base_options,
+	struct game_variant const *variant,
+	struct game_variant_options const *options,
+	char *text,
+	long size,
+	int *count)
+{
+	static char const *const vehicles[NUMBER_OF_VARIANT_VEHICLES] =
+		{ "warthogs", "ghosts", "scorpions", "rocket_warthogs", "banshees", "gun_turrets" };
+	long engine_bit = variant->game_engine_index >= game_engine_ctf && variant->game_engine_index <= game_engine_race ?
+		1L << (variant->game_engine_index - game_engine_ctf) : 0;
+	long length = 0;
+	boolean kept = TRUE;
+	int index;
+
+	*count = 0;
+	if (size < 1)
+		return FALSE;
+	text[0] = 0;
+	for (index = 0; index < server_rule_definition_count(); index++)
+	{
+		struct server_rule_definition const *definition = &server_rule_definitions[index];
+		long before, after;
+
+		if (!(definition->engines & engine_bit) ||
+			!server_gametype_rule_get(definition->key, base_variant, base_options, &before) ||
+			!server_gametype_rule_get(definition->key, variant, options, &after) || before == after)
+		{
+			continue;
+		}
+		kept &= server_gametype_rule_append(definition, after, text, size, &length, count);
+	}
+	/* (the vehicles: red's set and counts for both teams, then blue's own
+	where they are not red's; with the Xbox's vehicle set, which a team's
+	set follows) */
+	if (base_variant->universal_variant.vehicle_set != variant->universal_variant.vehicle_set ||
+		server_gametype_team_vehicles_differ(base_options, options, 0) ||
+		server_gametype_team_vehicles_differ(base_options, options, 1))
+	{
+		byte counts[2][NUMBER_OF_VARIANT_VEHICLES];
+		long vehicle;
+
+		memcpy(counts, base_options->vehicle_counts, sizeof(counts));
+		if (base_variant->universal_variant.vehicle_set != variant->universal_variant.vehicle_set)
+		{
+			kept &= server_gametype_rule_append(server_rule_find("vehicle_set"), variant->universal_variant.vehicle_set,
+				text, size, &length, count);
+		}
+		kept &= server_gametype_rule_append(server_rule_find("team_vehicles"),
+			server_gametype_team_vehicles_word(options->vehicle_set[0]), text, size, &length, count);
+		for (vehicle = 0; options->vehicle_set[0] == VARIANT_VEHICLE_SET_CUSTOM &&
+			vehicle < NUMBER_OF_VARIANT_VEHICLES; vehicle++)
+		{
+			if (counts[0][vehicle] == options->vehicle_counts[0][vehicle])
+				continue;
+			kept &= server_gametype_rule_append(server_rule_find(vehicles[vehicle]),
+				options->vehicle_counts[0][vehicle], text, size, &length, count);
+			counts[0][vehicle] = counts[1][vehicle] = options->vehicle_counts[0][vehicle];
+		}
+		if (options->vehicle_set[1] != options->vehicle_set[0])
+		{
+			kept &= server_gametype_rule_append(server_rule_find("blue_team_vehicles"),
+				server_gametype_team_vehicles_word(options->vehicle_set[1]), text, size, &length, count);
+		}
+		for (vehicle = 0; options->vehicle_set[1] == VARIANT_VEHICLE_SET_CUSTOM &&
+			vehicle < NUMBER_OF_VARIANT_VEHICLES; vehicle++)
+		{
+			char key[32];
+
+			if (counts[1][vehicle] == options->vehicle_counts[1][vehicle])
+				continue;
+			snprintf(key, sizeof(key), "blue_%s", vehicles[vehicle]);
+			kept &= server_gametype_rule_append(server_rule_find(key), options->vehicle_counts[1][vehicle], text, size,
+				&length, count);
+		}
+	}
+	return kept;
+}
+
 #else
 
 boolean server_gametype_build(char const *gametype, struct server_rule const *rules, long rule_count,
@@ -503,6 +973,14 @@ char const *server_gametype_builtin_name(long index)
 char const *server_gametype_engine_name(long game_engine_index)
 {
 	return "none";
+}
+
+boolean server_gametype_rules_text(struct game_variant const *base_variant,
+	struct game_variant_options const *base_options, struct game_variant const *variant,
+	struct game_variant_options const *options, char *text, long size, int *count)
+{
+	*count = 0;
+	return FALSE;
 }
 
 #endif

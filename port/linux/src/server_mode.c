@@ -17,6 +17,27 @@ without a display to wait for, and its exits.
 #include "posix.h"
 #include "server_mode.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
+#ifndef HALO_BUILD_NUMBER
+#define HALO_SERVER_MODE_BUILD_NUMBER 0
+#else
+#define HALO_SERVER_MODE_BUILD_NUMBER HALO_BUILD_NUMBER
+#endif
+
+unsigned long system_milliseconds(void);
+
+/* hosting from the menus (halo_server_host_begin): whether, and since when */
+static struct
+{
+	int active;
+	unsigned long started;
+	/* the host asked it to stop (server_director.c): the game's own client
+	hears the host go, as every machine does, and that is no error */
+	int stopping;
+} server_hosting;
+
 #if HALO_SERVER_BUILD
 
 #include "posix_server.h"
@@ -70,7 +91,7 @@ static struct
 	int exiting;
 } server_mode;
 
-int halo_server_mode(void)
+int halo_server_headless(void)
 {
 	if (!server_mode.checked)
 	{
@@ -371,7 +392,7 @@ void server_mode_start(void)
 	char config[1024];
 
 	answer_command_line();
-	if (!halo_server_mode())
+	if (!halo_server_headless())
 		return;
 	server_mode.started = SDL_GetTicksNS();
 	server_mode.started_unix = posix_server_unix_seconds();
@@ -470,7 +491,7 @@ void server_mode_frame_times(double *longest, double *mean)
 
 #else
 
-int halo_server_mode(void)
+int halo_server_headless(void)
 {
 	return 0;
 }
@@ -521,12 +542,16 @@ void server_mode_at_exit(void (*hook)(void))
 
 const char *server_mode_build(void)
 {
-	return "build-0";
+	static char build[32];
+
+	if (!build[0])
+		snprintf(build, sizeof(build), "build-%d", (int)HALO_SERVER_MODE_BUILD_NUMBER);
+	return build;
 }
 
 double server_mode_uptime(void)
 {
-	return 0.0;
+	return halo_server_hosting() ? (double)(system_milliseconds() - server_hosting.started) / 1000.0 : 0.0;
 }
 
 unsigned long server_mode_started(void)
@@ -540,3 +565,44 @@ unsigned long server_mode_process_id(void)
 }
 
 #endif
+
+/* ---------- hosting from the menus: a dedicated server's game, director and
+commands in the player's own app, which draws the host's screen in place of
+the game (host_dashboard.c) */
+
+int halo_server_hosting(void)
+{
+	return server_hosting.active;
+}
+
+int halo_server_mode(void)
+{
+	return server_hosting.active || halo_server_headless();
+}
+
+int halo_server_host_begin(void)
+{
+	if (server_hosting.active || halo_server_headless())
+		return 0;
+	server_hosting.active = 1;
+	server_hosting.stopping = 0;
+	server_hosting.started = system_milliseconds();
+	return 1;
+}
+
+void halo_server_host_end(void)
+{
+	server_hosting.active = 0;
+	server_hosting.stopping = 0;
+}
+
+void halo_server_host_set_stopping(void)
+{
+	if (server_hosting.active)
+		server_hosting.stopping = 1;
+}
+
+int halo_server_host_stopping(void)
+{
+	return server_hosting.active && server_hosting.stopping;
+}

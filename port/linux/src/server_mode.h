@@ -17,6 +17,17 @@ Android, web and PS5 builds compile the server's files to nothing
 #define HALO_SERVER_BUILD 1
 #endif
 
+/* hosting from the menus (halo_server_host_begin): the dedicated server's
+game side (its director, commands, status, gametypes, log and events) in
+the player's own app, every build but the web's. The rest of the
+dedicated server (its web page, the master servers, standard input, the
+signals) stays HALO_SERVER_BUILD's, and does nothing here */
+#if defined(HALO_WEB)
+#define HALO_HOST_BUILD 0
+#else
+#define HALO_HOST_BUILD 1
+#endif
+
 /* the exit codes (docs/dedicated_server.md) */
 enum
 {
@@ -28,8 +39,33 @@ enum
 	SERVER_EXIT_RESTART = 5,
 };
 
-/* whether this run is a dedicated server */
+/* whether the game hosts as a dedicated server, with no player of its own:
+this run is one (halo --server), or the player's app hosts from its
+menus (halo_server_host_begin). The game's rules for a server with no
+player go by this */
 int halo_server_mode(void);
+/* whether this run is a dedicated server process: no window, sound or
+player, standard input, the signals, its exit codes */
+int halo_server_headless(void);
+/* hosting from the menus: whether it is on; begun (FALSE if it already is,
+or this run is a dedicated server's), and ended (the director's, once the
+server has stopped: port/linux/game/server_director.c) */
+int halo_server_hosting(void);
+/* the server's listing (port/linux/game/server_director.c): whether it is on
+the internet, and whether it is in everyone's server browser there. Hosting
+from the menus, server.listing says (Host Server's LISTING: INTERNET: PUBLIC,
+INTERNET: PRIVATE or LAN, as Create Game's INTERNET and LAN choose); a
+dedicated server, network.online and server.public. The internet needs
+network.online either way (internet play: p2p.c) */
+int server_director_online(void);
+int server_director_public(void);
+int halo_server_host_begin(void);
+void halo_server_host_end(void);
+/* hosting from the menus stopping, as the host asked (server_director.c):
+until it has ended, the game's own client hearing its host go is no error
+to show (ui_widget.c's display_error_when_main_menu_loaded) */
+void halo_server_host_set_stopping(void);
+int halo_server_host_stopping(void);
 
 /* main()'s first (source/shell/shell_xbox.c): --version, --help, --keygen
 and --sign answered (and the process ended), and a dedicated server's

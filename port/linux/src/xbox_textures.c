@@ -19,6 +19,7 @@ memory_watch.c detects that by write-protecting the pages.
 #include "menu_files.h"
 #include "text_hires.h"
 #include "port_config.h"
+#include "mcc_texture_bridge.h"
 #include "../game/cache_file_formats.h"
 
 #include <SDL3/SDL.h>
@@ -888,6 +889,305 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	texture_dump(target, description);
 }
 
+/* MCC bounded immutable upload. The original guest-memory uploader above
+ * remains unchanged; native format decoding is shared, ownership is separate. */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, const struct xgpu_texture_description *description,
+	void const *pixels, unsigned long bytes, const D3DCOLOR *palette)
+{
+	const unsigned char *base = pixels;
+	struct format_information information = format_information(description->format);
+	unsigned long face_count = description->cube_map ? 6 : 1;
+	unsigned long face_size = xgpu_texture_face_size(description);
+	unsigned long largest = description->width * description->height * description->depth;
+	BOOL decode_compressed = FALSE;
+	unsigned long *converted;
+	unsigned long face, level;
+	GLenum gl_error;
+	GLint maximum;
+	/* MCC effects can use a 15360-pixel strip. Keep the legacy texture cache's
+	 * size policy unchanged; this entry point owns only checked MCC pixels. */
+	if (!base || !description->width || !description->height || !description->depth ||
+		description->width > 16384 || description->height > 16384 || description->depth > 512 ||
+		(description->depth > 1 && (description->width > 512 || description->height > 512)) ||
+		!description->levels || description->levels > 14 || !face_size || face_size > bytes / face_count ||
+		information.kind == _texel_unknown) return FALSE;
+	glGetIntegerv(target == GL_TEXTURE_CUBE_MAP ? GL_MAX_CUBE_MAP_TEXTURE_SIZE :
+		target == GL_TEXTURE_3D ? GL_MAX_3D_TEXTURE_SIZE : GL_MAX_TEXTURE_SIZE, &maximum);
+	if (maximum <= 0 || description->width > (unsigned long)maximum ||
+		description->height > (unsigned long)maximum || description->depth > (unsigned long)maximum) {
+		platform_log("mcc textures: %lux%lux%lu exceeds this GPU's %d-texel limit",
+			description->width,description->height,description->depth,maximum);
+		return FALSE;
+	}
+	/* Account for this upload's errors independently of earlier rendering. */
+	gl_error = glGetError();
+	if (gl_error != GL_NO_ERROR)
+		platform_log("mcc textures: prior GL error %lx", (unsigned long)gl_error);
+
+#ifdef HALO_GLES
+	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
+#endif
+#ifdef HALO_WEB
+	/* WebGL S3TC accepts only 2D faces with block-aligned dimensions.
+	 * Decode other MCC shapes before uploading them as ordinary RGBA. */
+	decode_compressed |= description->compressed &&
+		(target == GL_TEXTURE_3D || (description->width & 3) || (description->height & 3));
+#endif
+	converted = description->compressed && !decode_compressed ? NULL : malloc(largest * sizeof(unsigned long));
+	if (!converted && !(description->compressed && !decode_compressed))
+	{
+		platform_log("mcc textures: no memory to convert a %lux%lux%lu texture; it is not drawn",
+			description->width, description->height, description->depth);
+		return FALSE;
+	}
+	glBindTexture(target, texture);
+	xgpu_gl_state_invalidate();
+	/* WebGL has no texture swizzle; converted channels are ordered below. */
+#ifndef HALO_WEB
+	{
+		GLint channels[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
+
+#ifdef HALO_GLES
+		/* converted texels are BGRA in memory (32-bit ARGB words); ES takes
+		RGBA */
+		if (converted)
+		{
+			channels[0] = GL_BLUE;
+			channels[2] = GL_RED;
+		}
+#endif
+
+		glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, channels[0]);
+		glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, channels[1]);
+		glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, channels[2]);
+		glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, channels[3]);
+	}
+#endif
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
+	glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, (GLint)description->levels - 1);
+	for (face = 0; face < face_count; face++)
+	{
+		GLenum image_target = description->cube_map ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + face : target;
+
+		for (level = 0; level < description->levels; level++)
+		{
+			const unsigned char *source = base + face * face_size + xgpu_texture_level_offset(description, level);
+			GLsizei width = (GLsizei)level_dimension(description->width, level);
+			GLsizei height = (GLsizei)level_dimension(description->height, level);
+			GLsizei depth = (GLsizei)level_dimension(description->depth, level);
+
+			if (description->compressed && !decode_compressed)
+			{
+				if (target == GL_TEXTURE_3D)
+					glCompressedTexImage3D(image_target, (GLint)level, compressed_format(information.kind), width, height, depth, 0,
+						(GLsizei)level_bytes(description, level), source);
+				else
+					glCompressedTexImage2D(image_target, (GLint)level, compressed_format(information.kind), width, height, 0,
+						(GLsizei)level_bytes(description, level), source);
+			}
+			else
+			{
+#ifdef HALO_GLES
+				if (decode_compressed)
+					dxt_decode_level(information.kind, source, (unsigned long)width, (unsigned long)height,
+						(unsigned long)depth, converted);
+				else
+#endif
+				if (!decode_level(description, level, source, palette, converted))
+				{
+					platform_log("mcc textures: no memory to convert a %lux%lux%lu texture; it is not drawn",
+						description->width, description->height, description->depth);
+					free(converted);
+					return FALSE;
+				}
+#ifdef HALO_WEB
+				/* Decoders produce ARGB words (BGRA bytes). Change only our
+				 * upload buffer, including every mip and volume slice. */
+				{
+					unsigned long texel, count = (unsigned long)width * height * depth;
+					for (texel = 0; texel < count; texel++)
+					{
+						unsigned long value = converted[texel];
+						converted[texel] = (value & 0xff00ff00UL) |
+							((value >> 16) & 0xffUL) | ((value & 0xffUL) << 16);
+					}
+				}
+#endif
+				if (target == GL_TEXTURE_3D)
+					glTexImage3D(image_target, (GLint)level, GL_RGBA8, width, height, depth, 0, GL_BGRA, GL_UNSIGNED_BYTE, converted);
+				else
+					glTexImage2D(image_target, (GLint)level, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, converted);
+			}
+		}
+	}
+	free(converted);
+	gl_error = glGetError();
+	if (gl_error != GL_NO_ERROR) {
+		platform_log("mcc textures: upload failed, GL error %lx", (unsigned long)gl_error);
+		return FALSE;
+	}
+	texture_dump(target, description);
+	return TRUE;
+}
+
+/* ---------- MCC's textures (port/linux/src/mcc_texture_bridge.c): their GL
+copies, by their registered headers, made from the registry's pixels */
+
+#define MCC_GL_TEXTURE_BUCKETS 512
+
+struct mcc_gl_texture
+{
+	struct mcc_gl_texture *next;
+	const DWORD *resource;
+	GLuint texture;
+	D3DCOLOR palette[256];
+	BOOL palette_present;
+};
+
+static struct mcc_gl_texture *mcc_gl_textures[MCC_GL_TEXTURE_BUCKETS];
+
+static struct mcc_gl_texture **mcc_gl_texture_link(const DWORD *resource)
+{
+	struct mcc_gl_texture **link = &mcc_gl_textures[(((unsigned long)resource >> 4) * 2654435761UL) %
+		MCC_GL_TEXTURE_BUCKETS];
+
+	while (*link && (*link)->resource != resource)
+		link = &(*link)->next;
+	return link;
+}
+
+static GLenum mcc_gl_texture_target(const struct xgpu_texture_description *description)
+{
+	return description->cube_map ? GL_TEXTURE_CUBE_MAP : description->depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
+}
+
+/* the copy, made (or made again for another palette) as it is drawn */
+static BOOL xgpu_mcc_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLuint *texture, GLenum *target,
+	struct xgpu_texture_description *description)
+{
+	const void *pixels;
+	unsigned long bytes;
+	long hud_asset;
+	struct mcc_gl_texture **link, *entry;
+
+	if (!mcc_texture_bridge_source(resource, &pixels, &bytes, description, &hud_asset))
+		return FALSE;
+	*target = mcc_gl_texture_target(description);
+	if (hud_asset >= 0 && config_boolean("display.high_res_hud"))
+	{
+		struct xgpu_texture_description original = *description;
+		GLuint replacement = hud_hires_override_texture(hud_asset, &description->levels);
+
+		if (replacement)
+		{
+			description->hires = TRUE;
+			*texture = replacement;
+			return TRUE;
+		}
+		/* (allocation or upload failure keeps the original's description) */
+		*description = original;
+	}
+	link = mcc_gl_texture_link(resource);
+	entry = *link;
+	if (!entry)
+	{
+		entry = calloc(1, sizeof(*entry));
+		if (!entry)
+		{
+			*texture = 0;
+			return TRUE;
+		}
+		entry->resource = resource;
+		*link = entry;
+	}
+	if (entry->texture && description->format == 0x0b &&
+		(entry->palette_present != (palette != NULL) ||
+		 (palette && memcmp(entry->palette, palette, sizeof(entry->palette)))))
+	{
+		glDeleteTextures(1, &entry->texture);
+		entry->texture = 0;
+		xgpu_gl_state_invalidate();
+	}
+	if (!entry->texture)
+	{
+		GLuint created = 0;
+
+		glGenTextures(1, &created);
+		if (created && xgpu_mcc_texture_upload(created, *target, description, pixels, bytes, palette))
+		{
+			entry->texture = created;
+			entry->palette_present = palette != NULL;
+			if (palette && description->format == 0x0b)
+				memcpy(entry->palette, palette, sizeof(entry->palette));
+		}
+		else if (created)
+		{
+			glDeleteTextures(1, &created);
+			xgpu_gl_state_invalidate();
+		}
+	}
+	*texture = entry->texture;
+	return TRUE;
+}
+
+void xgpu_mcc_texture_forget(const DWORD *resource)
+{
+	struct mcc_gl_texture **link = mcc_gl_texture_link(resource);
+	struct mcc_gl_texture *entry = *link;
+
+	if (!entry)
+		return;
+	*link = entry->next;
+	if (entry->texture)
+	{
+		glDeleteTextures(1, &entry->texture);
+		xgpu_gl_state_invalidate();
+	}
+	free(entry);
+}
+
+BOOL xgpu_mcc_texture_prepare(const DWORD *resource)
+{
+#ifndef HALO_GLES
+	const void *pixels;
+	unsigned long bytes;
+	long hud_asset;
+	struct xgpu_texture_description description;
+	struct mcc_gl_texture **link, *entry;
+	GLuint created = 0;
+
+	if (!mcc_texture_bridge_source(resource, &pixels, &bytes, &description, &hud_asset))
+		return FALSE;
+	link = mcc_gl_texture_link(resource);
+	if (*link && (*link)->texture)
+		return FALSE;
+	glGenTextures(1, &created);
+	if (created && xgpu_mcc_texture_upload(created, mcc_gl_texture_target(&description), &description, pixels, bytes,
+		NULL))
+	{
+		entry = *link;
+		if (!entry && (entry = calloc(1, sizeof(*entry))) != NULL)
+		{
+			entry->resource = resource;
+			*link = entry;
+		}
+		if (entry)
+		{
+			entry->texture = created;
+			entry->palette_present = FALSE;
+			return TRUE;
+		}
+	}
+	if (created)
+		glDeleteTextures(1, &created);
+	xgpu_gl_state_invalidate();
+#else
+	(void)resource;
+#endif
+	return FALSE;
+}
+
 /* ---------- cache */
 
 struct texture_entry
@@ -1159,22 +1459,37 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *target,
 	struct xgpu_texture_description *description)
 {
-	DWORD data = resource[1], format_word = resource[3], size_word = resource[4];
-	struct texture_entry **bucket = &texture_buckets[bucket_index(data, format_word, size_word)];
+	GLuint mcc_texture;
+	DWORD data, format_word, size_word;
+	struct texture_entry **bucket;
 	struct texture_entry *entry;
 	unsigned long generation;
-	BOOL palettized = ((format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
-	unsigned long hash = palettized ? palette_hash(palette) : 0;
+	BOOL palettized;
+	unsigned long hash;
 
 	struct texture_entry *oldest_variant = NULL;
 	unsigned long variant_count = 0;
 	static int no_cache = -1;
-	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
-	unsigned long watch_serial = memory_watch_serial();
+	unsigned long recent;
+	unsigned long watch_serial;
 #ifdef HALO_ANDROID
 	unsigned long ce_bytes;
-	const void *ce_pixels = android_texture_fixes ? android_ce_texture_pixels(resource, &ce_bytes) : NULL;
-	const void *ce_resource = ce_pixels ? resource : NULL;
+	const void *ce_pixels;
+	const void *ce_resource;
+#endif
+
+	/* Registered MCC headers bypass the native texture and memory-watch caches. */
+	if (xgpu_mcc_texture_get(resource, palette, &mcc_texture, target, description))
+		return mcc_texture;
+	data = resource[1]; format_word = resource[3]; size_word = resource[4];
+	bucket = &texture_buckets[bucket_index(data, format_word, size_word)];
+	palettized = ((format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
+	hash = palettized ? palette_hash(palette) : 0;
+	recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
+	watch_serial = memory_watch_serial();
+#ifdef HALO_ANDROID
+	ce_pixels = android_texture_fixes ? android_ce_texture_pixels(resource, &ce_bytes) : NULL;
+	ce_resource = ce_pixels ? resource : NULL;
 #endif
 
 	/* (a texture that is not palettized has the one entry, until one is

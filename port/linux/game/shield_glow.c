@@ -126,7 +126,7 @@ static real shield_glow_camera_distance(real_point3d const *point)
 	real nearest = SHIELD_GLOW_RANGE * 2.f;
 	short player;
 	/* a replay's playback has no local player: its view is the replay's camera */
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		struct observer_result const *camera = network_replay_camera();
 		if (camera)

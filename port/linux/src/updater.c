@@ -902,6 +902,36 @@ int updater_server_install_poll(char *error, int size)
 	snprintf(error, (size_t)size, "no install was started");
 	return -1;
 }
+#else
+/* (the PS5's: no dedicated server, but its director's hosting from the
+menus, whose updates are the app's own, server_director.c asks these only
+of a dedicated server's process) */
+int updater_server_check(void)
+{
+	return 0;
+}
+
+long updater_server_available(void)
+{
+	return 0;
+}
+
+long updater_server_available_network_version(void)
+{
+	return 0;
+}
+
+int updater_server_install_start(void)
+{
+	return 0;
+}
+
+int updater_server_install_poll(char *error, int size)
+{
+	if (size > 0)
+		error[0] = 0;
+	return -1;
+}
 #endif
 
 /* whether the game runs under gamescope (the Steam Deck's Game Mode), where

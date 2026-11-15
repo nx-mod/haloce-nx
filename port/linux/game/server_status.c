@@ -23,6 +23,7 @@ owner, or with server.log_addresses; the invite only for admins.
 #include "network_distributed.h"
 #include "server_director.h"
 #include "server_gametypes.h"
+#include "bots.h" /* port: port/linux/game/bots.c */
 
 #include "../src/p2p.h" /* port: port/linux/src/p2p.c */
 #include "../src/server_console.h" /* port: port/linux/src/server_console.c */
@@ -37,7 +38,7 @@ owner, or with server.log_addresses; the invite only for admins.
 #include <stdlib.h>
 #include <string.h>
 
-#if HALO_SERVER_BUILD
+#if HALO_HOST_BUILD
 
 /* server_director.c's */
 long long server_director_joined_time(long slot);
@@ -165,6 +166,84 @@ boolean server_status_scores_changed(
 		changed = TRUE;
 	}
 	return changed;
+}
+
+long server_status_player_datum(
+	long slot)
+{
+	struct network_game *game = server_game();
+
+	if (!game || slot < 0 || slot >= MAXIMUM_SLOTS || !network_player_is_valid(&game->players[slot]) ||
+		!game_engine_running())
+	{
+		return NONE;
+	}
+	return game->players[slot].player_list_index;
+}
+
+long server_status_player_bot(
+	long slot)
+{
+	struct network_game *game = server_game();
+
+	if (!game || slot < 0 || slot >= MAXIMUM_SLOTS || !network_player_is_valid(&game->players[slot]) ||
+		!bots_machine_is_bot(game->players[slot].machine_index))
+	{
+		return NONE;
+	}
+	return game->players[slot].machine_index - BOTS_FIRST_MACHINE;
+}
+
+long server_status_player_team(
+	long slot)
+{
+	struct network_game *game = server_game();
+
+	if (!game || !game->variant.universal_variant.teams || slot < 0 || slot >= MAXIMUM_SLOTS ||
+		!network_player_is_valid(&game->players[slot]) || !VALID_INDEX(game->players[slot].team_index, 2))
+	{
+		return NONE;
+	}
+	return game->players[slot].team_index;
+}
+
+long server_status_game_engine(
+	boolean *teams)
+{
+	struct network_game *game = server_game();
+
+	*teams = game ? game->variant.universal_variant.teams : FALSE;
+	return game ? game->variant.game_engine_index : NONE;
+}
+
+boolean server_status_player_muted(
+	long slot)
+{
+	struct network_game *game = server_game();
+	wchar_t wide[12];
+
+	if (!game || slot < 0 || slot >= MAXIMUM_SLOTS || !network_player_is_valid(&game->players[slot]))
+		return FALSE;
+	csmemcpy(wide, game->players[slot].name, sizeof(wide));
+	return network_chat_host_name_muted(wide);
+}
+
+boolean server_status_player_row(
+	long slot,
+	char *name,
+	long size,
+	long *score,
+	long *ping)
+{
+	struct network_game *game = server_game();
+	struct player_datum *datum;
+
+	if (!server_status_player_name(slot, name, size))
+		return FALSE;
+	datum = server_status_datum(slot);
+	*score = server_status_score(slot);
+	*ping = datum ? distributed_player_ping(game->players[slot].player_list_index) : NONE;
+	return TRUE;
 }
 
 void server_status_player(
@@ -329,7 +408,7 @@ void server_status_identity(
 	server_json_integer(json, "started", (long long)server_mode_started());
 	server_json_string(json, "instance", instance);
 	server_json_string(json, "region", config_string("server.region"));
-	server_json_integer(json, "tunnel_port", config_boolean("network.online") ? config_integer("network.tunnel_port") : 0);
+	server_json_integer(json, "tunnel_port", server_director_online() ? config_integer("network.tunnel_port") : 0);
 	server_json_string(json, "publisher_key_id", key_id);
 	server_json_integer(json, "web_port", config_integer("server.web_port"));
 }
@@ -390,8 +469,8 @@ void server_status_write(
 		server_json_null(json, "team_scores");
 	}
 	server_json_object_begin(json, "listing");
-	server_json_boolean(json, "online", config_boolean("network.online"));
-	server_json_boolean(json, "public", config_boolean("server.public"));
+	server_json_boolean(json, "online", server_director_online() != 0);
+	server_json_boolean(json, "public", server_director_public() != 0);
 	server_json_boolean(json, "password", config_string("server.password")[0] != 0);
 	{
 		char invite[P2P_LISTING_INVITE_SIZE] = "";
@@ -463,6 +542,19 @@ static struct
 	{ "timberland", "Timberland" },
 	{ "wizard", "Wizard" },
 };
+
+char const *server_map_title(
+	char const *name)
+{
+	long index;
+
+	for (index = 0; index < (long)NUMBEROF(server_map_titles); index++)
+	{
+		if (!strcmp(name, server_map_titles[index].name))
+			return server_map_titles[index].title;
+	}
+	return name;
+}
 
 static void server_status_map(
 	void *context,
@@ -698,6 +790,11 @@ void server_event_map_share(
 }
 
 #else
+
+char const *server_map_title(char const *name)
+{
+	return name;
+}
 
 void server_event_player_killed(long killing_player_index, long killing_object_index, long dead_player_index,
 	boolean friendly_fire)

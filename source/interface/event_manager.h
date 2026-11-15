@@ -62,6 +62,13 @@ void event_manager_post_button(
 	short controller_index,
 	short button_index);
 
+/* port: the left stick pushed all the way up (y > 0) or down, as if it had
+just been: a step through a list for the menus' pointer (ui_widget.c), on a
+list whose d-pad does something else */
+void event_manager_post_left_stick(
+	short controller_index,
+	short y);
+
 /* ---------- globals */
 
 /* ---------- public code */

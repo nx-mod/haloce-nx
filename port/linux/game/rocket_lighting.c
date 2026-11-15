@@ -51,7 +51,7 @@ static int rocket_visible(long object_index)
 			return FALSE;
 	}
 	/* a replay's playback has no local player: its view is the replay's camera */
-	if (network_replay_playing())
+	if (network_replay_viewing())
 	{
 		const struct observer_result *camera = network_replay_camera();
 		return camera && distance3d(&object->object.bounding_sphere_center, &camera->position) <= 25.0f;

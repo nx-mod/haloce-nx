@@ -37,6 +37,7 @@ Register values are clamped to [-1, 1] between stages, as on the hardware.
 
 #include "xgpu.h"
 #include "port_config.h"
+#include "mcc_environment_shader.h"
 #include "vk_shaders.h"
 #include "plasma_model_shader.h"
 
@@ -200,7 +201,7 @@ static const char *output_mapping(unsigned long flags)
 
 /* ---------- one general combiner stage */
 
-static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage)
+static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage, BOOL mcc_bump)
 {
 	DWORD combiner_count = state[D3DRS_PSCOMBINERCOUNT];
 	BOOL unique_c0 = (combiner_count & 0x1000) != 0;
@@ -230,7 +231,11 @@ static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage
 		combiner_input(text, inputs & 0xff, alpha, stage, unique_c0, unique_c1);
 		xgpu_text_append(text, ";\n");
 
-		if (!alpha && (flags & 0x02))
+		/* (MCC's environment lightmap pass: its bump attenuation in place of
+		the dot product, as nv2a_psh.c's; mcc_environment_shader.h) */
+		if (mcc_bump && !alpha && inputs == 0x484B0A01 && (flags & 0x02))
+			mcc_environment_shader_emit(text);
+		else if (!alpha && (flags & 0x02))
 			xgpu_text_append(text, "\t\tvec3 cAB = vec3(dot(cA, cB));\n");
 		else
 			xgpu_text_append(text, "\t\t%s %sAB = %sA * %sB;\n", type, prefix, prefix, prefix);
@@ -716,7 +721,7 @@ char *nv2a_vk_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		"\tvec4 r1 = vec4(0.0);\n");
 
 	for (stage = 0; stage < (int)combiner_count; stage++)
-		combiner_stage(&text, state, stage);
+		combiner_stage(&text, state, stage, key->mcc_bump_attenuation);
 
 	if (final_abcd == 0 && final_efg == 0)
 	{

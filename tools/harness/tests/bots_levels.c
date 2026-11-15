@@ -469,6 +469,42 @@ int main(int argc, char **argv)
 			"legendary's credit is not 2 a unit up to 6");
 		return 0;
 	}
+	/* the levels of a group of bots added at once (sv_bot_add, the Host
+	Server's BOTS): the level given; any level, each about as often; about
+	the level given, a level's spread, kept within recruit to legendary */
+	CASE("skill-pick")
+	{
+		long counts[NUMBER_OF_BOTS_SKILLS], index, near = 0;
+		float mean = 0.0f;
+
+		for (skill = 0; skill < NUMBER_OF_BOTS_SKILLS; skill++)
+			CHECK(bots_combat_skill_pick(_bots_skill_pick_fixed, skill, 0.3f, 0.7f) == skill, "a fixed pick changed");
+		CHECK(bots_combat_skill_pick(_bots_skill_pick_fixed, 42, 0.3f, 0.7f) == _bots_skill_normal,
+			"an unknown level is not normal");
+		memset(counts, 0, sizeof(counts));
+		for (index = 0; index < 6000; index++)
+			counts[bots_combat_skill_pick(_bots_skill_pick_random, _bots_skill_easy, ((float)index + 0.5f) / 6000.0f, 0.5f)]++;
+		for (skill = 0; skill < NUMBER_OF_BOTS_SKILLS; skill++)
+			CHECK(counts[skill] == 1000, "level %d picked %ld times of 6000 at random", (int)skill, counts[skill]);
+		memset(counts, 0, sizeof(counts));
+		for (index = 0; index < 10000; index++)
+		{
+			short picked = bots_combat_skill_pick(_bots_skill_pick_normal, _bots_skill_heroic,
+				((float)(index % 100) + 0.5f) / 100.0f, ((float)(index / 100) + 0.5f) / 100.0f);
+
+			CHECK(picked >= 0 && picked < NUMBER_OF_BOTS_SKILLS, "a normal pick out of the levels");
+			counts[picked]++;
+			mean += (float)picked / 10000.0f;
+		}
+		near = counts[_bots_skill_normal] + counts[_bots_skill_heroic] + counts[_bots_skill_veteran];
+		CHECK(counts[_bots_skill_heroic] > counts[_bots_skill_normal] && counts[_bots_skill_heroic] > counts[_bots_skill_veteran],
+			"the normal pick is not most often the level given");
+		CHECK(near > 8000 && near < 9200, "%ld of 10000 within a level of the one given (a normal's 87%%)", near);
+		CHECK(counts[_bots_skill_recruit] > 0 && counts[_bots_skill_recruit] < 300, "the far tail: recruit %ld",
+			counts[_bots_skill_recruit]);
+		CHECK(mean > 2.8f && mean < 3.2f, "the normal pick's mean %.2f is not about heroic", mean);
+		return 0;
+	}
 	fprintf(stderr, "unknown case: %s\n", case_name);
 	return 2;
 }
