@@ -176,9 +176,14 @@ public class LauncherActivity extends Activity {
 
     private boolean gameStarted;
     private boolean profileStorageAsked;
+    /**
+     * the game's files moving (GameFiles), or a move that stopped waiting for the player: the game is not started
+     * meanwhile (onResume's check of the data would start it on the files' old places, as the move goes on)
+     */
+    private boolean movingGameFiles;
 
     private void startGame() {
-        if (gameStarted)
+        if (gameStarted || movingGameFiles)
             return;
         if (!profileFolderReady())
             return;
@@ -478,8 +483,9 @@ public class LauncherActivity extends Activity {
             }
             setStatus("All files access was not allowed. Use the data folder, or allow it to use another folder.");
         }
-        // data pushed with adb while this screen was open (not while a disc image is extracted)
-        if ((pick == null || pick.isEnabled()) && haveData())
+        // data pushed with adb while this screen was open (not while a disc image is extracted, nor while the game's
+        // files move)
+        if (!movingGameFiles && (pick == null || pick.isEnabled()) && haveData())
             startGameAfterDriver();
     }
 
@@ -487,6 +493,7 @@ public class LauncherActivity extends Activity {
 
     /** the move's screen: its progress while the files move, then the game; what went wrong, and a way on */
     private void moveGameFiles(File base) {
+        movingGameFiles = true;
         boolean app = base.equals(dataRoot);
         LinearLayout layout = screen("Moving the game's files", "The maps, custom maps, mods and MCC maps are moving "
             + "to " + (app ? "the app's storage" : base.getAbsolutePath()) + ". Keep the app open until it's done.");
@@ -534,6 +541,7 @@ public class LauncherActivity extends Activity {
             if (gone[0])
                 return;
             gone[0] = true;
+            movingGameFiles = false;
             startAfterMigration();
         };
         Button proceedButton = button(layout, "Continue", v -> proceed.run());
