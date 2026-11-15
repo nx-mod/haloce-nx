@@ -545,6 +545,9 @@ struct host_machine
 	and that transfer's session */
 	boolean file_connection;
 	unsigned long file_connection_session;
+	/* published once since its offer (an offer's own publish, or the one
+	after its capabilities came) */
+	boolean file_connection_tried;
 };
 
 /* the joiner's source on the host's file connection (fs_source_update) */
@@ -3683,8 +3686,12 @@ static void host_offer(
 	}
 	machine->offered = TRUE;
 	machine->asked = FALSE;
+	machine->file_connection_tried = FALSE;
 	if (result == _offer_ok)
+	{
+		machine->file_connection_tried = network_extension_agreed(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1);
 		host_file_connection_publish(machine_index);
+	}
 	error(_error_silent, "map sharing: offered machine #%ld %s (%d files)%s", machine_index,
 		machine->request.level_name, (int)count, result == _offer_ok ? "" :
 		result == _offer_off ? ": not shared (network.map_share)" : ": unavailable");
@@ -3914,6 +3921,16 @@ static void host_update(
 				continue;
 			}
 			host_sources(index);
+		}
+		/* (a machine whose capabilities came after its offer: the host's file
+		connection published then; a request on joining is sent before the
+		host's announcement is answered) */
+		if (machine->offered && !machine->file_connection && !machine->downloaded && machine->file_count &&
+			!machine->file_connection_tried &&
+			network_extension_agreed(index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1))
+		{
+			machine->file_connection_tried = TRUE;
+			host_file_connection_publish(index);
 		}
 		if (machine->downloading && !machine->downloaded && machine->offered &&
 			elapsed(machine->sources_at, now, SOURCES_INTERVAL) &&
