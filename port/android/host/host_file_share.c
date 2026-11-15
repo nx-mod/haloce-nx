@@ -559,7 +559,16 @@ static void *host_connection_main(void *parameter)
 					at += 4;
 					continue;
 				}
-				if (frame[0] != FS_FRAME_WANT || at + FS_WANT_SIZE > size || want_count >= FS_FILES * 2)
+				if (frame[0] != FS_FRAME_WANT || at + FS_WANT_SIZE > size)
+					goto done;
+				/* (the wants served let go: a swarm's source is asked piece after
+				piece for as long as the download lasts) */
+				if (want_count >= FS_FILES * 2 && want_at) {
+					memmove(wants, wants + want_at, sizeof(*wants) * (size_t)(want_count - want_at));
+					want_count -= want_at;
+					want_at = 0;
+				}
+				if (want_count >= FS_FILES * 2)
 					goto done;
 				wants[want_count].file = get16(frame + 2);
 				wants[want_count].offset = get32(frame + 4);

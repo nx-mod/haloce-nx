@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < COUNT; i++)
 		host_fs_serve_file(session, i, address_of(source[i]), sizes[i]);
 	host_fs_serve_ready(session);
-	if (!strcmp(mode, "pieces")) {
+	if (!strcmp(mode, "pieces") || !strcmp(mode, "many-pieces")) {
 		/* a map's pieces, as map_share.c's swarm asks them: every piece of the
 		 * 3 MB file, the fifth with a wrong hash; each taken and checked */
 		enum { PIECE = 256 * 1024 };
@@ -72,6 +72,9 @@ int main(int argc, char **argv)
 		unsigned buffer_address = address_of(piece), out_address = address_of(out);
 		unsigned hash_addresses[16];
 		int count = (int)((sizes[3] + PIECE - 1) / PIECE), asked = 0, taken = 0, matched = 0, wrong = 0;
+		/* (many-pieces: each piece asked 40 times, far more than the host's
+		 * wants hold at once, as a swarm's source is asked all download long) */
+		int rounds = !strcmp(mode, "many-pieces") ? 40 : 1, total;
 		FILE *file = fopen(source[3], "rb");
 
 		if (!file || fread(whole, 1, sizes[3], file) != sizes[3])
@@ -83,14 +86,17 @@ int main(int argc, char **argv)
 			fs_blake2b_256(whole + (size_t)i * PIECE, length, hashes[i]);
 			hash_addresses[i] = address_of(hashes[i]);
 		}
-		hashes[4][0] ^= 1;
+		if (rounds == 1)
+			hashes[4][0] ^= 1;
+		total = count * rounds;
 		if (!host_fs_pieces_begin(0x0100007f, HOST_FILE_SHARE_PORT, session, address_of(token)))
 			return 6;
-		while (taken < count && polls++ < 3000) {
-			while (asked < count) {
-				uint32_t length = sizes[3] - (uint32_t)asked * PIECE < PIECE ? sizes[3] - (uint32_t)asked * PIECE : PIECE;
+		while (taken < total && polls++ < 3000) {
+			while (asked < total) {
+				int index = asked % count;
+				uint32_t length = sizes[3] - (uint32_t)index * PIECE < PIECE ? sizes[3] - (uint32_t)index * PIECE : PIECE;
 
-				if (!host_fs_pieces_ask(3, (uint32_t)asked * PIECE, length, hash_addresses[asked]))
+				if (!host_fs_pieces_ask(3, (uint32_t)index * PIECE, length, hash_addresses[index]))
 					break;
 				asked++;
 			}

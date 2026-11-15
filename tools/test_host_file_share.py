@@ -168,3 +168,10 @@ def test_pieces(transfer, tmp_path):
     fields, out, err, _ = run(transfer, tmp_path, "pieces")
     assert "pieces taken=12 matched=11 wrong=0 state=2" in out, out + err
 
+
+def test_many_pieces_one_connection(transfer, tmp_path):
+    """a swarm's source is asked piece after piece all download long: far more than the host's wants
+    hold at once (it closed the connection after 336 before)"""
+    fields, out, err, _ = run(transfer, tmp_path, "many-pieces")
+    assert "pieces taken=480 matched=480 wrong=0 state=2" in out, out + err
+
