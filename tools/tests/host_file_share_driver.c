@@ -21,8 +21,14 @@ static void pause_ms(int ms) { struct timespec t = { ms / 1000, (ms % 1000) * 10
 static const uint32_t sizes[] = { 0, 1, 70000, 3u << 20, 17, 65528, 65529 };
 #define COUNT ((int)(sizeof(sizes) / sizeof(sizes[0])))
 
+void host_file_share_test_rate(FILE *script);
+
 int main(int argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "rate")) {
+		host_file_share_test_rate(stdin);
+		return 0;
+	}
 	char const *dir = argv[1], *mode = argv[2];
 	unsigned limit = argc > 3 ? (unsigned)atoi(argv[3]) : 0;
 	unsigned char token[32], joiner_token[32], digests[COUNT][32];
@@ -122,7 +128,15 @@ int main(int argc, char **argv)
 		pause_ms(300);
 		return 0;
 	}
-	if (!host_fs_fetch_begin(0x0100007f, HOST_FILE_SHARE_PORT, !strcmp(mode, "unknown-session") ? session + 1 : session,
+	/* (direct-closed: the forwarded address answers nothing, the usual one
+	 * does; direct-works: the forwarded address is the host, the usual one
+	 * a closed port) */
+	if (!strcmp(mode, "direct-closed"))
+		host_fs_direct(0x0100007f, 1);
+	if (!strcmp(mode, "direct-works"))
+		host_fs_direct(0x0100007f, HOST_FILE_SHARE_PORT);
+	if (!host_fs_fetch_begin(0x0100007f, !strcmp(mode, "direct-works") ? 1 : HOST_FILE_SHARE_PORT,
+		!strcmp(mode, "unknown-session") ? session + 1 : session,
 		address_of(joiner_token), COUNT))
 		return 3;
 	for (i = 0; i < COUNT; i++)

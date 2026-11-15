@@ -341,11 +341,38 @@ fills the line. That is also when `C` is learned best.
    - Tests: `tools/test_host_file_share.py`'s `test_pieces`; the map sharing
      harness tests know the new structure.
 2. **The rate**: the `ACK`s, `C` and `G`, the in-game budget, the delay check.
+
+   **Built 2026-11-15, with stage 3**, as follows where it differs:
+   - No `ACK`s: `C` comes from the sender's own sends, in half seconds; one in
+     which sends waited on the socket a tenth of it or more was the line, full
+     (the socket buffer backs up only when the line does); `C` is the most of
+     those in the last ten seconds.
+   - The delay check is the game's own: the host's round trips to its clients
+     (`network_distributed_host_round_trip_milliseconds`), not the file
+     connection's. 30 ms above the least of the last minute while files go
+     out: `C` down a tenth; else up 2% a half second while the allowance is
+     used (25% while no full line has measured it, from 1 MB/s).
+   - `G` is the game's datagrams (`xnet.c`'s `sendto`, 28 bytes a datagram for
+     the headers), the most of the last half second's tenths.
+   - Only the host's (sender's) side; a receiver's downlink is not budgeted.
+   - The allowance (`host_fs_allowance`) replaces `map_upload_in_game` for the
+     swarm (5153) and OpenCE's MCC chunks too, each still under its limit.
+   - In a game where the game takes the whole line: 16 KB/s, so the connection
+     pauses rather than times out.
+   - The host logs `file share: rate …` every 5 s while it serves.
+   - Tests: `tools/test_host_file_share.py`'s `test_rate_*`.
    Test: a hosted server with players in a game while a joiner downloads; the
    players' ping must not rise by more than a few ms.
 3. **The internet**: UPnP's TCP forwarding, the direct attempt, the reversed
    connection, the tunnel fallback. Test from a phone on mobile data (the
    fallback) and from another house (direct).
+   **Stage 3 built 2026-11-15**: `posix_upnp_forward_tcp`; p2p.c's UPnP
+   thread forwards 5154 while the host's file connection listens in an
+   internet game (renewed with the UDP one, removed at its end and at exit);
+   the token message carries the forwarded address and port (bytes 37 to 42);
+   a joiner of a host over the tunnel tries it first (3 s to connect, 4 s for
+   the reply), then the tunnel's stand-in. Not built: the reversed
+   connection. Tests: `test_direct_first`, `test_direct_falls_back`.
 4. **The Switch's 4 connections** a source; its buffers only if they fall
    short of about 40 MB/s.
 5. **Later**: CE maps (`map_share.c`) over the same connection between

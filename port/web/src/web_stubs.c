@@ -30,6 +30,17 @@ void posix_upnp_stop_forwarding_udp(unsigned short external_port)
 	(void)external_port;
 }
 
+int posix_upnp_forward_tcp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
+	unsigned short *external_port, char *error, int error_size)
+{
+	return posix_upnp_forward_udp(port, preferred_port, external_address, external_port, error, error_size);
+}
+
+void posix_upnp_stop_forwarding_tcp(unsigned short external_port)
+{
+	(void)external_port;
+}
+
 void posix_upnp_cancel(void)
 {
 }

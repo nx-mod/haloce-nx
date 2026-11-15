@@ -99,6 +99,10 @@ enum {
 	FS_SOCKET_BUFFER = 4 << 20,
 	FS_FILE_BUFFER = 1 << 20,
 	FS_CONNECT_MILLISECONDS = 6000,
+	/* (a direct try at the host's forwarded internet address, before the
+	 * usual way: short) */
+	FS_DIRECT_CONNECT_MILLISECONDS = 3000,
+	FS_DIRECT_HELLO_MILLISECONDS = 4000,
 	FS_HELLO_MILLISECONDS = 8000,
 	FS_IDLE_MILLISECONDS = 30000,
 	FS_LISTEN_RETRY_MILLISECONDS = 10000,
@@ -241,7 +245,7 @@ static int fs_receive_all(int socket, void *data, size_t size, unsigned long mil
 	return 1;
 }
 
-static int fs_connect(uint32_t address, unsigned port, volatile int const *stop)
+static int fs_connect(uint32_t address, unsigned port, unsigned long milliseconds, volatile int const *stop)
 {
 	struct fs_sockaddr to;
 	int socket = posix_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
@@ -265,7 +269,7 @@ static int fs_connect(uint32_t address, unsigned port, volatile int const *stop)
 				else
 					break;
 			}
-			if (ready < 0 || (stop && *stop) || fs_milliseconds() - began > FS_CONNECT_MILLISECONDS) {
+			if (ready < 0 || (stop && *stop) || fs_milliseconds() - began > milliseconds) {
 				posix_socket_close(socket);
 				return -1;
 			}
@@ -388,6 +392,161 @@ static int fs_suites_here(void)
 	return (fs_crypto_aes_fast() ? FS_SUITE_BIT_AES : 0) | FS_SUITE_BIT_CHACHA;
 }
 
+/* ---------- the host's rate (docs/file_share_tcp_plan.md, stage 2)
+
+Outside a game the file connections send as fast as the line takes, up to the
+guest's limit (the upload limit: 250 MB/s at most). In a game they leave the
+game its traffic and 5% of the line: 0.95 * C - G, where G is the game's own
+bytes a second (its datagrams, counted by the guest: xnet.c) and C the line's
+top speed:
+
+- measured: the bytes the connections sent in each half second in which the
+  socket, not the pacing, held them back for a tenth of it or more (the line
+  was full); C takes the highest of the last ten seconds of those;
+- kept honest in a game by the players' pings (the host's round trips to its
+  clients, which the guest gives): 30 ms more than the least of the last minute
+  while files go out, and C comes down a tenth; otherwise, while the
+  connections use what they are allowed, it creeps up 2% a half second (25%
+  while nothing has measured the line yet, from 1 MB/s above the game's
+  traffic: a game is never flooded to find out). */
+
+enum {
+	FS_RATE_BUCKET_MILLISECONDS = 500,
+	FS_RATE_BUCKETS = 20,
+	FS_RATE_DELAY_MILLISECONDS = 30,
+	FS_RATE_BASE_MILLISECONDS = 60000,
+	FS_RATE_LOG_MILLISECONDS = 5000,
+	FS_RATE_FLOOR = 256 * 1024,
+	FS_RATE_PROBE_START = 1024 * 1024,
+	FS_RATE_TRICKLE = 16 * 1024,
+};
+
+struct fs_rate {
+	/* what the guest says each frame: the cap (bytes a second, 0 none), a
+	 * game on, the game's bytes a second, its players' round trip (ms, 0 none) */
+	double cap;
+	int in_game;
+	double game;
+	unsigned round_trip;
+	/* the half second going on: its start, the bytes sent, how long sends
+	 * waited on the socket */
+	unsigned long bucket_at;
+	double bucket_bytes;
+	unsigned long bucket_waited;
+	/* the last ten seconds' half seconds: their rates, and whether the line held
+	 * them back */
+	double rates[FS_RATE_BUCKETS];
+	int limited[FS_RATE_BUCKETS];
+	int next;
+	/* C (0: not known), whether a full line ever measured it, the least round
+	 * trip lately and since when, and the allowance now */
+	double capacity;
+	int measured;
+	unsigned base_round_trip;
+	unsigned long base_at;
+	double budget;
+	/* the last half second's rate, for the log */
+	double last_rate;
+};
+
+static double fs_rate_measured(struct fs_rate const *rate)
+{
+	double best = 0.0;
+	int i;
+
+	for (i = 0; i < FS_RATE_BUCKETS; i++)
+		if (rate->limited[i] && rate->rates[i] > best)
+			best = rate->rates[i];
+	return best;
+}
+
+static double fs_rate_allowance(struct fs_rate const *rate)
+{
+	double allowed;
+
+	if (!rate->in_game)
+		return rate->cap;
+	allowed = 0.95 * rate->capacity - rate->game;
+	/* (a trickle when the game takes it all: the connection paused, not
+	 * timed out) */
+	if (allowed < FS_RATE_TRICKLE)
+		allowed = FS_RATE_TRICKLE;
+	if (rate->cap > 0.0 && allowed > rate->cap)
+		allowed = rate->cap;
+	return allowed;
+}
+
+/* (lock held) a send of bytes that waited this long on the socket */
+static void fs_rate_sent(struct fs_rate *rate, size_t bytes, unsigned long waited)
+{
+	rate->bucket_bytes += (double)bytes;
+	rate->bucket_waited += waited;
+}
+
+/* (lock held) the facts brought up to now: a half second closed, C and the
+ * allowance worked out again */
+static void fs_rate_tick(struct fs_rate *rate, unsigned long now)
+{
+	unsigned long length = now - rate->bucket_at;
+	double bucket_rate, measured;
+	int limited, sending, delayed;
+
+	if (rate->round_trip) {
+		if (!rate->base_round_trip || rate->round_trip < rate->base_round_trip ||
+			now - rate->base_at > FS_RATE_BASE_MILLISECONDS) {
+			rate->base_round_trip = rate->round_trip;
+			rate->base_at = now;
+		}
+	}
+	if (!rate->bucket_at || length > 10 * FS_RATE_BUCKET_MILLISECONDS) {
+		rate->bucket_at = now;
+		rate->bucket_bytes = 0.0;
+		rate->bucket_waited = 0;
+		rate->budget = fs_rate_allowance(rate);
+		if (rate->in_game && !rate->capacity)
+			rate->budget = FS_RATE_PROBE_START;
+		return;
+	}
+	if (length < FS_RATE_BUCKET_MILLISECONDS) {
+		rate->budget = rate->in_game && !rate->capacity ? FS_RATE_PROBE_START : fs_rate_allowance(rate);
+		return;
+	}
+	bucket_rate = rate->bucket_bytes * 1000.0 / (double)length;
+	limited = rate->bucket_waited * 10 >= length && rate->bucket_bytes > 0.0;
+	sending = rate->bucket_bytes > 0.0;
+	rate->rates[rate->next] = bucket_rate;
+	rate->limited[rate->next] = limited;
+	rate->next = (rate->next + 1) % FS_RATE_BUCKETS;
+	rate->last_rate = bucket_rate;
+	rate->bucket_at = now;
+	rate->bucket_bytes = 0.0;
+	rate->bucket_waited = 0;
+	measured = fs_rate_measured(rate);
+	if (measured > 0.0)
+		rate->measured = 1;
+	delayed = rate->round_trip && rate->base_round_trip &&
+		rate->round_trip > rate->base_round_trip + FS_RATE_DELAY_MILLISECONDS;
+	if (!rate->in_game) {
+		/* (the line measured while nothing holds the sending back) */
+		if (measured > 0.0)
+			rate->capacity = measured;
+	} else {
+		if (!rate->capacity)
+			rate->capacity = FS_RATE_PROBE_START + rate->game / 0.95;
+		if (limited && bucket_rate + rate->game < rate->capacity)
+			rate->capacity = bucket_rate + rate->game;
+		else if (sending && delayed)
+			rate->capacity *= 0.9;
+		else if (sending && bucket_rate >= 0.8 * rate->budget)
+			rate->capacity *= rate->measured ? 1.02 : 1.25;
+		if (rate->capacity < FS_RATE_FLOOR + rate->game)
+			rate->capacity = FS_RATE_FLOOR + rate->game;
+		if (rate->cap > 0.0 && rate->capacity > rate->cap / 0.95 + rate->game)
+			rate->capacity = rate->cap / 0.95 + rate->game;
+	}
+	rate->budget = fs_rate_allowance(rate);
+}
+
 /* ---------- the host: what it serves */
 
 struct fs_serve_file {
@@ -403,9 +562,11 @@ static struct {
 	unsigned long listen_failed_at;
 	int listen_thread_running;
 	volatile int stop_listening;
-	/* the upload's cap (bytes a second), and the bucket every connection
-	 * sends from */
+	/* the upload's cap (bytes a second), the allowance worked out from it
+	 * (fs_rate), and the bucket every connection sends from */
 	uint32_t limit;
+	struct fs_rate rate;
+	unsigned long rate_logged_at;
 	double tokens;
 	unsigned long tokens_at;
 	int connections;
@@ -443,21 +604,24 @@ static void serve_release(int index)
 	memset(&host.serves[index], 0, sizeof(host.serves[index]));
 }
 
-/* waits until bytes may go at the cap (shared by the connections) */
+/* waits until bytes may go at the allowance (fs_rate: shared by the
+connections); 0 when stopped */
 static int host_take_tokens(size_t bytes, volatile int const *stop)
 {
 	for (;;) {
-		double burst;
+		double burst, allowance;
 		unsigned long now;
 
 		pthread_mutex_lock(&host.lock);
 		now = fs_milliseconds();
-		burst = host.limit / 4.0 > 2.0 * FS_RECORD ? host.limit / 4.0 : 2.0 * FS_RECORD;
-		host.tokens += (double)(now - host.tokens_at < 1000 ? now - host.tokens_at : 1000) * host.limit / 1000.0;
+		allowance = host.rate.budget;
+		burst = allowance / 4.0 > 2.0 * FS_RECORD ? allowance / 4.0 : 2.0 * FS_RECORD;
+		host.tokens += (double)(now - host.tokens_at < 1000 ? now - host.tokens_at : 1000) * allowance / 1000.0;
 		host.tokens_at = now;
 		if (host.tokens > burst)
 			host.tokens = burst;
-		if (host.tokens >= (double)bytes || !host.limit) {
+		/* (no cap and no game: whatever the line takes) */
+		if (host.tokens >= (double)bytes || (!host.limit && !host.rate.in_game)) {
 			host.tokens -= (double)bytes;
 			pthread_mutex_unlock(&host.lock);
 			return 1;
@@ -623,8 +787,15 @@ static void *host_connection_main(void *parameter)
 				fs_log("file share: %s ended early", path);
 				goto done;
 			}
-			if (!fs_channel_send(&channel, FS_DATA_HEADER + chunk, stop))
-				break;
+			{
+				unsigned long sending_at = fs_milliseconds();
+
+				if (!fs_channel_send(&channel, FS_DATA_HEADER + chunk, stop))
+					break;
+				pthread_mutex_lock(&host.lock);
+				fs_rate_sent(&host.rate, FS_HEADER + FS_DATA_HEADER + chunk + FS_TAG, fs_milliseconds() - sending_at);
+				pthread_mutex_unlock(&host.lock);
+			}
 			want->offset += chunk;
 			want->length -= chunk;
 			file_offset += chunk;
@@ -766,6 +937,16 @@ int host_fs_host_frame(int hosting, unsigned int limit)
 		host.limit = limit;
 		host.tokens_at = fs_milliseconds();
 	}
+	host.rate.cap = (double)limit;
+	fs_rate_tick(&host.rate, fs_milliseconds());
+	if (host.connections && fs_milliseconds() - host.rate_logged_at > FS_RATE_LOG_MILLISECONDS) {
+		host.rate_logged_at = fs_milliseconds();
+		fs_log("file share: rate %.1f MB/s of %.1f allowed%s; the line %.1f MB/s%s, the game %.0f KB/s, ping %u ms "
+			"(least %u)", host.rate.last_rate / 1048576.0, host.rate.budget / 1048576.0,
+			host.rate.in_game ? " (a game on)" : "", host.rate.capacity / 1048576.0,
+			host.rate.measured ? "" : " (not measured yet)", host.rate.game / 1024.0, host.rate.round_trip,
+			host.rate.base_round_trip);
+	}
 	listening = host.listen_thread_running;
 	if (!hosting) {
 		for (i = 0; i < FS_SERVES; i++)
@@ -784,6 +965,25 @@ int host_fs_host_frame(int hosting, unsigned int limit)
 	}
 	host.hosting = hosting;
 	return host.listener >= 0;
+}
+
+void host_fs_rate_facts(int in_game, unsigned int game_bytes, unsigned int round_trip)
+{
+	pthread_mutex_lock(&host.lock);
+	host.rate.in_game = in_game != 0;
+	host.rate.game = (double)game_bytes;
+	host.rate.round_trip = round_trip;
+	pthread_mutex_unlock(&host.lock);
+}
+
+unsigned int host_fs_allowance(void)
+{
+	double allowance;
+
+	pthread_mutex_lock(&host.lock);
+	allowance = host.rate.budget;
+	pthread_mutex_unlock(&host.lock);
+	return allowance > 4294967295.0 ? 4294967295u : (unsigned int)allowance;
 }
 
 int host_fs_serve_begin(unsigned int session, unsigned int token_address, int count)
@@ -907,6 +1107,8 @@ static struct {
 	volatile int stop;
 	uint32_t address;
 	unsigned port;
+	uint32_t direct_address;
+	unsigned direct_port;
 	uint32_t session;
 	unsigned char token[32];
 	int count, given;
@@ -933,17 +1135,30 @@ static void fetch_set(int state, int files_done, uint32_t current_bytes, uint64_
 	pthread_mutex_unlock(&fetch.lock);
 }
 
-/* the joiner's side of the handshake, up to the host's READY: the suite, or
-0 (why says) */
-static int joiner_open(struct fs_channel *channel, uint32_t address, unsigned port, uint32_t session,
-	unsigned char const token[32], unsigned char const *wants, size_t wants_size, volatile int const *stop,
-	char const **why)
+/* (the joiner) the host's internet address and port the router forwards to its
+file connection, for the next connection to try first (host_fs_direct) */
+static struct {
+	uint32_t address;
+	unsigned port;
+} fs_direct;
+
+void host_fs_direct(unsigned int address, int port)
+{
+	fs_direct.address = address;
+	fs_direct.port = port > 0 && port < 65536 ? (unsigned)port : 0;
+}
+
+/* one try of the joiner's side of the handshake, at one address, up to the
+host's READY: the suite, or 0 (why says) */
+static int joiner_attempt(struct fs_channel *channel, uint32_t address, unsigned port, unsigned long connect_milliseconds,
+	unsigned long hello_milliseconds, uint32_t session, unsigned char const token[32], unsigned char const *wants,
+	size_t wants_size, volatile int const *stop, char const **why)
 {
 	unsigned char hello[FS_HELLO_SIZE], reply[FS_REPLY_SIZE], secret[32];
 	int suite = 0;
 
 	*why = "the host could not be reached";
-	channel->socket = fs_connect(address, port, stop);
+	channel->socket = fs_connect(address, port, connect_milliseconds, stop);
 	if (channel->socket < 0)
 		return 0;
 	memcpy(hello, fs_magic, 4);
@@ -955,7 +1170,7 @@ static int joiner_open(struct fs_channel *channel, uint32_t address, unsigned po
 	fs_random(hello + 44, 32);
 	*why = "the host did not answer";
 	if (!fs_send_all(channel->socket, hello, sizeof(hello), stop) ||
-		!fs_receive_all(channel->socket, reply, sizeof(reply), FS_HELLO_MILLISECONDS, stop))
+		!fs_receive_all(channel->socket, reply, sizeof(reply), hello_milliseconds, stop))
 		goto done;
 	*why = "the host refused the connection";
 	if (memcmp(reply, fs_magic, 4) || reply[4] != FS_VERSION || reply[6] != FS_RESULT_SERVED)
@@ -973,14 +1188,43 @@ static int joiner_open(struct fs_channel *channel, uint32_t address, unsigned po
 	}
 	/* (the host's READY: its keys are the token's) */
 	*why = "the host's connection did not prove it has the transfer's token";
-	if (fs_channel_receive(channel, FS_HELLO_MILLISECONDS, stop) != 4 || channel->plain[0] != FS_FRAME_READY)
+	if (fs_channel_receive(channel, hello_milliseconds, stop) != 4 || channel->plain[0] != FS_FRAME_READY)
 		goto done;
 	suite = reply[5];
 	fs_log("file share: receiving session %u from the host (%s)", (unsigned)session,
 		suite == FS_SUITE_AES256_GCM ? fs_crypto_aes_kind() : "ChaCha20-Poly1305");
 done:
 	fs_wipe(secret, sizeof(secret));
+	if (!suite && channel->socket >= 0) {
+		posix_socket_close(channel->socket);
+		channel->socket = -1;
+	}
 	return suite;
+}
+
+/* the joiner's side of the handshake: the host's forwarded internet address
+first, when it gave one (a direct connection, not through the internet play
+tunnel), then the address the game reaches it at (its LAN address, or the
+tunnel's local stand-in for it); the suite, or 0 (why says) */
+static int joiner_open(struct fs_channel *channel, uint32_t direct_address, unsigned direct_port, uint32_t address,
+	unsigned port, uint32_t session, unsigned char const token[32], unsigned char const *wants, size_t wants_size,
+	volatile int const *stop, char const **why)
+{
+	int suite;
+
+	if (direct_address && direct_port) {
+		suite = joiner_attempt(channel, direct_address, direct_port, FS_DIRECT_CONNECT_MILLISECONDS,
+			FS_DIRECT_HELLO_MILLISECONDS, session, token, wants, wants_size, stop, why);
+		if (suite) {
+			fs_log("file share: connected directly to the host's internet address");
+			return suite;
+		}
+		if (stop && *stop)
+			return 0;
+		fs_log("file share: no direct connection to the host (%s): the usual way", *why);
+	}
+	return joiner_attempt(channel, address, port, FS_CONNECT_MILLISECONDS, FS_HELLO_MILLISECONDS, session, token,
+		wants, wants_size, stop, why);
 }
 
 static void *fetch_main(void *parameter)
@@ -1019,8 +1263,8 @@ static void *fetch_main(void *parameter)
 			put32(wants + at + 8, fetch.files[i].size);
 			at += FS_WANT_SIZE;
 		}
-		suite = joiner_open(&channel, fetch.address, fetch.port, fetch.session, fetch.token, wants, at, &fetch.stop,
-			&why);
+		suite = joiner_open(&channel, fetch.direct_address, fetch.direct_port, fetch.address, fetch.port, fetch.session,
+			fetch.token, wants, at, &fetch.stop, &why);
 		free(wants);
 		if (!suite)
 			goto done;
@@ -1112,6 +1356,8 @@ int host_fs_fetch_begin(unsigned int address, int port, unsigned int session, un
 		return 0;
 	fetch.address = address;
 	fetch.port = (unsigned)port;
+	fetch.direct_address = fs_direct.address;
+	fetch.direct_port = fs_direct.port;
 	fetch.session = session;
 	memcpy(fetch.token, GUEST_BYTES(token_address), 32);
 	fetch.count = count;
@@ -1205,6 +1451,8 @@ static struct {
 	volatile int stop;
 	uint32_t address;
 	unsigned port;
+	uint32_t direct_address;
+	unsigned direct_port;
 	uint32_t session;
 	unsigned char token[32];
 	int state;
@@ -1264,7 +1512,8 @@ static void *pieces_main(void *parameter)
 	memset(&channel, 0, sizeof(channel));
 	channel.socket = -1;
 	if (!fs_channel_buffers(&channel) ||
-		!joiner_open(&channel, pieces.address, pieces.port, pieces.session, pieces.token, NULL, 0, &pieces.stop, &why))
+		!joiner_open(&channel, pieces.direct_address, pieces.direct_port, pieces.address, pieces.port, pieces.session,
+			pieces.token, NULL, 0, &pieces.stop, &why))
 		goto done;
 	opened = 1;
 	pieces_set_state(HOST_FS_FETCH_RECEIVING);
@@ -1368,6 +1617,8 @@ int host_fs_pieces_begin(unsigned int address, int port, unsigned int session, u
 		return 0;
 	pieces.address = address;
 	pieces.port = (unsigned)port;
+	pieces.direct_address = fs_direct.address;
+	pieces.direct_port = fs_direct.port;
 	pieces.session = session;
 	memcpy(pieces.token, GUEST_BYTES(token_address), 32);
 	pieces.stop = 0;
@@ -1461,3 +1712,49 @@ void host_fs_pieces_stop(void)
 	pieces.state = HOST_FS_FETCH_IDLE;
 	pthread_mutex_unlock(&pieces.lock);
 }
+
+#ifdef HOST_FILE_SHARE_TEST
+/* (tools/test_host_file_share.py's: the rate's steps, as a script gives them:
+'f in_game game round_trip cap' (the facts), 's bytes waited' (a send), 't
+milliseconds' (the clock moved on and the rate worked out); the allowance and
+C after each t) */
+void host_file_share_test_rate(FILE *script)
+{
+	struct fs_rate rate;
+	unsigned long now = 1000;
+	char kind;
+
+	memset(&rate, 0, sizeof(rate));
+	fs_rate_tick(&rate, now);
+	while (fscanf(script, " %c", &kind) == 1) {
+		if (kind == 'f') {
+			int in_game;
+			double game, cap;
+			unsigned round_trip;
+
+			if (fscanf(script, "%d %lf %u %lf", &in_game, &game, &round_trip, &cap) != 4)
+				break;
+			rate.in_game = in_game;
+			rate.game = game;
+			rate.round_trip = round_trip;
+			rate.cap = cap;
+		} else if (kind == 's') {
+			double bytes;
+			unsigned long waited;
+
+			if (fscanf(script, "%lf %lu", &bytes, &waited) != 2)
+				break;
+			fs_rate_sent(&rate, (size_t)bytes, waited);
+		} else if (kind == 't') {
+			unsigned long milliseconds;
+
+			if (fscanf(script, "%lu", &milliseconds) != 1)
+				break;
+			now += milliseconds;
+			fs_rate_tick(&rate, now);
+			printf("budget=%.0f capacity=%.0f measured=%d\n", rate.budget, rate.capacity, rate.measured);
+		}
+	}
+}
+#endif
+

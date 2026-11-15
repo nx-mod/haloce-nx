@@ -378,6 +378,9 @@ enum
 /* whether the host's file connection listens (on P2P_FILE_SHARE_PORT, outside
 the game's sockets): a peer's stream to that port is taken only while it does */
 void p2p_set_file_share_listening(int listening);
+/* the internet address and TCP port the router forwards to it (UPnP, asked
+while it listens in an internet game; network byte order): 1, or 0 for none */
+int p2p_file_share_endpoint(unsigned long *address, unsigned short *port);
 
 /* the identifier (6 bytes) and key hash of the internet play peer of this
 virtual address (network byte order): 0 if it is no peer's */

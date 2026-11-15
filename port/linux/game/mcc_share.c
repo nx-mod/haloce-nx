@@ -328,11 +328,15 @@ OpenCE's chunks (the host sends it as the offer completes, on the same
 connection: it is normally there before the player accepts) */
 #define MCC_SHARE_TOKEN_WAIT_MS 3000u
 
-/* (the joiner) the host's token for its transfer, the last given */
+/* (the joiner) the host's token for its transfer, the last given, and the
+internet address and port its router forwards to its file connection (network
+byte order; 0 for none) */
 static struct {
     int valid;
     uint32_t session;
     unsigned char token[32];
+    unsigned long direct_address;
+    unsigned short direct_port;
 } mcc_share_fs_token;
 /* (the joiner) a download's file connection: asked for at the first ask
 after an accept (when the token wait began), and running */
@@ -346,24 +350,60 @@ static struct {
     uint32_t session;
 } mcc_share_fs_published[MCC_SHARE_HOST_TRANSFERS];
 
-/* network_extensions.c's: the host's token for a transfer (37 bytes: the
-session, the token, and what it is for: 0 an MCC package, 1 a Custom Edition
-map, map_share.c's); a client's data, which the host takes none of, is
-dropped */
+/* network_extensions.c's: the host's token for a transfer (43 bytes: the
+session, the token, what it is for: 0 an MCC package, 1 a Custom Edition map,
+map_share.c's; and the internet address and port its router forwards to its
+file connection, network byte order, 0 for none); a client's data, which the
+host takes none of, is dropped */
 void mcc_share_file_share_data(long machine_index, void const *payload, long size)
 {
     unsigned char const *bytes=payload;
-    uint32_t session;
+    uint32_t session,direct_address=0;
+    uint16_t direct_port=0;
     if (machine_index!=NONE || size<37) return;
     memcpy(&session,bytes,4);
+    if (size>=43) {
+        memcpy(&direct_address,bytes+37,4);
+        memcpy(&direct_port,bytes+41,2);
+    }
     if (bytes[36]==1) {
-        map_share_file_share_token(session,bytes+4);
+        map_share_file_share_token(session,bytes+4,direct_address,direct_port);
         return;
     }
     if (bytes[36]) return;
     mcc_share_fs_token.session=session;
     memcpy(mcc_share_fs_token.token,bytes+4,32);
+    mcc_share_fs_token.direct_address=direct_address;
+    mcc_share_fs_token.direct_port=direct_port;
     mcc_share_fs_token.valid=1;
+}
+
+/* (the host) the token's last six bytes: its router's forwarded internet
+address and port for the file connection (p2p.c's UPnP), or zeros */
+void mcc_share_fs_endpoint(unsigned char out[6])
+{
+    unsigned long address=0;
+    unsigned short port=0;
+    uint32_t address32;
+    memset(out,0,6);
+    if (!p2p_file_share_endpoint(&address,&port)) return;
+    address32=(uint32_t)address;
+    memcpy(out,&address32,4);
+    memcpy(out+4,&port,2);
+}
+
+/* (the joiner) the host's forwarded endpoint tried first, for a host over the
+internet play tunnel (a LAN host is reached at its own address) */
+void mcc_share_fs_direct_set(unsigned long host_address, unsigned long direct_address,
+    unsigned short direct_port)
+{
+    unsigned long first=host_address&0xFF;
+    unsigned long second=(host_address>>8)&0xFF;
+    /* (host_address in network byte order: 100.64.0.0/10, the tunnel's) */
+    if (direct_address && direct_port && first==100 && (second&0xC0)==64)
+        host_fs_direct((unsigned int)direct_address,((direct_port&0xFF)<<8)|(direct_port>>8));
+    else
+        host_fs_direct(0,0);
 }
 
 /* the host's address as this joiner's game connection has it (host byte
@@ -394,6 +434,7 @@ static int mcc_share_fs_begin(void)
     static char game_path[512],native[1024];
     int i;
     if (!address || stage->current || stage->written) return 0;
+    mcc_share_fs_direct_set(address,mcc_share_fs_token.direct_address,mcc_share_fs_token.direct_port);
     /* (a host over the internet play tunnel: its local stand-in, which carries
        the connection over the tunnel; -1, not reachable now) */
     if (p2p_outgoing(1,-1,&address,&port)<0) return 0;
@@ -492,16 +533,48 @@ static void mcc_share_fs_drain(void)
     }
 }
 
+/* (each frame) what host_file_share.c's rate needs of the game: whether one is
+being played here, its own bytes a second (its datagrams, xnet.c's count: the
+most of the last half second's tenths), and its players' round trip */
+unsigned long long xnet_datagram_bytes_sent(void);
+long network_distributed_host_round_trip_milliseconds(void);
+
+static void mcc_share_fs_rate_facts(void)
+{
+    static unsigned long long last_bytes;
+    static unsigned long last_at;
+    static uint32_t tenths[5];
+    static int tenth;
+    unsigned long now=system_milliseconds();
+    unsigned long long bytes=xnet_datagram_bytes_sent();
+    uint32_t game=0;
+    long round_trip;
+    int i;
+    if (!last_at || now-last_at>1000u) {
+        last_at=now;
+        last_bytes=bytes;
+    } else if (now-last_at>=100u) {
+        tenths[tenth]=(uint32_t)((bytes-last_bytes)*1000u/(now-last_at));
+        tenth=(tenth+1)%5;
+        last_at=now;
+        last_bytes=bytes;
+    }
+    for (i=0;i<5;i++) if (tenths[i]>game) game=tenths[i];
+    round_trip=network_distributed_host_round_trip_milliseconds();
+    host_fs_rate_facts(game_in_progress() && !main_menu_is_active(),game,round_trip>0 ? (unsigned int)round_trip : 0);
+}
+
 /* (the host) a transfer published: a token made, the files given to the
 host's file connection, and the token sent to the joiner; 0 to try again
 next frame */
 static int mcc_share_fs_publish(struct mcc_share_host_transfer const *transfer)
 {
-    unsigned char payload[37];
+    unsigned char payload[43];
     int i;
     posix_random_bytes(payload+4,32);
     memcpy(payload,&transfer->session,4);
     payload[36]=0;
+    mcc_share_fs_endpoint(payload+37);
     if (host_fs_serve_begin(transfer->session,MCC_SHARE_HOST_ADDRESS(payload+4),transfer->package.count)<0) return 0;
     for (i=0;i<transfer->package.count;i++)
         if (!host_fs_serve_file(transfer->session,i,MCC_SHARE_HOST_ADDRESS(transfer->package.files[i].path),
@@ -528,8 +601,14 @@ static void mcc_share_fs_host_update(void)
     struct network_game *game=network_game_get_game();
     int hosting=server && game && config_boolean("network.map_share") && mcc_level_name(game->map.name);
     int i,j;
-    /* (the listener for MCC packages and Custom Edition maps alike) */
-    host_fs_host_frame(hosting || map_share_file_connection_wanted(),mcc_share_upload_limit(NULL));
+    /* (the rate's facts: a game on, the game's own traffic, its players'
+       round trip; then the listener for MCC packages and Custom Edition maps
+       alike, under the limit, which host_file_share.c's rate works out the
+       allowance from) */
+    mcc_share_fs_rate_facts();
+    host_fs_host_frame(hosting || map_share_file_connection_wanted(),
+        (uint32_t)PIN(config_integer(global_network_game_server_get() ? "network.map_share_upload" :
+            "network.map_seed_upload"),16,256000)*1024u);
     p2p_set_file_share_listening(hosting || map_share_file_connection_wanted());
     for (j=0;j<MCC_SHARE_HOST_TRANSFERS;j++) mcc_share_fs_published[j].seen=0;
     for (i=0;hosting && i<MCC_SHARE_HOST_TRANSFERS;i++) {
@@ -599,9 +678,19 @@ static uint32_t mcc_share_upload_limit(
 	void *user)
 {
 	long kilobytes = config_integer("network.map_share_upload");
+	uint32_t limit = (uint32_t)PIN(kilobytes, 16, 256000) * 1024;
 
 	(void)user;
-	return (uint32_t)PIN(kilobytes, 16, 256000) * 1024 / 100 * (uint32_t)map_share_upload_percent();
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (host_file_share.c's allowance: the line less the game's in a game) */
+	{
+		uint32_t allowance = host_fs_allowance();
+
+		return allowance && allowance < limit ? allowance : limit;
+	}
+#else
+	return limit / 100 * (uint32_t)map_share_upload_percent();
+#endif
 }
 
 static uint64_t mcc_share_free_bytes(

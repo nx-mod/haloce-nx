@@ -35,6 +35,13 @@ struct host_fs_fetch_status {
  * transfer ended when not), and the upload's cap in bytes a second (0 none);
  * 1 while it listens */
 int host_fs_host_frame(int hosting, unsigned int limit);
+/* each frame (before host_frame): whether a game is being played here, the
+ * game's own bytes a second, and its players' round trip (ms, 0 none known);
+ * and the allowance worked out from them (bytes a second: 0.95 of the line
+ * less the game's in a game, the limit outside one), which the guest's other
+ * senders (the swarm's, OpenCE's MCC chunks) take too */
+void host_fs_rate_facts(int in_game, unsigned int game_bytes, unsigned int round_trip);
+unsigned int host_fs_allowance(void);
 /* a transfer offered to a joiner: its session, its token (32 bytes at the
  * guest address), and how many files; then each file (its native path and
  * size), then ready; the slot, or -1 */
@@ -55,6 +62,10 @@ void host_fs_serve_end(unsigned int session);
  * SHA-256); then start. stop waits for the thread, which closes what it
  * wrote first (the guest's stage deletes the files). */
 int host_fs_fetch_begin(unsigned int address, int port, unsigned int session, unsigned int token, int count);
+/* the host's forwarded internet address and TCP port (network byte order,
+the port the host's: 0 for none), which the next fetch_begin or pieces_begin
+tries first, then the address it is given */
+void host_fs_direct(unsigned int address, int port);
 int host_fs_fetch_file(int index, int file, unsigned int path, unsigned int size, unsigned int sha256);
 int host_fs_fetch_start(void);
 /* writes a struct host_fs_fetch_status; returns its state */

@@ -175,3 +175,52 @@ def test_many_pieces_one_connection(transfer, tmp_path):
     fields, out, err, _ = run(transfer, tmp_path, "many-pieces")
     assert "pieces taken=480 matched=480 wrong=0 state=2" in out, out + err
 
+
+def rate(exe, script):
+    out = subprocess.run([str(exe), "rate"], input=script, capture_output=True, text=True, timeout=30, check=True).stdout
+    return [dict(part.split("=") for part in line.split()) for line in out.splitlines()]
+
+
+MB = 1048576
+
+
+def test_rate_outside_a_game_is_the_cap_and_learns_the_line(transfer):
+    steps = rate(transfer, "f 0 0 0 10485760\nt 100\ns 10485760 300\nt 500\ns 10485760 300\nt 500\n")
+    assert all(float(step["budget"]) == 10485760 for step in steps)
+    assert float(steps[-1]["capacity"]) == 20 * MB and steps[-1]["measured"] == "1"
+
+
+def test_rate_in_a_game_leaves_the_game_and_five_percent(transfer):
+    steps = rate(transfer, "f 0 0 0 262144000\ns 10485760 300\nt 500\nf 1 1048576 40 262144000\nt 100\n"
+                           "s 9000000 0\nt 500\n")
+    assert float(steps[-1]["budget"]) == 0.95 * 20 * MB - MB
+
+
+def test_rate_backs_off_when_the_players_pings_rise(transfer):
+    steps = rate(transfer, "f 0 0 0 262144000\ns 10485760 300\nt 500\nf 1 1048576 40 262144000\nt 100\n"
+                           "s 9000000 0\nt 500\nf 1 1048576 80 262144000\ns 9000000 0\nt 500\n")
+    assert float(steps[-1]["capacity"]) == 0.9 * 20 * MB
+
+
+def test_rate_probes_in_a_game_with_the_line_unknown(transfer):
+    steps = rate(transfer, "f 1 0 30 262144000\nt 100\ns 600000 0\nt 500\ns 700000 0\nt 500\n")
+    assert float(steps[0]["budget"]) == MB
+    assert float(steps[1]["capacity"]) == 1.25 * MB and float(steps[2]["capacity"]) == 1.25 * 1.25 * MB
+
+
+def test_rate_trickles_when_the_game_takes_the_line(transfer):
+    steps = rate(transfer, "f 0 0 0 262144000\ns 1048576 300\nt 500\nf 1 5000000 30 262144000\nt 600\n")
+    assert float(steps[-1]["budget"]) == 16384
+
+
+def test_direct_falls_back(transfer, tmp_path):
+    """the host's forwarded internet address answering nothing: the usual way, at once"""
+    fields, out, err, _ = run(transfer, tmp_path, "direct-closed")
+    assert fields["state"] == "3" and "no direct connection to the host" in err
+
+
+def test_direct_first(transfer, tmp_path):
+    """the host's forwarded internet address tried first (the usual one here a closed port)"""
+    fields, out, err, _ = run(transfer, tmp_path, "direct-works")
+    assert fields["state"] == "3" and "connected directly" in err and out.count(" same") == 7
+

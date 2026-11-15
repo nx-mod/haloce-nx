@@ -120,12 +120,15 @@ host_steam_install_progress
 host_steam_take_rescan
 # files between two SlipstreamCE machines over a connection of their own (host_file_share.c)
 host_fs_host_frame
+host_fs_rate_facts
+host_fs_allowance
 host_fs_serve_begin
 host_fs_serve_file
 host_fs_serve_ready
 host_fs_serve_progress
 host_fs_serve_end
 host_fs_fetch_begin
+host_fs_direct
 host_fs_fetch_file
 host_fs_fetch_start
 host_fs_fetch_status

@@ -191,7 +191,7 @@ static int upnp_find_router(char *error, int error_size)
 	return 0;
 }
 
-static int upnp_add(const char *external_port, const char *internal_port)
+static int upnp_add(const char *external_port, const char *internal_port, const char *protocol)
 {
 	int result;
 
@@ -200,18 +200,20 @@ static int upnp_add(const char *external_port, const char *internal_port)
 	if (!upnp.permanent_only)
 	{
 		result = UPNP_AddPortMapping(upnp.urls.controlURL, upnp.data.first.servicetype, external_port,
-			internal_port, upnp.lan_address, FORWARDING_DESCRIPTION, "UDP", NULL, LEASE_SECONDS);
+			internal_port, upnp.lan_address, FORWARDING_DESCRIPTION, protocol, NULL, LEASE_SECONDS);
 		/* 725 OnlyPermanentLeasesSupported */
 		if (result != 725 || upnp_cancelled())
 			return result;
 		upnp.permanent_only = 1;
 	}
 	return UPNP_AddPortMapping(upnp.urls.controlURL, upnp.data.first.servicetype, external_port, internal_port,
-		upnp.lan_address, FORWARDING_DESCRIPTION, "UDP", NULL, "0");
+		upnp.lan_address, FORWARDING_DESCRIPTION, protocol, NULL, "0");
 }
 
-int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
-	unsigned short *external_port, char *error, int error_size)
+/* a port of the protocol's ("UDP", "TCP") forwarded (posix_upnp_forward_udp's,
+posix_upnp_forward_tcp's) */
+static int upnp_forward(const char *protocol, unsigned short port, unsigned short preferred_port,
+	posix_ulong *external_address, unsigned short *external_port, char *error, int error_size)
 {
 	char internal_text[8];
 	char external_text[8];
@@ -255,7 +257,7 @@ int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, p
 			return 0;
 		}
 		snprintf(external_text, sizeof(external_text), "%u", (unsigned int)try_port);
-		result = upnp_add(external_text, internal_text);
+		result = upnp_add(external_text, internal_text, protocol);
 		/* 718 ConflictInMappingEntry: another machine has that port; 724
 		SamePortValuesRequired: this one only */
 		if (result != 718 || attempt + 1 == PORT_ATTEMPTS)
@@ -274,12 +276,34 @@ int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, p
 	return 1;
 }
 
-void posix_upnp_stop_forwarding_udp(unsigned short external_port)
+int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
+	unsigned short *external_port, char *error, int error_size)
+{
+	return upnp_forward("UDP", port, preferred_port, external_address, external_port, error, error_size);
+}
+
+int posix_upnp_forward_tcp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
+	unsigned short *external_port, char *error, int error_size)
+{
+	return upnp_forward("TCP", port, preferred_port, external_address, external_port, error, error_size);
+}
+
+static void upnp_stop(const char *protocol, unsigned short external_port)
 {
 	char external_text[8];
 
 	if (!upnp.found)
 		return;
 	snprintf(external_text, sizeof(external_text), "%u", (unsigned int)swap_short(external_port));
-	UPNP_DeletePortMapping(upnp.urls.controlURL, upnp.data.first.servicetype, external_text, "UDP", NULL);
+	UPNP_DeletePortMapping(upnp.urls.controlURL, upnp.data.first.servicetype, external_text, protocol, NULL);
+}
+
+void posix_upnp_stop_forwarding_udp(unsigned short external_port)
+{
+	upnp_stop("UDP", external_port);
+}
+
+void posix_upnp_stop_forwarding_tcp(unsigned short external_port)
+{
+	upnp_stop("TCP", external_port);
 }

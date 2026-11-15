@@ -292,12 +292,15 @@ int host_steam_take_rescan(void);
 /* files between two SlipstreamCE machines over a connection of their own
 (port/android/host/host_file_share.h says what each does) */
 int host_fs_host_frame(int hosting, unsigned int limit);
+void host_fs_rate_facts(int in_game, unsigned int game_bytes, unsigned int round_trip);
+unsigned int host_fs_allowance(void);
 int host_fs_serve_begin(unsigned int session, unsigned int token, int count);
 int host_fs_serve_file(unsigned int session, int index, unsigned int path, unsigned int size);
 int host_fs_serve_ready(unsigned int session);
 int host_fs_serve_progress(unsigned int session, unsigned int out);
 void host_fs_serve_end(unsigned int session);
 int host_fs_fetch_begin(unsigned int address, int port, unsigned int session, unsigned int token, int count);
+void host_fs_direct(unsigned int address, int port);
 int host_fs_fetch_file(int index, int file, unsigned int path, unsigned int size, unsigned int sha256);
 int host_fs_fetch_start(void);
 int host_fs_fetch_status(unsigned int out);

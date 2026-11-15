@@ -504,6 +504,16 @@ int WSAAPI halo_ws_send(SOCKET socket, const char *buffer, int length, int flags
 	return winsock_result(posix_socket_send((int)socket, buffer, length, flags));
 }
 
+/* the bytes of the datagrams the game has sent (with 28 a datagram for the IP
+and UDP headers): its own traffic, which a file connection's rate leaves room
+for (port/android/host/host_file_share.c, map_share.c and mcc_share.c read it) */
+static volatile unsigned long long xnet_datagram_bytes;
+
+unsigned long long xnet_datagram_bytes_sent(void)
+{
+	return xnet_datagram_bytes;
+}
+
 int WSAAPI halo_ws_sendto(SOCKET socket, const char *buffer, int length, int flags,
 	const struct sockaddr *address, int address_length)
 {
@@ -513,6 +523,9 @@ int WSAAPI halo_ws_sendto(SOCKET socket, const char *buffer, int length, int fla
 	unsigned short source_port = socket_port(socket);
 	int result;
 	int send_error;
+
+	if (length > 0)
+		xnet_datagram_bytes += (unsigned long long)length + 28;
 
 	if (address && address->sa_family == AF_INET && address_length >= (int)sizeof(struct sockaddr_in) &&
 		((const struct sockaddr_in *)address)->sin_addr.s_addr == INADDR_BROADCAST)

@@ -483,6 +483,13 @@ static struct
 	int upnp_forwarded;
 	struct p2p_candidate upnp_candidate;
 	unsigned long upnp_time;
+	/* ... and the host's file connection's TCP port (P2P_FILE_SHARE_PORT),
+	while it listens in an internet game: whether it was asked, when, and
+	what the router forwards (p2p_file_share_endpoint) */
+	int upnp_tcp_asked;
+	int upnp_tcp_forwarded;
+	struct p2p_candidate upnp_tcp_candidate;
+	unsigned long upnp_tcp_time;
 	/* network.public_address, looked up (an address and port joiners reach
 	this machine at, behind a NAT with one forwarded port): offered first;
 	the text it was looked up from, and when */
@@ -496,6 +503,21 @@ static struct
 void p2p_set_file_share_listening(int listening)
 {
 	p2p.file_share_listening = listening != 0;
+}
+
+int p2p_file_share_endpoint(unsigned long *address, unsigned short *port)
+{
+	int forwarded;
+
+	pthread_mutex_lock(&p2p_lock);
+	forwarded = p2p.upnp_tcp_forwarded && p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+	if (forwarded)
+	{
+		*address = p2p.upnp_tcp_candidate.address;
+		*port = p2p.upnp_tcp_candidate.port;
+	}
+	pthread_mutex_unlock(&p2p_lock);
+	return forwarded;
 }
 
 /* the proxy (its index + 1) with each local port (all of theirs are on
@@ -3583,7 +3605,6 @@ static DWORD WINAPI upnp_thread(void *unused)
 	if (forwarded && previous_port && previous_port != external_port)
 		posix_upnp_stop_forwarding_udp(previous_port);
 	pthread_mutex_lock(&p2p_lock);
-	p2p.upnp_working = 0;
 	p2p.upnp_time = p2p_now();
 	if (forwarded)
 	{
@@ -3603,6 +3624,57 @@ static DWORD WINAPI upnp_thread(void *unused)
 	{
 		platform_log("Internet play: UPnP: %s", error);
 	}
+	/* the host's file connection's port, while it listens in an internet game;
+	let go when it no longer does */
+	{
+		int want_tcp = p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+		int tcp_forwarded = p2p.upnp_tcp_forwarded;
+		unsigned short previous_tcp = tcp_forwarded ? p2p.upnp_tcp_candidate.port : 0;
+
+		pthread_mutex_unlock(&p2p_lock);
+		if (want_tcp)
+		{
+			posix_ulong tcp_address = 0;
+			unsigned short tcp_port = 0;
+			int tcp = posix_upnp_forward_tcp(network_short(P2P_FILE_SHARE_PORT),
+				previous_tcp ? previous_tcp : network_short(P2P_FILE_SHARE_PORT), &tcp_address, &tcp_port, error,
+				sizeof(error));
+
+			if (tcp && previous_tcp && previous_tcp != tcp_port)
+				posix_upnp_stop_forwarding_tcp(previous_tcp);
+			pthread_mutex_lock(&p2p_lock);
+			p2p.upnp_tcp_asked = 1;
+			p2p.upnp_tcp_time = p2p_now();
+			if (tcp)
+			{
+				char text[LOG_ADDRESS_SIZE];
+
+				if (!p2p.upnp_tcp_forwarded || p2p.upnp_tcp_candidate.address != tcp_address ||
+					p2p.upnp_tcp_candidate.port != tcp_port)
+				{
+					platform_log("Internet play: the router forwards TCP %s to the file connection (UPnP)",
+						log_address_ipv4(tcp_address, tcp_port, text, sizeof(text)));
+				}
+				p2p.upnp_tcp_forwarded = 1;
+				p2p.upnp_tcp_candidate.address = tcp_address;
+				p2p.upnp_tcp_candidate.port = tcp_port;
+			}
+			else if (!p2p.upnp_tcp_forwarded)
+				platform_log("Internet play: UPnP for the file connection: %s", error);
+			pthread_mutex_unlock(&p2p_lock);
+		}
+		else if (tcp_forwarded)
+		{
+			posix_upnp_stop_forwarding_tcp(previous_tcp);
+			pthread_mutex_lock(&p2p_lock);
+			p2p.upnp_tcp_forwarded = 0;
+			p2p.upnp_tcp_asked = 0;
+			pthread_mutex_unlock(&p2p_lock);
+		}
+	}
+	/* (done with the router: another ask may start) */
+	pthread_mutex_lock(&p2p_lock);
+	p2p.upnp_working = 0;
 	pthread_mutex_unlock(&p2p_lock);
 	return 0;
 }
@@ -3638,7 +3710,18 @@ static void p2p_shutdown(void)
 		external_port = p2p.upnp_candidate.port;
 		p2p.upnp_forwarded = 0;
 	}
-	pthread_mutex_unlock(&p2p_lock);
+	{
+		unsigned short tcp_port = 0;
+
+		if (p2p.upnp_tcp_forwarded && !p2p.upnp_working)
+		{
+			tcp_port = p2p.upnp_tcp_candidate.port;
+			p2p.upnp_tcp_forwarded = 0;
+		}
+		pthread_mutex_unlock(&p2p_lock);
+		if (tcp_port)
+			posix_upnp_stop_forwarding_tcp(tcp_port);
+	}
 	if (external_port)
 		posix_upnp_stop_forwarding_udp(external_port);
 }
@@ -3686,6 +3769,16 @@ static void update_upnp(void)
 		ask = elapsed(p2p.upnp_time, UPNP_RENEW_INTERVAL);
 	else
 		ask = upnp_needed() && (!p2p.upnp_asked || elapsed(p2p.upnp_time, UPNP_RETRY_INTERVAL));
+	/* (and the file connection's port: wanted, or let go) */
+	{
+		int want_tcp = p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+
+		if (want_tcp && !p2p.upnp_tcp_forwarded &&
+			(!p2p.upnp_tcp_asked || elapsed(p2p.upnp_tcp_time, UPNP_RETRY_INTERVAL)))
+			ask = 1;
+		if (!want_tcp && p2p.upnp_tcp_forwarded)
+			ask = 1;
+	}
 	if (!ask)
 		return;
 	if (p2p.upnp_thread)

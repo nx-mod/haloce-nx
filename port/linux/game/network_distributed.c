@@ -1659,6 +1659,30 @@ long distributed_player_ping(
 	return (long)(distributed_round_trips[machine_index].average * 1000.0f / TICKS_PER_SECOND + 0.5f);
 }
 
+/* (the host) its clients' round trips, averaged, in milliseconds (the latency
+meter's where it has them): a file connection's rate holds back while they grow
+(port/android/host/host_file_share.c); 0 when none is known */
+long network_distributed_host_round_trip_milliseconds(
+	void)
+{
+	real total = 0.0f;
+	long count = 0, machine_index;
+
+	if (game_connection() != _game_connection_network_server)
+		return 0;
+	for (machine_index = 0; machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine_index++)
+	{
+		if (distributed_round_trips[machine_index].milliseconds_valid)
+			total += distributed_round_trips[machine_index].milliseconds;
+		else if (distributed_round_trips[machine_index].valid)
+			total += distributed_round_trips[machine_index].average * 1000.0f / TICKS_PER_SECOND;
+		else
+			continue;
+		count++;
+	}
+	return count ? (long)(total / (real)count + 0.5f) : 0;
+}
+
 real distributed_machine_round_trip_ticks(
 	long machine_index)
 {

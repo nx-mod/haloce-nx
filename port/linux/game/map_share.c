@@ -560,10 +560,14 @@ enum
 
 struct fs_source
 {
-	/* the host's token for this download (network_extensions.c's data) */
+	/* the host's token for this download (network_extensions.c's data), and
+	the internet address and port its router forwards to its file connection
+	(network byte order; 0 for none) */
 	boolean token_valid;
 	unsigned long session;
 	byte token[32];
+	unsigned long direct_address;
+	unsigned short direct_port;
 	short state;
 	/* the pieces asked of it */
 	short asked_count;
@@ -834,8 +838,19 @@ static long upload_limit_live(
 	boolean host = map_share_host_live();
 	long kilobytes = host ? config_integer("network.map_share_upload") : config_integer("network.map_seed_upload");
 
+#if defined(MAP_SHARE_FILE_CONNECTION)
+	/* (host_file_share.c's allowance: the line less the game's in a game) */
+	{
+		long limit = PIN(kilobytes, MINIMUM_UPLOAD_KILOBYTES,
+			host ? MAXIMUM_HOST_UPLOAD_KILOBYTES : MAXIMUM_SEED_UPLOAD_KILOBYTES) * 1024;
+		unsigned long allowance = host_fs_allowance();
+
+		return allowance && allowance < (unsigned long)limit ? (long)allowance : limit;
+	}
+#else
 	return PIN(kilobytes, MINIMUM_UPLOAD_KILOBYTES, host ? MAXIMUM_HOST_UPLOAD_KILOBYTES : MAXIMUM_SEED_UPLOAD_KILOBYTES) *
 		1024 / 100 * map_share_upload_percent();
+#endif
 }
 
 /* whether this machine sends the game's files to the others: in a game on
@@ -2429,6 +2444,10 @@ that does not match, or the connection lost, ends it for the download: what
 it was asked goes back to the others. */
 
 #if defined(MAP_SHARE_FILE_CONNECTION)
+/* mcc_share.c's: the token's endpoint, and the joiner's direct try */
+void mcc_share_fs_endpoint(byte out[6]);
+void mcc_share_fs_direct_set(unsigned long host_address, unsigned long direct_address, unsigned short direct_port);
+
 static unsigned long fs_swap_long(
 	unsigned long value)
 {
@@ -2491,7 +2510,9 @@ static void fs_source_update(
 			return;
 		if (!fs->buffer && !(fs->buffer = malloc(MAP_SHARE_PIECE_BYTES)))
 			return;
-		/* (a host over the internet play tunnel: its local stand-in) */
+		/* (a host over the internet play tunnel: its router's forwarded port
+		tried first, then its local stand-in) */
+		mcc_share_fs_direct_set(address, fs->direct_address, fs->direct_port);
 		if (p2p_outgoing(1, -1, &address, &port) < 0 ||
 			!host_fs_pieces_begin((unsigned int)address, ((port & 0xFF) << 8) | (port >> 8), fs->session,
 				MAP_SHARE_HOST_ADDRESS(fs->token)))
@@ -2603,7 +2624,7 @@ static void host_file_connection_publish(
 	long machine_index)
 {
 	struct host_machine *machine = &map_share_globals.machines[machine_index];
-	byte payload[37];
+	byte payload[43];
 	unsigned long session;
 	short index;
 
@@ -2618,6 +2639,7 @@ static void host_file_connection_publish(
 	posix_random_bytes(payload + 4, 32);
 	csmemcpy(payload, &session, 4);
 	payload[36] = 1;
+	mcc_share_fs_endpoint(payload + 37);
 	if (host_fs_serve_begin(session, MAP_SHARE_HOST_ADDRESS(payload + 4), machine->file_count) < 0)
 		return;
 	for (index = 0; index < machine->file_count; index++)
@@ -2662,10 +2684,14 @@ static void host_file_connection_end(struct host_machine *machine) { (void)machi
 host's token for this machine's download of a Custom Edition map */
 void map_share_file_share_token(
 	unsigned long session,
-	byte const *token)
+	byte const *token,
+	unsigned long direct_address,
+	unsigned short direct_port)
 {
 	map_share_lock();
 	map_share_globals.fs.session = session;
+	map_share_globals.fs.direct_address = direct_address;
+	map_share_globals.fs.direct_port = direct_port;
 	csmemcpy(map_share_globals.fs.token, token, sizeof(map_share_globals.fs.token));
 	map_share_globals.fs.token_valid = TRUE;
 	map_share_unlock();
