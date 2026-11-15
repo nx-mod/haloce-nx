@@ -846,6 +846,9 @@ static int mcc_share_prepare_install(void *user,struct mcc_share_stage *stage)
 
 #if defined(HALO_ANDROID) || defined(HALO_PS5)
 const char *platform_data_root(void);
+/* the folder holding mcc_maps (xbox_files.c), told to the host first */
+const char *platform_mcc_root(void);
+void host_mcc_root(unsigned int path);
 /* (the data root, as the host's Steam calls are given it) */
 static char mcc_share_steam_root[1024];
 #endif
@@ -857,6 +860,7 @@ static void mcc_share_shared_begin(void)
     mcc_share_shared_asked=0;
 #if defined(HALO_ANDROID) || defined(HALO_PS5)
     snprintf(mcc_share_steam_root,sizeof(mcc_share_steam_root),"%s",platform_data_root());
+    host_mcc_root(MCC_SHARE_HOST_ADDRESS(platform_mcc_root()));
     mcc_share_shared_asked=host_steam_shared_fetch(MCC_SHARE_HOST_ADDRESS(mcc_share_steam_root))==1;
     if (mcc_share_shared_asked)
         error(_error_silent,"mcc share: MCC's shared files are missing here: downloading them from Steam too");
@@ -1025,6 +1029,7 @@ static int mcc_share_install_begin(void)
         return 0;
     }
     snprintf(mcc_share_steam_root,sizeof(mcc_share_steam_root),"%s",platform_data_root());
+    host_mcc_root(MCC_SHARE_HOST_ADDRESS(platform_mcc_root()));
     if (!host_steam_install_start(MCC_SHARE_HOST_ADDRESS(mcc_share_steam_root),(unsigned int)id,(unsigned int)(id>>32))) {
         error(_error_silent,"mcc share: no Steam sign-in: asking the player for %s (the host's alone)",
             mcc_share_globals.level);

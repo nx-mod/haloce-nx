@@ -1221,6 +1221,21 @@ static void *sha_job_main(void *parameter)
 	return NULL;
 }
 
+static char mcc_root_folder[1024];
+
+void host_mcc_root(unsigned int path_address)
+{
+	char const *path = (char const *)(uintptr_t)path_address;
+
+	if (path && strlen(path) < sizeof(mcc_root_folder))
+		snprintf(mcc_root_folder, sizeof(mcc_root_folder), "%s", path);
+}
+
+char const *host_mcc_maps_parent(char const *data_root)
+{
+	return mcc_root_folder[0] ? mcc_root_folder : data_root;
+}
+
 int host_sha256_start(unsigned int path_address)
 {
 	char const *path = (char const *)(uintptr_t)path_address;

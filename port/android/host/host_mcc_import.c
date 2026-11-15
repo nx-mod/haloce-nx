@@ -37,6 +37,7 @@ inbox's files are removed once they have been taken in, imported or not.
 
 #include "host.h"
 #include "host_mcc_import.h"
+#include "host_mcc_hash.h"
 /* (GCC's, the Switch's: its paths are cut at their buffers' size, as any of
 the host's are, and those that could reach it are refused where they are
 made: what it warns of is no fault here) */
@@ -235,7 +236,8 @@ static int package_target(char *out, size_t size, char const *destination)
 	char maps[IMPORT_PATH_SIZE], part[64];
 	char const *slash = strchr(destination, '/');
 
-	if (!child_path(maps, sizeof(maps), import.root, "mcc_maps"))
+	/* (game.mcc.path's, when the maps were moved: host_mcc_maps_parent) */
+	if (!child_path(maps, sizeof(maps), host_mcc_maps_parent(import.root), "mcc_maps"))
 		return 0;
 	if (!slash)
 		return child_path(out, size, maps, destination);

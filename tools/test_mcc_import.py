@@ -75,9 +75,9 @@ def modinfo(title, workshop_id=None, campaign=False):
     return json.dumps(info).encode()
 
 
-def run(importer, root, answers=""):
+def run(importer, root, answers="", mcc_root=None):
     result = subprocess.run([str(importer), answers], capture_output=True, text=True, timeout=60,
-                            env={**os.environ, "IMPORT_ROOT": str(root)})
+                            env={**os.environ, "IMPORT_ROOT": str(root), "MCC_ROOT": str(mcc_root or "")})
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
     report = next(line[len("REPORT "):] for line in lines if line.startswith("REPORT "))
@@ -223,3 +223,20 @@ def test_an_import_cut_short_is_recovered(importer, root):
     run(importer, root)
     assert (root / "mcc_maps/Arena/old.map").read_bytes() == b"old"
     assert not staging.exists()
+
+
+def test_mcc_maps_moved_elsewhere(importer, root, tmp_path):
+    """Android's GAME FILES moved mcc_maps (game.mcc.path): a package goes into the moved mcc_maps, staged in the
+    data root's mcc_staging and published from there; the custom maps stay where custom_maps is"""
+    moved = tmp_path / "card"
+    (moved / "mcc_maps").mkdir(parents=True)
+    inbox = root / "import"
+    zip_file(inbox / "campaign.zip", campaign_package())
+    (inbox / "Lone Map.map").write_bytes(ce_map())
+    report, asked = run(importer, root, mcc_root=moved)
+    assert asked == []
+    assert (moved / "mcc_maps/1234567890/one.map").is_file()
+    assert not (root / "mcc_maps/1234567890").exists()
+    assert (root / "custom_maps/Lone Map.map").is_file()
+    assert "Installed " in report
+

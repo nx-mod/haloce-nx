@@ -2980,6 +2980,56 @@ static boolean vk_driver_import(void)
 	host_android_import_vk_drivers(folder);
 	return TRUE;
 }
+
+/* ---------- Settings > Gameplay > GAME FILES (Android's: tools/port_settings.py's
+_game_files): where maps, custom_maps, mods and mcc_maps are, and APP DATA
+or OTHER FOLDER, which the app asks about, then starts the game again to
+move them before it runs (HaloActivity.moveGameFiles, GameFiles.java: the
+game has them open, and reads where they are once, as it starts) */
+
+/* (port/android/host/host_main.c) */
+void host_android_move_game_files(const char *where);
+
+static void game_files_text(struct widget_instance *text_box)
+{
+	char maps[512];
+	char line[1024];
+	wchar_t text[1024];
+	char const *slash;
+	int length;
+	int index;
+
+	if (!config_string("game.maps.path")[0])
+	{
+		length = snprintf(line, sizeof(line), "Your maps, custom maps, mods and MCC maps are in the app's storage "
+			"(APP DATA).");
+	}
+	else
+	{
+		/* (the folder holding maps: where OTHER FOLDER put them) */
+		platform_translate_path("d:\\maps", maps, sizeof(maps));
+		slash = strrchr(maps, '/');
+		if (slash && slash != maps)
+			maps[slash - maps] = 0;
+		length = snprintf(line, sizeof(line), "Your maps, custom maps, mods and MCC maps are in %s (OTHER FOLDER).",
+			maps);
+	}
+	if (length < 0 || length >= (int)sizeof(line))
+		length = (int)strlen(line);
+	snprintf(line + length, sizeof(line) - length, "\n\nAPP DATA moves them into the app's storage, which Android "
+		"empties when the app is removed. OTHER FOLDER moves them into a folder you choose, such as one on a memory "
+		"card.\n\nThe game starts again to move them, and shows how far it has got.");
+	for (index = 0; line[index] && index < (int)NUMBEROF(text) - 1; index++)
+		text[index] = (wchar_t)(unsigned char)line[index];
+	text[index] = 0;
+	text_set_length(text_box, text, (short)NUMBEROF(text));
+}
+
+static boolean game_files_move(char const *where)
+{
+	host_android_move_game_files(where);
+	return TRUE;
+}
 #endif
 
 /* Video Setup's Vulkan Driver and IMPORT DRIVER (Android's:
@@ -14269,6 +14319,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			return vk_driver_import();
 		}
+		else if (!strcmp(name, "port game files app") || !strcmp(name, "port game files other"))
+		{
+			return game_files_move(!strcmp(name, "port game files app") ? "app" : "other");
+		}
 #endif
 		else if (!strcmp(name, "controls screen init") || !strcmp(name, "controls screen defaults"))
 		{
@@ -14572,6 +14626,10 @@ void pc_menu_game_data_function_invoke(
     }
     else if (!strcmp(name,"port map import page text"))
         map_import_page_text(widget);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+    else if (!strcmp(name,"port game files text"))
+        game_files_text(widget);
+#endif
     else if (!strcmp(name,"port mcc downloads text")) {
         wchar_t text[512];
         mcc_share_menu_text(text);

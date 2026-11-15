@@ -23,6 +23,8 @@
 #include <fcntl.h>
 #ifdef __linux__
 #include <sys/syscall.h>
+#include <dirent.h>
+#include <stdlib.h>
 #endif
 #endif
 
@@ -101,6 +103,96 @@ int posix_mcc_share_path_safe(const char *name)
     return 1;
 }
 
+#if defined(__linux__) && defined(SYS_renameat2)
+/* a tree removed (what copy_tree made, or the source it moved): regular
+ * files and folders alone, no link followed */
+static void remove_tree(const char *path)
+{
+    struct stat status;
+    DIR *directory;
+    struct dirent *entry;
+    char child[2048];
+    if (lstat(path,&status)) return;
+    if (!S_ISDIR(status.st_mode)) { unlink(path); return; }
+    directory=opendir(path);
+    while (directory && (entry=readdir(directory))!=NULL) {
+        if (!strcmp(entry->d_name,".") || !strcmp(entry->d_name,"..")) continue;
+        if (snprintf(child,sizeof(child),"%s/%s",path,entry->d_name)>=(int)sizeof(child)) continue;
+        remove_tree(child);
+    }
+    if (directory) closedir(directory);
+    rmdir(path);
+}
+
+/* a tree copied (regular files and folders; a link or a special file
+ * refuses the copy), each file synced: 1, else 0 */
+static int copy_tree(const char *from, const char *to)
+{
+    struct stat status;
+    if (lstat(from,&status)) return 0;
+    if (S_ISDIR(status.st_mode)) {
+        DIR *directory;
+        struct dirent *entry;
+        int copied=1;
+        if (mkdir(to,0777) && errno!=EEXIST) return 0;
+        directory=opendir(from);
+        if (!directory) return 0;
+        while (copied && (entry=readdir(directory))!=NULL) {
+            char source[2048],target[2048];
+            if (!strcmp(entry->d_name,".") || !strcmp(entry->d_name,"..")) continue;
+            if (snprintf(source,sizeof(source),"%s/%s",from,entry->d_name)>=(int)sizeof(source) ||
+                snprintf(target,sizeof(target),"%s/%s",to,entry->d_name)>=(int)sizeof(target)) { copied=0; break; }
+            copied=copy_tree(source,target);
+        }
+        closedir(directory);
+        return copied;
+    }
+    if (!S_ISREG(status.st_mode)) return 0;
+    {
+        int in=open(from,O_RDONLY|O_NOFOLLOW|O_CLOEXEC),out;
+        char *buffer;
+        ssize_t got=0;
+        int copied;
+        if (in<0) return 0;
+        out=open(to,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0666);
+        buffer=out>=0 ? malloc(1<<20) : NULL;
+        copied=buffer!=NULL;
+        while (copied && (got=read(in,buffer,1<<20))>0) {
+            char *at=buffer;
+            while (got>0) {
+                ssize_t put=write(out,at,(size_t)got);
+                if (put<=0) { copied=0; break; }
+                at+=put; got-=put;
+            }
+        }
+        copied=copied && got==0 && fsync(out)==0;
+        free(buffer);
+        if (out>=0 && close(out)) copied=0;
+        close(in);
+        return copied;
+    }
+}
+
+/* across storages (mcc_staging in the data folder, mcc_maps moved to a
+ * memory card: game.mcc.path), where a rename cannot go: copied beside the
+ * target, renamed into place (still refusing one there), then the source
+ * removed */
+static int publish_by_copy(const char *from, const char *to)
+{
+    char part[2048];
+    struct stat status;
+    if (snprintf(part,sizeof(part),"%s.copying",to)>=(int)sizeof(part)) return 0;
+    remove_tree(part);
+    if (!lstat(to,&status) || !copy_tree(from,part)) { remove_tree(part); return 0; }
+    if (syscall(SYS_renameat2,AT_FDCWD,part,AT_FDCWD,to,1 /* RENAME_NOREPLACE */)) {
+        remove_tree(part);
+        return 0;
+    }
+    remove_tree(from);
+    return 1;
+}
+#endif
+
 int posix_mcc_share_publish(const char *from, const char *to)
 {
     if (!posix_mcc_share_path_safe(from) || !posix_mcc_share_path_safe(to)) return 0;
@@ -108,7 +200,8 @@ int posix_mcc_share_publish(const char *from, const char *to)
     /* MoveFile fails for an existing target; no REPLACE_EXISTING flag. */
     return MoveFileA(from,to)!=0;
 #elif defined(__linux__) && defined(SYS_renameat2)
-    return syscall(SYS_renameat2,AT_FDCWD,from,AT_FDCWD,to,1 /* RENAME_NOREPLACE */)==0;
+    if (syscall(SYS_renameat2,AT_FDCWD,from,AT_FDCWD,to,1 /* RENAME_NOREPLACE */)==0) return 1;
+    return errno==EXDEV && publish_by_copy(from,to);
 #elif defined(__SWITCH__) || defined(__FreeBSD__) || defined(__PROSPERO__)
     /* (the Switch's and the PS5's file systems have no rename that refuses
     an existing target: one checked first, which no remote sender can race,

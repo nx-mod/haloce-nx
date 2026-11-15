@@ -795,6 +795,11 @@ static const struct config_setting config_settings[] =
 		"The folder the mods are read from (and Android's IMPORT puts them in);\n"
 		"empty for the mods folder in the data folder. A relative path is under\n"
 		"the data folder." },
+	{ "game.mcc.path", _config_string, "\"\"", "HALO_MCC_PATH", _environment_value, _platform_all,
+		"The folder holding mcc_maps (the MCC maps, and Steam's downloads of them);\n"
+		"empty for the data folder. A relative path is under the data folder. Read\n"
+		"once, at the start. mcc_staging stays in the data folder. Android's\n"
+		"Settings > Gameplay > GAME FILES sets it with the maps folders." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"

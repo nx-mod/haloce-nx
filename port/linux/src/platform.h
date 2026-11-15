@@ -107,6 +107,8 @@ cache_files_decompress_windows.c) read ahead by a thread of its own, so that the
 game works on what it has (xbox_files.c); its other reads, and every other file's, are as before */
 void platform_file_read_ahead(HANDLE file);
 const char *platform_data_root(void);
+/* the folder holding mcc_maps: game.mcc.path's, else the data root (xbox_files.c) */
+const char *platform_mcc_root(void);
 /* the Halo Custom Edition install the Xbox drive h:\ is (paths.custom_edition),
 or "" when none is set or it has no maps folder */
 const char *platform_custom_edition_root(void);

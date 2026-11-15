@@ -735,6 +735,11 @@ SCREENS["gameplay"] = {
          "The game's messages at the bottom left: never,\nin the menus only, or in games too.",
          None),
     ],
+    # (Android's GAME FILES: where the maps, custom_maps, mods and mcc_maps
+    # folders are, and a move of them, _game_files)
+    "categories": [("GAME FILES:", "gameplay/game_files",
+                    "Where your maps, custom maps, mods and MCC\nmaps are kept: the app's storage or a folder.",
+                    "android")],
 }
 # Network Setup's server browser (menu_functions.c's lobby_browser_update): where
 # its games come from (network.listings, master_list.c), the Filters screen's
@@ -1337,6 +1342,7 @@ def settings_files() -> dict:
     files[f"{PE}/network_setup/mcc_import".replace("/", ".") + ".xml"] = _mcc_import()
     files[f"{PE}/network_setup/map_import_page".replace("/", ".") + ".xml"] = _map_import_page()
     files[STEAM_WORKSHOP.replace("/", ".") + ".xml"] = _steam_workshop()
+    files[f"{PE}/gameplay/game_files".replace("/", ".") + ".xml"] = _game_files()
     files[f"{PE}/controls_setup".replace("/", ".") + ".xml"] = _controls_screen()
     return {name: ['<?xml version="1.0" encoding="UTF-8"?>',
                    "<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->",
@@ -4074,7 +4080,8 @@ def _mcc_import() -> list:
 
 # the screens of a category that are no settings screen (_setting_screen),
 # made by a function of their own
-CUSTOM_SCREENS = {"network_setup/steam_workshop": {"screen": "steam_workshop_screen"}}
+CUSTOM_SCREENS = {"network_setup/steam_workshop": {"screen": "steam_workshop_screen"},
+                  "gameplay/game_files": {"screen": "screen"}}
 
 # ---------- the Steam Workshop (Settings > Network Setup > STEAM WORKSHOP:
 # the host's port/android/host/steam_downloads.c, menu_functions.c's "port
@@ -4209,3 +4216,34 @@ def _mcc_downloads() -> list:
                          [f'<on event="a" {action}/>', f'<on event="start" {action}/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>'])
     return lines
+
+
+# ---------- Settings > Gameplay > GAME FILES (Android's): where the maps,
+# custom_maps, mods and mcc_maps folders are (menu_functions.c's "port game
+# files text"), and APP DATA or OTHER FOLDER, which the app asks about and
+# moves them for as the game starts again (HaloActivity.moveGameFiles,
+# GameFiles.java). As MCC DOWNLOADS' (_mcc_downloads)
+def _game_files() -> list:
+    base = f"{PE}/gameplay/game_files"
+    lines = _widget(f"{base}/screen", [("type", "column_list"), ("width", 640), ("height", 480),
+                    ("bitmap", "bitmaps/gradient"),
+                    ("flags", "pass_unhandled_to_focused_child up_down_tabs_children")],
+                    ['<on event="b" back="true"/>', '<on event="back" back="true"/>',
+                     f'<child widget="{base}/description" x="40" y="80"/>',
+                     f'<child widget="{base}/app" x="195" y="300"/>',
+                     f'<child widget="{base}/other" x="195" y="340"/>',
+                     f'<child widget="{base}/back" x="195" y="390"/>',
+                     f'<child widget="{base}/title" x="40" y="24"/>'])
+    lines += _widget(f"{base}/title", [("type", "text"), ("width", 560), ("height", 40),
+                     ("text", "GAME FILES"), ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/description", [("type", "text"), ("controller", 1),
+                     ("width", 560), ("height", 210), ("font", "ui\\small_ui"),
+                     ("color", "#FFFFFFFF")], ['<data input="port game files text"/>'])
+    for name, text in [("app", "APP DATA"), ("other", "OTHER FOLDER"), ("back", "BACK")]:
+        action = 'back="true"' if name == "back" else f'run="port game files {name}"'
+        lines += _widget(f"{base}/{name}", [("type", "text"), ("width", 250), ("height", 32),
+                         ("text", text), ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("align", "center")],
+                         [f'<on event="a" {action}/>', f'<on event="start" {action}/>',
+                          '<on event="left_mouse" run="mouse emit accept event"/>'])
+    return lines
+

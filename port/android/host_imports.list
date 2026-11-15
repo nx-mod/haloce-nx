@@ -70,6 +70,7 @@ host_replay_store_append
 host_replay_store_read
 host_replay_store_free
 host_mcc_import_start
+host_mcc_root
 host_mcc_import_state
 host_mcc_import_progress
 host_mcc_import_question

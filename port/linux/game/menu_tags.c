@@ -413,6 +413,8 @@ static char const *const port_function_names[] =
 	"port mods save", "port mods accept", "port mods delete", "port mods import",
 	/* (Video Setup's IMPORT DRIVER, Android's: menu_functions.c) */
 	"port vk driver import",
+	/* (Android's Settings > Gameplay > GAME FILES: menu_functions.c's game_files_*) */
+	"port game files app", "port game files other",
 	/* (the map lists' IMPORT, Android's, and DELETE: menu_functions.c) */
 	"port map import", "port map delete",
 	/* (the main menu's news: menu_functions.c) */
@@ -467,6 +469,7 @@ static char const *const port_game_data_input_names[] =
 	"port mods update",
 	"port mcc share update", "port mcc share text",
 	"port mcc downloads update", "port mcc downloads text",
+	"port game files text",
 	/* (the map lists' IMPORT's question: port/linux/src/mcc_import.c) */
 	"port mcc import update", "port mcc import text",
 	/* (the consoles' IMPORT's upload page: map_import_page.c) */

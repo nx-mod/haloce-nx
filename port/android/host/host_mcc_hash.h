@@ -17,6 +17,14 @@
 int host_mcc_hash_package(char const *data_root, char const *folder, volatile int const *cancel,
 	void (*progress)(unsigned long long done, unsigned long long total, void *context), void *context);
 
+/* the folder holding mcc_maps (config.toml's game.mcc.path, which the guest
+ * reads: platform_mcc_root), told by the guest as it starts (guest_host.h's
+ * host_mcc_root); and what the host's MCC code takes it to be: that, else the
+ * data root it was given. mcc_staging, the Steam session and the import inbox
+ * stay in the data root. */
+void host_mcc_root(unsigned int path);
+char const *host_mcc_maps_parent(char const *data_root);
+
 /* the guest's (guest_host.h) */
 int host_mcc_hash_start(unsigned int request);
 int host_mcc_hash_wait(int id, int milliseconds, unsigned int result);

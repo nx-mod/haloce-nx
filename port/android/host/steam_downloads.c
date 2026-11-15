@@ -319,10 +319,13 @@ static void mcc_root_find(char *path, size_t size)
 {
 	char found[256];
 
-	if (posix_find_entry_case_insensitive(steam.data_root, "mcc_maps", found, sizeof(found)))
-		snprintf(path, size, "%s/%s", steam.data_root, found);
+	/* (game.mcc.path's, when the maps were moved: host_mcc_maps_parent) */
+	char const *parent = host_mcc_maps_parent(steam.data_root);
+
+	if (posix_find_entry_case_insensitive(parent, "mcc_maps", found, sizeof(found)))
+		snprintf(path, size, "%s/%s", parent, found);
 	else
-		snprintf(path, size, "%s/mcc_maps", steam.data_root);
+		snprintf(path, size, "%s/mcc_maps", parent);
 }
 
 static int path_exists(char const *path, int *directory)

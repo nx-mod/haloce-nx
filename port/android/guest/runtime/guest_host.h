@@ -170,6 +170,10 @@ map chosen, or each in a .zip file chosen, into folder (a path: custom_maps;
 HaloActivity.importMaps); returns at once, the copy done on the app's own
 thread */
 void host_android_import_maps(const char *folder);
+/* the game's files moved to the app's storage ("app") or a folder the player
+picks ("other"): the app asks, then starts the game again to move them
+(HaloActivity.moveGameFiles) */
+void host_android_move_game_files(const char *where);
 
 /* ---------- the on-screen touch controls (host_touch.c, android_imports.list) */
 
@@ -233,6 +237,9 @@ void host_replay_store_free(void);
 /* the map lists' IMPORT, done by the host (port/android/host/host_mcc_import.c, which
 says what each does; the guest's wrappers are port/linux/src/mcc_import.c's) */
 int host_mcc_import_start(unsigned int root, unsigned int custom_maps);
+/* the folder holding mcc_maps (game.mcc.path, else the data root), told once
+as the game starts (port/android/host/host_mcc_hash.c) */
+void host_mcc_root(unsigned int path);
 int host_mcc_import_state(void);
 void host_mcc_import_progress(unsigned int text, unsigned int size);
 int host_mcc_import_question(unsigned int title, unsigned int title_size, unsigned int destination,
