@@ -118,9 +118,11 @@ the way put back (playback_seek_chase); back, once it is let go.
 #include "camera/director.h"
 #include "camera/following_camera.h"
 #include "camera/observer.h"
+#include "cutscene/cinematics.h"
 #include "sound/sound_manager.h"
 #include "network_distributed.h"
 #include "network_replay.h"
+#include "network_coop.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -727,6 +729,9 @@ static struct
 	/* the host watching its game live (network_replay_live_begin): the
 	cameras' and the players' alone, nothing of a file's */
 	boolean live;
+	/* a campaign level's cutscene has the view (playback_cutscene_frame):
+	the view chosen waits until it ends, and Y does nothing meanwhile */
+	boolean cutscene;
 } playback = { NULL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, FALSE, NONE };
 
 /* whether a view is up: a replay's, or the host's live */
@@ -951,6 +956,7 @@ static void playback_free(
 	playback.hidden = FALSE;
 	playback.paused = FALSE;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.threat_tick = NONE;
 	playback.threat_field_of_view = 0.0f;
 	playback_keyframes_free();
@@ -2167,7 +2173,8 @@ boolean network_replay_playback_idle(
 		}
 		playback_scrub(now);
 	}
-	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
+	/* (heard but let be during a campaign cutscene, which has the view) */
+	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y) && !playback.cutscene)
 	{
 		playback.view = (short)((playback.view + 1) % NUMBER_OF_REPLAY_VIEWS);
 		/* (the free camera follows the player until it is flown; behind
@@ -3701,6 +3708,56 @@ static void playback_behind_camera(
 	playback_camera_set(&position, &forward);
 }
 
+/* the eyes view of the player watched, their unit_index: what they saw, a
+seat with a third-person camera's view, a Warthog's or a Ghost's, else their
+own eyes with their arms and weapon, as the director chooses for a player
+(director.c) */
+static void playback_eyes_view(
+	long unit_index)
+{
+	director_perspective perspective;
+
+	if (director_desired_perspective(unit_index, &perspective) &&
+		object_get(unit_index)->object.parent_object_index != NONE)
+	{
+		playback_seat_camera(unit_index);
+	}
+	else
+	{
+		playback_eyes_camera(unit_index, (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(playback.watched));
+		playback.first_person = TRUE;
+	}
+}
+
+/* A campaign level's cutscene (network co-op's, network_coop.c) is shown as
+its players saw it, whatever view is chosen: through the camera the host's
+scripts hold, or, while they leave the camera with the players, through the
+eyes of the player watched (unit_index). Returns whether it made the view.
+Once the cutscene ends the view chosen comes back, the free and cinematic
+cameras placed again by the player, who has likely been moved. */
+static boolean playback_cutscene_frame(
+	long unit_index)
+{
+	struct observer_result camera;
+
+	if (!network_coop_active() || !cinematic_in_progress())
+	{
+		if (playback.cutscene && (playback.view == _replay_view_free || playback.view == _replay_view_cinematic))
+			playback.free_placing = TRUE;
+		playback.cutscene = FALSE;
+		return FALSE;
+	}
+	playback.cutscene = TRUE;
+	if (network_coop_cutscene_camera(render_interpolation_fraction(), &camera))
+	{
+		playback.camera = camera;
+		playback.camera_valid = TRUE;
+	}
+	else if (unit_index != NONE)
+		playback_eyes_view(unit_index);
+	return TRUE;
+}
+
 void network_replay_playback_frame(
 	void)
 {
@@ -3733,6 +3790,8 @@ void network_replay_playback_frame(
 	}
 	unit_index = player ? player->unit_index : NONE;
 	playback.first_person = FALSE;
+	if (playback_cutscene_frame(unit_index))
+		return;
 	/* (the free camera, until it is placed, is the view before it; the
 	cinematic one's too) */
 	if ((playback.view == _replay_view_free || playback.view == _replay_view_cinematic) &&
@@ -3741,23 +3800,7 @@ void network_replay_playback_frame(
 	else if (unit_index == NONE)
 		return;
 	else if (playback.view == _replay_view_eyes)
-	{
-		director_perspective perspective;
-
-		/* (what the player saw: a seat with a third-person camera's view, a
-		Warthog's or a Ghost's, else their own eyes with their arms and
-		weapon, as the director chooses for a player: director.c) */
-		if (director_desired_perspective(unit_index, &perspective) &&
-			object_get(unit_index)->object.parent_object_index != NONE)
-		{
-			playback_seat_camera(unit_index);
-		}
-		else
-		{
-			playback_eyes_camera(unit_index, (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(playback.watched));
-			playback.first_person = TRUE;
-		}
-	}
+		playback_eyes_view(unit_index);
 	else
 		playback_behind_camera(unit_index, main_get_seconds_elapsed());
 }
@@ -3771,7 +3814,7 @@ long network_replay_watched_player(
 boolean network_replay_viewing_eyes(
 	void)
 {
-	return playback_viewing() && playback.view == _replay_view_eyes && playback.first_person;
+	return playback_viewing() && (playback.view == _replay_view_eyes || playback.cutscene) && playback.first_person;
 }
 
 struct observer_result const *network_replay_camera(
@@ -3813,6 +3856,7 @@ boolean network_replay_live_begin(
 	playback.watched = player_index != NONE && player_try_and_get(player_index) ? player_index : NONE;
 	playback.view = _replay_view_behind;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.first_person = FALSE;
 	playback.behind_orbiting = FALSE;
 	playback.behind_zoom = 1.0f;
@@ -3887,6 +3931,7 @@ void network_replay_live_end(
 		return;
 	playback.live = FALSE;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.first_person = FALSE;
 	playback.scores = FALSE;
 	/* (the game's free takes no NULL: debug_memory.c) */
@@ -3910,7 +3955,8 @@ boolean network_replay_live_update(
 		playback.watched = playback_next_player(playback.watched, FALSE);
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_x))
 		playback.watched = playback_next_player(playback.watched, TRUE);
-	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
+	/* (heard but let be during a campaign cutscene, which has the view) */
+	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y) && !playback.cutscene)
 	{
 		playback.view = (short)((playback.view + 1) % NUMBER_OF_REPLAY_VIEWS);
 		if (playback.view == _replay_view_free || playback.view == _replay_view_cinematic)
@@ -4567,7 +4613,7 @@ void network_replay_playback_draw(
 
 		usnprintf(text, NUMBEROF(text) - 1, L"LIVE   %.12s   %s",
 			(playback.view == _replay_view_free && !tracking) || !player ? L"" : player->name,
-			tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view]);
+			playback.cutscene ? L"CUTSCENE" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view]);
 	}
 	else
 	{
@@ -4582,7 +4628,8 @@ void network_replay_playback_draw(
 
 		usnprintf(text, NUMBEROF(text) - 1, L"%.12s   %s   %s",
 			(playback.view == _replay_view_free && !tracking) || !player ? L"REPLAY" : player->name,
-			smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view], speed);
+			playback.cutscene ? L"CUTSCENE" : smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" :
+			view_names[playback.view], speed);
 	}
 	text[NUMBEROF(text) - 1] = 0;
 	font = font_definition_get(font_index);

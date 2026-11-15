@@ -126,6 +126,7 @@ index and tag, since the map placed them at the same index everywhere.
 #include "network_coop.h"
 #include "vehicle_riding.h"
 #include "network_distributed.h"
+#include "network_replay.h"
 #include "../src/server_events.h" /* port: port/linux/src/server_events.c */
 #include "../src/server_json.h" /* port: port/linux/src/server_json.c */
 #include "../src/server_log.h" /* port: port/linux/src/server_log.c */
@@ -486,8 +487,23 @@ static struct
 	boolean watching_host_valid;
 	real_point3d watching_host_position;
 	real_vector3d watching_host_forward;
+	/* the scripted camera last set from the host's presentation, and the
+	one before, by the tick each was set (network_coop_cutscene_camera) */
+	struct coop_cutscene_camera
+	{
+		boolean valid;
+		long time;
+		real_point3d position;
+		real_vector3d forward;
+		real_vector3d up;
+		real field_of_view;
+	} cutscene_camera, cutscene_previous;
 	long heard_time;
 	long fade_start_time;
+	/* whether fade_start_time is a fade applied: the resets clear it, so a
+	host's first fade, at its tick 0 (a level that opens in black), is a new
+	one too, not taken for one already applied */
+	boolean fade_applied;
 	/* the host's presentations as they arrived, by the host's tick; the
 	newest tick heard and the tick last played (nothing is played until
 	one has been heard) */
@@ -3402,6 +3418,74 @@ boolean network_coop_skip_vote_status(
 	return TRUE;
 }
 
+/* a replay's cutscene camera (network_coop.h). A client's moves between the
+host's ticks as the objects drawn do (render_interpolation_fraction: from
+the tick before to this one), but not across a cut: a jump further than
+CUTSCENE_CUT_DISTANCE, or a turn sharper than CUTSCENE_CUT_COSINE allows,
+in one tick is shown as the cut it is. */
+#define CUTSCENE_CUT_DISTANCE 1.0f
+#define CUTSCENE_CUT_COSINE 0.8f
+
+boolean network_coop_cutscene_camera(
+	real fraction,
+	struct observer_result *camera)
+{
+	struct coop_cutscene_camera const *now = &coop_presentation.cutscene_camera;
+	struct coop_cutscene_camera const *before = &coop_presentation.cutscene_previous;
+	real_vector3d forward, up;
+
+	/* (the host watching its own game live: its window's camera, while its
+	scripts hold it) */
+	if (coop_host())
+	{
+		struct observer_result const *own;
+
+		if (!cinematic_in_progress() || !*director_camera_scripted)
+			return FALSE;
+		/* (a dedicated server's, which has no player: local player 0's all the
+		same, director_unattended_scripted_camera, not drawn between ticks) */
+		if (local_player_get_player_index(0) != NONE)
+		{
+			own = observer_get_camera(0);
+			own = own ? render_interpolation_camera(0, own) : NULL;
+		}
+		else
+			own = director_unattended_scripted_camera(0) ? observer_get_camera(0) : NULL;
+		if (!own)
+			return FALSE;
+		*camera = *own;
+		return TRUE;
+	}
+	if (!coop_client() || !coop_presentation.cinematic_started || !now->valid)
+		return FALSE;
+	csmemset(camera, 0, sizeof(*camera));
+	camera->position = now->position;
+	forward = now->forward;
+	up = now->up;
+	camera->field_of_view = now->field_of_view;
+	if (before->valid && before->time == now->time - 1 &&
+		distance_squared3d(&before->position, &now->position) < CUTSCENE_CUT_DISTANCE * CUTSCENE_CUT_DISTANCE &&
+		dot_product3d(&before->forward, &now->forward) > CUTSCENE_CUT_COSINE)
+	{
+		fraction = PIN(fraction, 0.0f, 1.0f);
+		points_interpolate(&before->position, &now->position, fraction, &camera->position);
+		vectors_interpolate(&before->forward, &now->forward, fraction, &forward);
+		vectors_interpolate(&before->up, &now->up, fraction, &up);
+		camera->field_of_view = before->field_of_view + (now->field_of_view - before->field_of_view) * fraction;
+		/* (eased between two good pairs, only a degenerate one falls back
+		to this tick's) */
+		if (!distributed_axes_make_valid(&forward, &up))
+		{
+			forward = now->forward;
+			up = now->up;
+		}
+	}
+	camera->forward = forward;
+	camera->up = up;
+	scenario_location_from_point(&camera->location, &camera->position);
+	return TRUE;
+}
+
 /* host, after each tick */
 void network_coop_host_tick(
 	void)
@@ -3776,12 +3860,34 @@ void network_coop_handle_presentation(
 	coop_presentation.heard_any = TRUE;
 }
 
+/* client: the cutscene camera the host's presentation set this tick, kept
+with the tick before's for a replay's view (network_coop_cutscene_camera) */
+static void client_cutscene_camera_note(
+	real_point3d const *position,
+	real_vector3d const *forward,
+	real_vector3d const *up,
+	real field_of_view)
+{
+	long now = game_time_get();
+
+	if (coop_presentation.cutscene_camera.valid && coop_presentation.cutscene_camera.time != now)
+		coop_presentation.cutscene_previous = coop_presentation.cutscene_camera;
+	coop_presentation.cutscene_camera.valid = TRUE;
+	coop_presentation.cutscene_camera.time = now;
+	coop_presentation.cutscene_camera.position = *position;
+	coop_presentation.cutscene_camera.forward = *forward;
+	coop_presentation.cutscene_camera.up = *up;
+	coop_presentation.cutscene_camera.field_of_view = field_of_view;
+}
+
 static void client_presentation_apply(
 	struct distributed_coop_presentation const *presentation)
 {
 	boolean cinematic = TEST_FLAG(presentation->flags, _presentation_cinematic_bit);
 	boolean host_camera_wanted;
 	boolean host_camera_unmoved;
+	boolean cutscene_camera_noted = FALSE;
+	boolean host_shot;
 
 	player_input_enable(!presentation->input_disabled);
 	if (presentation->players_vitality_set && distributed_real_valid(presentation->players_maximum_body_vitality) &&
@@ -3828,6 +3934,9 @@ static void client_presentation_apply(
 			"earlier build films no cutscene): this machine watches the cutscene's actors");
 	}
 	client_host_camera_set(host_camera_wanted);
+	/* (a cutscene's own shot, which a replay's view eases between ticks:
+	network_coop_cutscene_camera) */
+	host_shot = coop_presentation.cinematic_started && presentation->camera_scripted && !host_camera_unmoved;
 	/* (also outside a cinematic: a cutscene that leaves the players their
 	controls shows the bars too) */
 	cinematic_show_letterbox(TEST_FLAG(presentation->flags, _presentation_letterbox_bit));
@@ -3862,21 +3971,34 @@ static void client_presentation_apply(
 		{
 			boolean camera_ready = TRUE;
 
-			if (!(coop_presentation.cinematic_started && presentation->camera_scripted))
+			if (!host_shot)
 				camera_ready = client_watch_host_from_behind(&position, &forward, &up);
 			if (camera_ready && valid_real_vector3d_axes2(&forward, &up))
-				scripted_camera_set_camera_point_relative(&position, &forward, &up,
-					PIN((real)presentation->camera_field_of_view / FIELD_OF_VIEW_SCALE, CAMERA_MINIMUM_FIELD_OF_VIEW,
-						CAMERA_MAXIMUM_FIELD_OF_VIEW), 0, NONE);
+			{
+				real field_of_view = PIN((real)presentation->camera_field_of_view / FIELD_OF_VIEW_SCALE,
+					CAMERA_MINIMUM_FIELD_OF_VIEW, CAMERA_MAXIMUM_FIELD_OF_VIEW);
+
+				scripted_camera_set_camera_point_relative(&position, &forward, &up, field_of_view, 0, NONE);
+				if (host_shot)
+				{
+					client_cutscene_camera_note(&position, &forward, &up, field_of_view);
+					cutscene_camera_noted = TRUE;
+				}
+			}
 		}
 	}
 	else
 	{
 		coop_presentation.watching_host_valid = FALSE;
 	}
+	if (!cutscene_camera_noted)
+	{
+		coop_presentation.cutscene_camera.valid = FALSE;
+		coop_presentation.cutscene_previous.valid = FALSE;
+	}
 
 	/* start each new fade, backdated to when the host started it */
-	if (presentation->fade_start_time != coop_presentation.fade_start_time)
+	if (!coop_presentation.fade_applied || presentation->fade_start_time != coop_presentation.fade_start_time)
 	{
 		real_rgb_color color;
 
@@ -3887,6 +4009,14 @@ static void client_presentation_apply(
 			TEST_FLAG(presentation->flags, _presentation_fading_out_bit),
 			game_time_get() - presentation->fade_elapsed);
 		coop_presentation.fade_start_time = presentation->fade_start_time;
+		coop_presentation.fade_applied = TRUE;
+		if (network_replay_playing())
+		{
+			error(_error_log, "replay: co-op fade %s %02x%02x%02x over %d ticks, from host tick %ld (at tick %ld)",
+				TEST_FLAG(presentation->flags, _presentation_fading_out_bit) ? "out to" : "in from",
+				presentation->fade_color[0], presentation->fade_color[1], presentation->fade_color[2],
+				(int)presentation->fade_ticks, presentation->fade_start_time, game_time_get());
+		}
 	}
 
 	skip_vote.offered = TEST_FLAG(presentation->flags, _presentation_skippable_bit);
@@ -3903,14 +4033,18 @@ static void client_play_presentation(
 {
 	struct distributed_coop_presentation const *presentation = NULL;
 	long lag, best_time = NONE;
+	/* (a replay's records come in order, a tick at a time, with nothing lost
+	or late: played as they come, so the cutscene's camera and fades keep
+	time with the objects rather than PRESENTATION_DELAY_TICKS behind) */
+	long delay = network_replay_playing() ? 0 : PRESENTATION_DELAY_TICKS;
 	short index;
 
 	if (!coop_presentation.heard_any)
 		return;
 	lag = coop_presentation.newest_time - coop_presentation.played_time;
 	if (!coop_presentation.playing || lag > PRESENTATION_BUFFER_COUNT || lag < -PRESENTATION_BUFFER_COUNT)
-		coop_presentation.played_time = coop_presentation.newest_time - PRESENTATION_DELAY_TICKS;
-	else if (lag > PRESENTATION_DELAY_TICKS + 1)
+		coop_presentation.played_time = coop_presentation.newest_time - delay;
+	else if (lag > delay + 1)
 		coop_presentation.played_time += 2;
 	else if (lag > 0)
 		coop_presentation.played_time++;
