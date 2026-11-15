@@ -4521,6 +4521,9 @@ static void distributed_host_plan_players(
 			has_action[player_index] = TRUE;
 			action_changed[player_index] = distributed_relayed_action_from(player_index, recent, recent_counts,
 				&distributed_host_actions[player_index]);
+			/* (the host watching its game: its eyes view's aim) */
+			network_replay_live_facing(player_index, distributed_host_actions[player_index].yaw,
+				distributed_host_actions[player_index].pitch);
 		}
 	}
 	for (machine_number = 0; machine_number < machine_count; machine_number++)

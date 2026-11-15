@@ -291,6 +291,14 @@ left of one goes (seconds of the game to go to a third) */
 #define EYES_CORRECTION_MINIMUM 0.02f
 #define EYES_CORRECTION_MAXIMUM 2.0f
 #define EYES_CORRECTION_TIME 0.1f
+/* the host watching live: how many of each player's facings it keeps
+(network_replay_live_facing: one a tick their input changed, a second or
+more: the view needs those since EYES_LIVE_DELAY_TICKS ago), and how far
+behind the game the eyes view's aim turns (ticks: the facing after the
+moment then known, though a client's input comes to the host unevenly, a
+tick or two late and two at once) */
+#define EYES_LIVE_FACINGS 32
+#define EYES_LIVE_DELAY_TICKS 3.0f
 /* the free camera: how fast it moves (world units a second), turns
 (radians a second, the stick all the way) and how far it pitches */
 #define FREE_CAMERA_SPEED 6.0f
@@ -571,6 +579,12 @@ static struct
 	real eyes_time;
 	real_point3d eyes_drawn;
 	real_vector3d eyes_offset;
+	/* the host watching live: each player's (by absolute index) facings as
+	its ticks ran them, EYES_LIVE_FACINGS a player, the newest last
+	(network_replay_live_facing; in the heap while it watches, not the guest
+	image's: NULL, none and the unit's aim) */
+	struct replay_facing *live_facings;
+	long live_facing_count[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	/* the buttons held at the last idle (each press counted once) */
 	boolean held[NUMBER_OF_GAMEPAD_BUTTONS];
 	/* the view, the speed (replay_speeds'), and whether the scores are
@@ -3381,7 +3395,9 @@ static real playback_angle_between(
 from the facing their ticks run to the next one the replay has
 (playback_index_facings); FALSE when it has none of theirs yet. A facing
 read at a tick is what the client's next tick runs: it is theirs from then
-(its tick and 1). */
+(its tick and 1). Watching live, the host's facings of them
+(network_replay_live_facing), EYES_LIVE_DELAY_TICKS behind the moment, so
+that the next is known. */
 static boolean playback_eyes_facing(
 	short player_index,
 	real time,
@@ -3390,17 +3406,29 @@ static boolean playback_eyes_facing(
 	struct replay_facing const *facings;
 	long low = 0;
 	long high;
+	long count;
 	real from;
 	real to;
 	real fraction;
 
-	if (!playback.facings || player_index < 0 || player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS ||
-		!playback.facing_count[player_index])
-	{
+	if (player_index < 0 || player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
 		return FALSE;
+	if (playback.live)
+	{
+		if (!playback.live_facings)
+			return FALSE;
+		facings = playback.live_facings + player_index * EYES_LIVE_FACINGS;
+		count = playback.live_facing_count[player_index];
+		time -= EYES_LIVE_DELAY_TICKS;
 	}
-	facings = playback.facings + playback.facing_first[player_index];
-	high = playback.facing_count[player_index];
+	else
+	{
+		facings = playback.facings ? playback.facings + playback.facing_first[player_index] : NULL;
+		count = playback.facings ? playback.facing_count[player_index] : 0;
+	}
+	if (!count)
+		return FALSE;
+	high = count;
 	/* (the last whose moment the time has reached) */
 	if ((real)(facings[0].tick + 1) > time)
 		return FALSE;
@@ -3415,7 +3443,7 @@ static boolean playback_eyes_facing(
 	}
 	facing->yaw = distributed_angle_unpack(facings[low].yaw, FALSE);
 	facing->pitch = distributed_angle_unpack(facings[low].pitch, TRUE);
-	if (low + 1 >= playback.facing_count[player_index] ||
+	if (low + 1 >= count ||
 		facings[low + 1].tick - facings[low].tick > EYES_FACING_MAXIMUM_TICKS)
 	{
 		return TRUE;
@@ -3797,9 +3825,53 @@ boolean network_replay_live_begin(
 	playback.ended = 0;
 	playback.eyes_unit = NONE;
 	playback.threat_tick = NONE;
+	csmemset(playback.live_facing_count, 0, sizeof(playback.live_facing_count));
+	if (!playback.live_facings)
+		playback.live_facings = (struct replay_facing *)malloc(
+			HALO_PORT_MAXIMUM_NETWORK_PLAYERS * EYES_LIVE_FACINGS * sizeof(struct replay_facing));
 	playback_buttons_held_now();
 	error(_error_log, "host: watching the game live");
 	return TRUE;
+}
+
+/* (the host, each tick) the player's (an absolute index) facing as the
+tick just run ran it (the wire's packing, distributed_angle_pack), kept
+for the eyes view while the host watches: only a change, as a replay has a
+far player's (a tick a client's input came to the host late runs the last
+again, and the next has two of its ticks' turn) */
+void network_replay_live_facing(
+	short player_index,
+	short yaw,
+	short pitch)
+{
+	struct replay_facing *facings;
+	long *count;
+	long tick = game_time_get() - 1;
+
+	if (!playback.live || !playback.live_facings || player_index < 0 ||
+		player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
+	{
+		return;
+	}
+	facings = playback.live_facings + player_index * EYES_LIVE_FACINGS;
+	count = &playback.live_facing_count[player_index];
+	/* (a game's time gone back: a new game's; the same tick again: its last
+	facing) */
+	if (*count && facings[*count - 1].tick > tick)
+		*count = 0;
+	if (*count && facings[*count - 1].tick == tick)
+		(*count)--;
+	if (*count && facings[*count - 1].yaw == yaw && facings[*count - 1].pitch == pitch)
+		return;
+	if (*count == EYES_LIVE_FACINGS)
+	{
+		memmove(facings, facings + 1, (EYES_LIVE_FACINGS - 1) * sizeof(*facings));
+		(*count)--;
+	}
+	facings[*count].tick = tick;
+	facings[*count].yaw = yaw;
+	facings[*count].pitch = pitch;
+	(*count)++;
 }
 
 boolean network_replay_live(
@@ -3817,6 +3889,10 @@ void network_replay_live_end(
 	playback.camera_valid = FALSE;
 	playback.first_person = FALSE;
 	playback.scores = FALSE;
+	/* (the game's free takes no NULL: debug_memory.c) */
+	if (playback.live_facings)
+		free(playback.live_facings);
+	playback.live_facings = NULL;
 	error(_error_log, "host: watching ended");
 }
 
