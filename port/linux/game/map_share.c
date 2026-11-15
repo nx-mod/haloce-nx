@@ -3406,6 +3406,16 @@ static void connections_update(
 
 /* ---------- the client's download, each frame */
 
+/* the download's bytes a second over its last window (in 64 bits: a window's
+bytes times a thousand pass an unsigned long's 32 at 2.1 MB/s, and the rate
+shown wrapped round: 35 MB/s showed as 183 KB/s) */
+static unsigned long download_rate(
+	struct download const *download)
+{
+	return download->last_window_time ?
+		(unsigned long)((unsigned long long)download->last_window_bytes * 1000 / download->last_window_time) : 0;
+}
+
 static void download_update(
 	void)
 {
@@ -3524,7 +3534,7 @@ static void download_update(
 		download->logged_at = now;
 		error(_error_silent, "map sharing: %lu of %lu bytes, %d connections, %lu bytes a second",
 			download->done_bytes, download->total_bytes, (int)connections,
-			download->last_window_time ? download->last_window_bytes * 1000 / download->last_window_time : 0);
+			download_rate(download));
 	}
 	if (elapsed(download->window_at, now, RATE_WINDOW))
 	{
@@ -4279,8 +4289,7 @@ static void map_share_render_unlocked(
 	}
 	else
 	{
-		unsigned long rate = download->last_window_time ?
-			download->last_window_bytes * 1000 / download->last_window_time : 0;
+		unsigned long rate = download_rate(download);
 		short sources = 0;
 		short index;
 
