@@ -77,12 +77,22 @@ a part file to open) it leaves for that thread.
 #include "rasterizer/rasterizer.h"
 #include "network_distributed.h"
 #include "cache_file_formats.h"
+#include "network_extensions.h"
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "map_share.h"
 #include "mcc_share.h"
 #include "server_director.h"
 #include "../src/p2p.h"
+#include "../src/posix.h"
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+/* the host's file connection (port/android/host/host_file_share.c; its calls
+are host_imports.list's): the host one of the swarm's sources, encrypted, its
+pieces checked on the host's threads */
+#include "../../android/host/host_file_share.h"
+#define MAP_SHARE_FILE_CONNECTION 1
+#define MAP_SHARE_HOST_ADDRESS(pointer) ((unsigned int)(uintptr_t)(pointer))
+#endif
 
 #include <pthread.h>
 #include <xtl.h>
@@ -135,10 +145,17 @@ enum
 	/* reads of a connection a call at most, while it has more (64 input
 	buffers: 1.5 MB) */
 	MAXIMUM_READS_PER_CALL = 64,
-	/* pieces asked of one connection at once, and of all of them; pieces
-	another machine may ask of this one at once */
-	REQUESTS_PER_CONNECTION = 2,
-	MAXIMUM_PIECES_IN_FLIGHT = 16,
+	/* pieces asked of one connection at once (the host's; another
+	player's), and of all of them; pieces another machine may ask of this one
+	at once. The host's is asked as many as every version sends at once (it
+	refuses more): a piece comes a round trip after it is asked for, about
+	two frames, and two at a time held a download from it to about 15 MB/s.
+	Another player sends 10 MB/s at most, 256 KB/s unless set otherwise, so
+	it is asked two, which keep up with that, and holds few of the last
+	pieces (connection_requests) */
+	REQUESTS_PER_CONNECTION = 8,
+	PLAYER_REQUESTS_PER_CONNECTION = 2,
+	MAXIMUM_PIECES_IN_FLIGHT = 32,
 	SERVING_PER_CONNECTION = 8,
 	/* the pieces' hashes sent at once */
 	HASHES_PER_FRAME = 256,
@@ -183,10 +200,11 @@ enum
 	MAXIMUM_RESOURCE_MAP_BYTES = 0x20000000,
 
 	/* the kilobytes a second a machine sends, at least and at most: the
-	host 20 MB/s, a player helping it 10 MB/s */
+	host 250 MB/s, a player helping it 10 MB/s */
 	MINIMUM_UPLOAD_KILOBYTES = 16,
-	MAXIMUM_HOST_UPLOAD_KILOBYTES = 20480,
-	MAXIMUM_SEED_UPLOAD_KILOBYTES = 10240,
+	/* (250 MB/s, both: docs/file_share_tcp_plan.md) */
+	MAXIMUM_HOST_UPLOAD_KILOBYTES = 256000,
+	MAXIMUM_SEED_UPLOAD_KILOBYTES = 256000,
 
 	/* network_server_manager.c's host state in game, transport_endpoint_winsock.c's
 	stream endpoint and hud_messaging.c's centred text (their enums are their
@@ -370,13 +388,18 @@ struct download_file
 	/* when they were asked for, and when the last of them came */
 	unsigned long hashes_started_at;
 	unsigned long hashes_asked_at;
-	/* the pieces had (a bit each), and asked for (a count each) */
+	/* the pieces had (a bit each: written), being written (a bit each:
+	the part files' writer's), and asked for (a count each) */
 	byte *have;
+	byte *writing;
 	byte *asked;
 	long have_count;
 	char part_path[MAP_SHARE_PATH_SIZE];
 	char final_path[MAP_SHARE_PATH_SIZE];
+	/* the part file: read (unbuffered, for the pieces served to others),
+	and written (the part files' writer's own) */
 	FILE *stream;
+	FILE *write_stream;
 };
 
 /* a machine the host named */
@@ -530,6 +553,47 @@ struct host_machine
 	server's event: once a request (host_request clears it), however often
 	the machine says it */
 	boolean end_said;
+	/* its files given to the host's file connection (MAP_SHARE_FILE_CONNECTION),
+	and that transfer's session */
+	boolean file_connection;
+	unsigned long file_connection_session;
+	/* published once since its offer (an offer's own publish, or the one
+	after its capabilities came) */
+	boolean file_connection_tried;
+};
+
+/* the joiner's source on the host's file connection (fs_source_update) */
+enum
+{
+	_fs_source_off,
+	_fs_source_starting,
+	_fs_source_on,
+	/* failed, or a piece did not match: not tried again for this download */
+	_fs_source_failed,
+	/* (as many as host_file_share.c's FS_PIECE_SLOTS: four for each of its
+	sixteen connections) */
+	MAXIMUM_FS_PIECES = 64,
+};
+
+struct fs_source
+{
+	/* the host's token for this download (network_extensions.c's data), and
+	the internet address and port its router forwards to its file connection
+	(network byte order; 0 for none) */
+	boolean token_valid;
+	unsigned long session;
+	byte token[32];
+	unsigned long direct_address;
+	unsigned short direct_port;
+	short state;
+	/* the pieces asked of it */
+	short asked_count;
+	struct
+	{
+		short file;
+		long piece;
+	} asked[MAXIMUM_FS_PIECES];
+	byte *buffer;
 };
 
 struct map_share_globals
@@ -545,6 +609,11 @@ struct map_share_globals
 	/* the upload's allowance (bytes) and when it was topped up */
 	long upload_tokens;
 	unsigned long upload_at;
+	/* the files of this machine's own that block_read reads, kept open while
+	serve_blocks runs (it closes them): an open a block held a host to about
+	25 MB/s, its frames' time spent opening */
+	FILE *serving_streams[MAXIMUM_FILES];
+	char serving_paths[MAXIMUM_FILES][MAP_SHARE_PATH_SIZE];
 	/* the catalog files of the game's map and its resource maps, which
 	this machine sends (NONE: none), and the level they are of */
 	char current_level[LEVEL_NAME_BYTES];
@@ -567,11 +636,19 @@ struct map_share_globals
 	still runs the connections itself (it could not be started) */
 	boolean thread_started;
 	boolean thread_running;
+	/* the joiner: the host's file connection as a source */
+	struct fs_source fs;
 };
 
 /* ---------- globals */
 
 static struct map_share_globals map_share_globals;
+
+/* (the host's file connection as a source: further down) */
+static void fs_source_end(short state);
+static void fs_source_update(void);
+static void host_file_connection_publish(long machine_index);
+static void host_file_connection_end(struct host_machine *machine);
 
 /* the lock both threads hold while they look at what they share
 (recursive: an entry point may reach another) */
@@ -755,7 +832,8 @@ static unsigned long map_share_host_address(
 		cached_connection = NULL;
 		return 0;
 	}
-	if (connection == cached_connection && now - cached_time < 1000)
+	/* (none known yet, early in a join: asked again, not kept) */
+	if (connection == cached_connection && now - cached_time < 1000 && cached_address)
 		return cached_address;
 	csmemset(&reliable, 0, sizeof(reliable));
 	network_connection_get_address(connection, &reliable, &unreliable);
@@ -782,8 +860,19 @@ static long upload_limit_live(
 	boolean host = map_share_host_live();
 	long kilobytes = host ? config_integer("network.map_share_upload") : config_integer("network.map_seed_upload");
 
+#if defined(MAP_SHARE_FILE_CONNECTION)
+	/* (host_file_share.c's allowance: the line less the game's in a game) */
+	{
+		long limit = PIN(kilobytes, MINIMUM_UPLOAD_KILOBYTES,
+			host ? MAXIMUM_HOST_UPLOAD_KILOBYTES : MAXIMUM_SEED_UPLOAD_KILOBYTES) * 1024;
+		unsigned long allowance = host_fs_allowance();
+
+		return allowance && allowance < (unsigned long)limit ? (long)allowance : limit;
+	}
+#else
 	return PIN(kilobytes, MINIMUM_UPLOAD_KILOBYTES, host ? MAXIMUM_HOST_UPLOAD_KILOBYTES : MAXIMUM_SEED_UPLOAD_KILOBYTES) *
 		1024 / 100 * map_share_upload_percent();
+#endif
 }
 
 /* whether this machine sends the game's files to the others: in a game on
@@ -1424,6 +1513,279 @@ static void request_remove(
 	struct connection *connection,
 	short index);
 
+/* ---------- the part files' writer
+
+A piece checked goes to the part file on a thread of its own, not on the
+connections' thread under the lock, which the game's thread takes each frame:
+a write past a part file's end (pieces come from anywhere in it) has the
+Switch's card fill the gap first, which took 20 and 29 seconds once, and the
+game's connection to the host timed out meanwhile. A piece is had (served,
+counted, told to the others) once written (piece_writes_collect); while it is
+being written it is not asked again (piece_got), and while many are waiting
+no more are asked (piece_writes_busy). */
+enum
+{
+	MAXIMUM_PIECE_WRITES = 160,
+	/* (no more asked while this many wait: what is asked already fits) */
+	PIECE_WRITES_BUSY = 32,
+};
+
+enum piece_write_state
+{
+	_piece_write_free,
+	_piece_write_queued,
+	_piece_write_writing,
+	_piece_write_written,
+	_piece_write_failed,
+};
+
+struct piece_write
+{
+	short state;
+	short file;
+	/* (the download's: a write of the one before is let go) */
+	long serial;
+	long piece;
+	unsigned long sequence;
+	FILE *stream;
+	unsigned long offset;
+	unsigned long bytes;
+	byte *data;
+	/* the stream closed by the writer once this is written (its file
+	closed meanwhile) */
+	boolean close_after;
+};
+
+static struct
+{
+	/* 0 not yet, 1 running, -1 it could not be started (written where they
+	come, as before) */
+	short started;
+	pthread_mutex_t lock;
+	pthread_cond_t wake;
+	unsigned long sequence;
+	struct piece_write writes[MAXIMUM_PIECE_WRITES];
+} piece_writer;
+
+static void *piece_writer_thread(
+	void *unused)
+{
+	(void)unused;
+	pthread_mutex_lock(&piece_writer.lock);
+	for (;;)
+	{
+		struct piece_write *write = NULL;
+		boolean written;
+		short index;
+
+		/* (the oldest first) */
+		for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+		{
+			struct piece_write *candidate = &piece_writer.writes[index];
+
+			if (candidate->state == _piece_write_queued && (!write || candidate->sequence < write->sequence))
+				write = candidate;
+		}
+		if (!write)
+		{
+			pthread_cond_wait(&piece_writer.wake, &piece_writer.lock);
+			continue;
+		}
+		write->state = _piece_write_writing;
+		pthread_mutex_unlock(&piece_writer.lock);
+		written = fseek(write->stream, (long)write->offset, SEEK_SET) == 0 &&
+			fwrite(write->data, 1, write->bytes, write->stream) == write->bytes && fflush(write->stream) == 0;
+		pthread_mutex_lock(&piece_writer.lock);
+		free(write->data);
+		write->data = NULL;
+		if (write->close_after)
+		{
+			fclose(write->stream);
+			write->state = _piece_write_free;
+			continue;
+		}
+		write->state = written ? _piece_write_written : _piece_write_failed;
+	}
+	return NULL;
+}
+
+static boolean piece_writer_start(
+	void)
+{
+	pthread_t thread;
+
+	if (piece_writer.started)
+		return piece_writer.started > 0;
+	piece_writer.started = -1;
+	if (pthread_mutex_init(&piece_writer.lock, NULL) != 0)
+		return FALSE;
+	if (pthread_cond_init(&piece_writer.wake, NULL) != 0 ||
+		pthread_create(&thread, NULL, piece_writer_thread, NULL) != 0)
+	{
+		error(_error_silent, "map sharing: the part files' writer could not be started: pieces written as they come");
+		return FALSE;
+	}
+	pthread_detach(thread);
+	piece_writer.started = 1;
+	return TRUE;
+}
+
+/* whether a piece is had or being written: not to be asked for */
+static boolean piece_got(
+	struct download_file const *file,
+	long piece)
+{
+	byte bit = (byte)(1 << (piece & 7));
+
+	return (file->have[piece >> 3] & bit) || (file->writing && (file->writing[piece >> 3] & bit));
+}
+
+/* whether enough pieces wait to be written that no more are to be asked */
+static boolean piece_writes_busy(
+	void)
+{
+	short waiting = 0;
+	short index;
+
+	if (piece_writer.started <= 0)
+		return FALSE;
+	pthread_mutex_lock(&piece_writer.lock);
+	for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+	{
+		if (piece_writer.writes[index].state == _piece_write_queued ||
+			piece_writer.writes[index].state == _piece_write_writing)
+		{
+			waiting++;
+		}
+	}
+	pthread_mutex_unlock(&piece_writer.lock);
+	return waiting >= PIECE_WRITES_BUSY;
+}
+
+/* a piece given to the writer (its data copied): FALSE when it cannot be
+(no writer, its queue full, no memory), and it is to be written here */
+static boolean piece_write_queue(
+	struct download_file *file,
+	short file_index,
+	long piece,
+	unsigned long offset,
+	byte const *data,
+	unsigned long bytes)
+{
+	struct piece_write *write = NULL;
+	byte *copy;
+	short index;
+
+	if (!file->write_stream || !file->writing || !piece_writer_start())
+		return FALSE;
+	copy = malloc(bytes);
+	if (!copy)
+		return FALSE;
+	csmemcpy(copy, data, bytes);
+	pthread_mutex_lock(&piece_writer.lock);
+	for (index = 0; index < MAXIMUM_PIECE_WRITES && !write; index++)
+	{
+		if (piece_writer.writes[index].state == _piece_write_free)
+			write = &piece_writer.writes[index];
+	}
+	if (!write)
+	{
+		pthread_mutex_unlock(&piece_writer.lock);
+		free(copy);
+		return FALSE;
+	}
+	write->state = _piece_write_queued;
+	write->file = file_index;
+	write->serial = map_share_globals.download.serial;
+	write->piece = piece;
+	write->sequence = ++piece_writer.sequence;
+	write->stream = file->write_stream;
+	write->offset = offset;
+	write->bytes = bytes;
+	write->data = copy;
+	write->close_after = FALSE;
+	pthread_cond_signal(&piece_writer.wake);
+	pthread_mutex_unlock(&piece_writer.lock);
+	file->writing[piece >> 3] |= (byte)(1 << (piece & 7));
+	return TRUE;
+}
+
+/* a part file's writing stream closed: its writes waiting let go, and one
+being written closed by the writer once done */
+static void piece_writes_close(
+	FILE *stream)
+{
+	boolean deferred = FALSE;
+	short index;
+
+	if (!stream)
+		return;
+	if (piece_writer.started > 0)
+	{
+		pthread_mutex_lock(&piece_writer.lock);
+		for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+		{
+			struct piece_write *write = &piece_writer.writes[index];
+
+			if (write->state == _piece_write_free || write->stream != stream)
+				continue;
+			if (write->state == _piece_write_writing)
+			{
+				write->close_after = TRUE;
+				deferred = TRUE;
+				continue;
+			}
+			free(write->data);
+			write->data = NULL;
+			write->state = _piece_write_free;
+		}
+		pthread_mutex_unlock(&piece_writer.lock);
+	}
+	if (!deferred)
+		fclose(stream);
+}
+
+static void download_piece_written(short file_index, long piece);
+
+/* (under the lock) the pieces written since: had */
+static void piece_writes_collect(
+	void)
+{
+	struct download *download = &map_share_globals.download;
+	short index;
+
+	if (piece_writer.started <= 0)
+		return;
+	for (index = 0; index < MAXIMUM_PIECE_WRITES; index++)
+	{
+		struct piece_write *write = &piece_writer.writes[index];
+		struct download_file *file;
+		short state;
+
+		pthread_mutex_lock(&piece_writer.lock);
+		state = write->state;
+		if (state == _piece_write_written || state == _piece_write_failed)
+			write->state = _piece_write_free;
+		pthread_mutex_unlock(&piece_writer.lock);
+		if (state != _piece_write_written && state != _piece_write_failed)
+			continue;
+		if (write->serial != download->serial || write->file < 0 || write->file >= download->file_count)
+			continue;
+		file = &download->files[write->file];
+		if (!file->writing || write->stream != file->write_stream || write->piece >= file->piece_count)
+			continue;
+		file->writing[write->piece >> 3] &= (byte)~(1 << (write->piece & 7));
+		if (state == _piece_write_failed)
+		{
+			if (!map_share_globals.failure[0])
+				snprintf(map_share_globals.failure, sizeof(map_share_globals.failure),
+					"The map could not be written (is the disk full?).");
+			continue;
+		}
+		download_piece_written(write->file, write->piece);
+	}
+}
+
 /* a download's file closed, not had whole: its part file deleted if it
 holds none of the file (made for an offer alone, it would be a host's to
 fill the disk with, a new name each time), else kept to be taken up again, a
@@ -1439,6 +1801,8 @@ static void download_file_close(
 		fclose(file->stream);
 		file->stream = NULL;
 	}
+	piece_writes_close(file->write_stream);
+	file->write_stream = NULL;
 	/* (one being checked, or not opened yet, is not this download's to
 	delete: it may hold what an earlier one had) */
 	if (file->state != _file_transferring || !file->part_path[0])
@@ -1471,6 +1835,8 @@ static void download_end(
 	short index;
 
 	globals->failure[0] = 0;
+	fs_source_end(_fs_source_off);
+	globals->fs.token_valid = FALSE;
 	for (index = 0; index < MAXIMUM_CONNECTIONS; index++)
 	{
 		struct connection *connection = &globals->connections[index];
@@ -1505,6 +1871,7 @@ static void download_end(
 		free(file->piece_hashes);
 		free(file->hashes_coming);
 		free(file->have);
+		free(file->writing);
 		free(file->asked);
 	}
 	csmemset(download, 0, sizeof(*download));
@@ -1625,6 +1992,9 @@ static boolean map_share_download_begin_unlocked(
 		csmemset(download, 0, sizeof(*download));
 		download->serial = ++serial;
 	}
+	/* (the host's token for this download comes with its offer) */
+	fs_source_end(_fs_source_off);
+	map_share_globals.fs.token_valid = FALSE;
 	download->state = _download_asking;
 	level_name_copy(download->level_name, level_name);
 	download->version = version;
@@ -1671,6 +2041,19 @@ static boolean map_share_holds_players_unlocked(
 /* the download's file made anew for writing: its part file empty, each
 piece written at its place as it comes (not the file's size at once: the
 offer alone, the host's word, would take the disk) */
+/* the part file there opened to be read (unbuffered: what the writer's
+stream writes is read at once) and written (the writer's) */
+static boolean download_file_streams(
+	struct download_file *file)
+{
+	file->stream = fopen(file->part_path, "r+b");
+	if (!file->stream)
+		return FALSE;
+	setvbuf(file->stream, NULL, _IONBF, 0);
+	file->write_stream = fopen(file->part_path, "r+b");
+	return TRUE;
+}
+
 static boolean download_file_create(
 	struct download_file *file)
 {
@@ -1679,8 +2062,7 @@ static boolean download_file_create(
 	if (!stream)
 		return FALSE;
 	fclose(stream);
-	file->stream = fopen(file->part_path, "r+b");
-	if (!file->stream)
+	if (!download_file_streams(file))
 		return FALSE;
 	file->state = _file_transferring;
 	return TRUE;
@@ -1778,8 +2160,9 @@ static void download_offered(
 		}
 		snprintf(file->part_path, sizeof(file->part_path), "%s.part", file->final_path);
 		file->have = calloc((unsigned long)(file->piece_count + 7) / 8, 1);
+		file->writing = calloc((unsigned long)(file->piece_count + 7) / 8, 1);
 		file->asked = calloc((unsigned long)file->piece_count, 1);
-		if (!file->have || !file->asked)
+		if (!file->have || !file->writing || !file->asked)
 		{
 			download->file_count = index + 1;
 			download_fail("There is not enough memory to download the map.");
@@ -1864,6 +2247,10 @@ static boolean source_address(
 
 	if (source->host)
 	{
+		/* (an offer that came as the client joined, before its connection had
+		the host's address: asked again until it has) */
+		if (!source->address)
+			source->address = map_share_host_address();
 		*address = source->address;
 		return *address != 0;
 	}
@@ -1933,20 +2320,21 @@ static void download_reach_sources(
 	}
 }
 
-/* a piece had: written, told to every connection about its file */
+/* a piece had: given to the part files' writer (download_piece_written once
+written) */
 static void download_piece_had(
 	short file_index,
 	long piece,
 	byte const *data)
 {
-	struct map_share_globals *globals = &map_share_globals;
-	struct download *download = &globals->download;
-	struct download_file *file = &download->files[file_index];
+	struct download_file *file = &map_share_globals.download.files[file_index];
 	unsigned long offset = (unsigned long)piece * MAP_SHARE_PIECE_BYTES;
 	unsigned long bytes = MIN(MAP_SHARE_PIECE_BYTES, file->size - offset);
-	short index;
 
-	if (file->have[piece >> 3] & (1 << (piece & 7)))
+	if (piece_got(file, piece))
+		return;
+	/* (on the writer's thread; here only when it cannot take it) */
+	if (piece_write_queue(file, file_index, piece, offset, data, bytes))
 		return;
 	if (!file->stream || fseek(file->stream, (long)offset, SEEK_SET) != 0 ||
 		fwrite(data, 1, bytes, file->stream) != bytes)
@@ -1957,6 +2345,22 @@ static void download_piece_had(
 				"The map could not be written (is the disk full?).");
 		return;
 	}
+	download_piece_written(file_index, piece);
+}
+
+/* a piece written: had, told to every connection about its file */
+static void download_piece_written(
+	short file_index,
+	long piece)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	struct download_file *file = &download->files[file_index];
+	unsigned long bytes = MIN(MAP_SHARE_PIECE_BYTES, file->size - (unsigned long)piece * MAP_SHARE_PIECE_BYTES);
+	short index;
+
+	if (file->have[piece >> 3] & (1 << (piece & 7)))
+		return;
 	file->have[piece >> 3] |= (byte)(1 << (piece & 7));
 	file->have_count++;
 	download->done_bytes += bytes;
@@ -2132,6 +2536,9 @@ static void download_finish(
 			fclose(file->stream);
 			file->stream = NULL;
 		}
+		/* (every piece written: nothing of it left with the writer) */
+		piece_writes_close(file->write_stream);
+		file->write_stream = NULL;
 		if (!MoveFileA(file->part_path, file->final_path))
 		{
 			download_unfinish(index);
@@ -2189,7 +2596,7 @@ static long piece_choose(
 	long start;
 	long step;
 
-	if (!file->piece_count)
+	if (!file->piece_count || piece_writes_busy())
 		return NONE;
 	/* (from a random place, so the machines downloading ask for different
 	pieces of the same rarity) */
@@ -2200,7 +2607,7 @@ static long piece_choose(
 		short count = 0;
 		short index;
 
-		if ((file->have[piece >> 3] & (1 << (piece & 7))) || (!again && file->asked[piece]) ||
+		if (piece_got(file, piece) || (!again && file->asked[piece]) ||
 			(again && file->asked[piece] >= 2))
 		{
 			continue;
@@ -2263,11 +2670,23 @@ static boolean download_unasked_pieces(
 		}
 		for (piece = 0; piece < file->piece_count; piece++)
 		{
-			if (!(file->have[piece >> 3] & (1 << (piece & 7))) && !file->asked[piece])
+			if (!piece_got(file, piece) && !file->asked[piece])
 				return TRUE;
 		}
 	}
 	return FALSE;
+}
+
+/* the pieces the connection may be asked for at once: the host's (this
+machine's connection to it, as hashes_source knows it) REQUESTS_PER_CONNECTION,
+another player's PLAYER_REQUESTS_PER_CONNECTION */
+static short connection_requests(
+	struct connection const *connection)
+{
+	struct download const *download = &map_share_globals.download;
+
+	return connection->outgoing && connection->source != NONE && connection->source < download->source_count &&
+		download->sources[connection->source].host ? REQUESTS_PER_CONNECTION : PLAYER_REQUESTS_PER_CONNECTION;
 }
 
 /* the connection asked for pieces, while it may */
@@ -2280,9 +2699,16 @@ static void connection_ask(
 
 	if (download->state != _download_transferring || !connection->hello_heard)
 		return;
+	/* (the host's pieces come over its file connection while it goes: this
+	connection gives the pieces' hashes) */
+	if (map_share_globals.fs.state == _fs_source_on && connection->source != NONE &&
+		connection->source < download->source_count && download->sources[connection->source].host)
+	{
+		return;
+	}
 	for (index = 0; index < MAXIMUM_CONNECTIONS; index++)
 		in_flight += map_share_globals.connections[index].used ? map_share_globals.connections[index].request_count : 0;
-	while (connection->request_count < REQUESTS_PER_CONNECTION && in_flight < MAXIMUM_PIECES_IN_FLIGHT &&
+	while (connection->request_count < connection_requests(connection) && in_flight < MAXIMUM_PIECES_IN_FLIGHT &&
 		frame_room(connection, 5))
 	{
 		struct request *request;
@@ -2344,6 +2770,282 @@ static void request_remove(
 	/* (the next is sent now: its time from here) */
 	if (!index && connection->request_count)
 		connection->requests[0].asked_at = system_milliseconds();
+}
+
+/* ---------- the host's file connection as one of the swarm's sources
+
+A SlipstreamCE host that offers a SlipstreamCE joiner (file_share_tcp agreed,
+network_extensions.c) its files gives them to its own file connection
+(port/android/host/host_file_share.c) and the joiner a token for it. The
+joiner asks pieces of it as of any source, MAXIMUM_FS_PIECES at once, in order
+(the host reads its disk ahead); its host thread takes them in, encrypted,
+and checks each against its BLAKE2b hash, and the connections' thread takes
+the pieces checked and writes them as it writes any piece
+(download_piece_had). Other players' connections go on as ever, and the
+host's own (port 5153) only gives the pieces' hashes while this goes. A piece
+that does not match, or the connection lost, ends it for the download: what
+it was asked goes back to the others. */
+
+#if defined(MAP_SHARE_FILE_CONNECTION)
+/* mcc_share.c's: the token's endpoint, and the joiner's direct try */
+void mcc_share_fs_endpoint(byte out[6]);
+void mcc_share_fs_direct_set(unsigned long host_address, unsigned long direct_address, unsigned short direct_port);
+
+static unsigned long fs_swap_long(
+	unsigned long value)
+{
+	return ((value & 0xFF) << 24) | ((value & 0xFF00) << 8) | ((value >> 8) & 0xFF00) | ((value >> 24) & 0xFF);
+}
+
+/* what was asked of it given back, and it stopped (for this download, unless
+off: a new download's) */
+static void fs_source_end(
+	short state)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	short index;
+
+	if (globals->fs.state == _fs_source_starting || globals->fs.state == _fs_source_on)
+		host_fs_pieces_stop();
+	for (index = 0; index < globals->fs.asked_count; index++)
+	{
+		short file = globals->fs.asked[index].file;
+		long piece = globals->fs.asked[index].piece;
+
+		if (file < download->file_count && download->files[file].asked && download->files[file].asked[piece])
+			download->files[file].asked[piece]--;
+	}
+	globals->fs.asked_count = 0;
+	globals->fs.state = state;
+}
+
+/* (the connections' thread) the source's turn: started once the token is here,
+the pieces checked taken, and more asked */
+static void fs_source_update(
+	void)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	struct download *download = &globals->download;
+	struct fs_source *fs = &globals->fs;
+	unsigned long out[4];
+	short file_index;
+	int state;
+
+	if (download->state != _download_transferring)
+	{
+		if (fs->state == _fs_source_starting || fs->state == _fs_source_on)
+			fs_source_end(_fs_source_off);
+		return;
+	}
+	if (fs->state == _fs_source_failed)
+		return;
+	if (fs->state == _fs_source_off)
+	{
+		unsigned long address = fs_swap_long(map_share_host_address());
+		unsigned short port = (unsigned short)(((P2P_FILE_SHARE_PORT & 0xFF) << 8) | (P2P_FILE_SHARE_PORT >> 8));
+
+		if (!fs->token_valid || !network_extension_host_has(NETWORK_CAPABILITY_FILE_SHARE_TCP, 1))
+			return;
+		/* (the host's address not known yet, early in a join: asked again next
+		turn) */
+		if (!address)
+			return;
+		if (!fs->buffer && !(fs->buffer = malloc(MAP_SHARE_PIECE_BYTES)))
+			return;
+		/* (a host over the internet play tunnel: its router's forwarded port
+		tried first, then its local stand-in) */
+		mcc_share_fs_direct_set(address, fs->direct_address, fs->direct_port);
+		if (p2p_outgoing(1, -1, &address, &port) < 0 ||
+			!host_fs_pieces_begin((unsigned int)address, ((port & 0xFF) << 8) | (port >> 8), fs->session,
+				MAP_SHARE_HOST_ADDRESS(fs->token)))
+		{
+			fs->state = _fs_source_failed;
+			error(_error_silent, "map sharing: the host's file connection cannot be reached: the swarm alone");
+			return;
+		}
+		fs->state = _fs_source_starting;
+		error(_error_silent, "map sharing: the host's file connection is one of the sources");
+	}
+	state = host_fs_pieces_state();
+	if (state == HOST_FS_FETCH_FAILED_EARLY || state == HOST_FS_FETCH_FAILED_LATE)
+	{
+		error(_error_silent, "map sharing: the host's file connection %s: the swarm alone",
+			state == HOST_FS_FETCH_FAILED_EARLY ? "could not be opened" : "was lost");
+		fs_source_end(_fs_source_failed);
+		return;
+	}
+	if (state == HOST_FS_FETCH_RECEIVING)
+		fs->state = _fs_source_on;
+	/* (the pieces it checked) */
+	while (host_fs_pieces_take(MAP_SHARE_HOST_ADDRESS(fs->buffer), MAP_SHARE_HOST_ADDRESS(out)))
+	{
+		short index;
+		long piece = (long)(out[1] / MAP_SHARE_PIECE_BYTES);
+
+		for (index = 0; index < fs->asked_count; index++)
+		{
+			if (fs->asked[index].file == (short)out[0] && fs->asked[index].piece == piece)
+				break;
+		}
+		if (index == fs->asked_count)
+			continue;
+		fs->asked_count--;
+		csmemmove(&fs->asked[index], &fs->asked[index + 1], (fs->asked_count - index) * sizeof(fs->asked[0]));
+		if ((short)out[0] >= download->file_count)
+			continue;
+		if (download->files[out[0]].asked[piece])
+			download->files[out[0]].asked[piece]--;
+		if (!out[3])
+		{
+			error(_error_silent, "map sharing: a piece from the host's file connection did not match: the swarm alone");
+			fs_source_end(_fs_source_failed);
+			return;
+		}
+		download_piece_had((short)out[0], piece, fs->buffer);
+	}
+	/* (more asked: the next pieces no one was asked for, in order; the last
+	ones again, once every piece has been asked of someone) */
+	while (fs->asked_count < MAXIMUM_FS_PIECES && !piece_writes_busy())
+	{
+		long chosen = NONE;
+		short again;
+
+		for (again = 0; again < 2 && chosen == NONE; again++)
+		{
+			if (again && download_unasked_pieces())
+				break;
+			for (file_index = 0; file_index < download->file_count && chosen == NONE; file_index++)
+			{
+				struct download_file *file = &download->files[file_index];
+				long piece;
+
+				if (file->state != _file_transferring || !file->piece_hashes)
+					continue;
+				for (piece = 0; piece < file->piece_count; piece++)
+				{
+					short index;
+
+					if (piece_got(file, piece) || file->asked[piece] > again)
+						continue;
+					for (index = 0; index < fs->asked_count; index++)
+					{
+						if (fs->asked[index].file == file_index && fs->asked[index].piece == piece)
+							break;
+					}
+					if (index < fs->asked_count)
+						continue;
+					chosen = piece;
+					break;
+				}
+				if (chosen != NONE)
+					break;
+			}
+		}
+		if (chosen == NONE)
+			break;
+		{
+			struct download_file *file = &download->files[file_index];
+			unsigned long offset = (unsigned long)chosen * MAP_SHARE_PIECE_BYTES;
+
+			if (!host_fs_pieces_ask(file_index, offset, MIN(MAP_SHARE_PIECE_BYTES, file->size - offset),
+				MAP_SHARE_HOST_ADDRESS(file->piece_hashes + chosen * MAP_SHARE_HASH_BYTES)))
+			{
+				break;
+			}
+			fs->asked[fs->asked_count].file = file_index;
+			fs->asked[fs->asked_count].piece = chosen;
+			fs->asked_count++;
+			file->asked[chosen]++;
+		}
+	}
+}
+
+/* (the host) the machine's files given to the host's file connection, and
+it told its token; the last transfer's let go */
+static void host_file_connection_publish(
+	long machine_index)
+{
+	struct host_machine *machine = &map_share_globals.machines[machine_index];
+	byte payload[43];
+	unsigned long session;
+	short index;
+
+	if (machine->file_connection)
+		host_fs_serve_end(machine->file_connection_session);
+	machine->file_connection = FALSE;
+	if (!network_extension_agreed(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1) || !machine->file_count)
+		return;
+	posix_random_bytes(&session, sizeof(session));
+	/* (high bit set: never an MCC transfer's session) */
+	session |= 0x80000000UL;
+	posix_random_bytes(payload + 4, 32);
+	csmemcpy(payload, &session, 4);
+	payload[36] = 1;
+	mcc_share_fs_endpoint(payload + 37);
+	if (host_fs_serve_begin(session, MAP_SHARE_HOST_ADDRESS(payload + 4), machine->file_count) < 0)
+		return;
+	for (index = 0; index < machine->file_count; index++)
+	{
+		struct map_share_file *file = map_share_file_get(machine->catalog_files[index]);
+		char native[MAP_SHARE_PATH_SIZE + 256];
+
+		if (!file)
+			break;
+		platform_translate_path(file->path, native, sizeof(native));
+		if (!host_fs_serve_file(session, index, MAP_SHARE_HOST_ADDRESS(native), file->size))
+			break;
+	}
+	if (index < machine->file_count || !host_fs_serve_ready(session) ||
+		!network_extensions_send_data(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, payload, sizeof(payload)))
+	{
+		host_fs_serve_end(session);
+		csmemset(payload, 0, sizeof(payload));
+		return;
+	}
+	csmemset(payload, 0, sizeof(payload));
+	machine->file_connection = TRUE;
+	machine->file_connection_session = session;
+	error(_error_silent, "map sharing: machine #%ld may fetch from the host's file connection too", machine_index);
+}
+
+static void host_file_connection_end(
+	struct host_machine *machine)
+{
+	if (machine->file_connection)
+		host_fs_serve_end(machine->file_connection_session);
+	machine->file_connection = FALSE;
+}
+#else
+static void fs_source_end(short state) { map_share_globals.fs.state = state; }
+static void fs_source_update(void) {}
+static void host_file_connection_publish(long machine_index) { (void)machine_index; }
+static void host_file_connection_end(struct host_machine *machine) { (void)machine; }
+#endif
+
+/* (mcc_share.c's, from network_extensions.c's data for file_share_tcp) the
+host's token for this machine's download of a Custom Edition map */
+void map_share_file_share_token(
+	unsigned long session,
+	byte const *token,
+	unsigned long direct_address,
+	unsigned short direct_port)
+{
+	map_share_lock();
+	map_share_globals.fs.session = session;
+	map_share_globals.fs.direct_address = direct_address;
+	map_share_globals.fs.direct_port = direct_port;
+	csmemcpy(map_share_globals.fs.token, token, sizeof(map_share_globals.fs.token));
+	map_share_globals.fs.token_valid = TRUE;
+	map_share_unlock();
+}
+
+/* (the host) whether its file connection is wanted for Custom Edition maps:
+it hosts, and shares them (mcc_share.c opens the listener for both) */
+boolean map_share_file_connection_wanted(
+	void)
+{
+	return map_share_host_live() && config_boolean("network.map_share") != 0;
 }
 
 /* ---------- a connection's frames, as they come */
@@ -2808,6 +3510,48 @@ static unsigned long serving_file_size(
 	return 0;
 }
 
+/* a file of this machine's own, as block_read reads it: the stream open
+for it, else it opened in a free place (or the first's, more files than its
+kinds being open) */
+static FILE *serving_stream_open(
+	char const *path)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	short index;
+	short place = NONE;
+
+	for (index = 0; index < MAXIMUM_FILES; index++)
+	{
+		if (globals->serving_streams[index] && !csstrcmp(globals->serving_paths[index], path))
+			return globals->serving_streams[index];
+		if (!globals->serving_streams[index] && place == NONE)
+			place = index;
+	}
+	if (place == NONE)
+	{
+		place = 0;
+		fclose(globals->serving_streams[place]);
+	}
+	globals->serving_streams[place] = fopen(path, "rb");
+	csstrncpy(globals->serving_paths[place], path, MAP_SHARE_PATH_SIZE - 1);
+	globals->serving_paths[place][MAP_SHARE_PATH_SIZE - 1] = 0;
+	return globals->serving_streams[place];
+}
+
+static void serving_streams_close(
+	void)
+{
+	struct map_share_globals *globals = &map_share_globals;
+	short index;
+
+	for (index = 0; index < MAXIMUM_FILES; index++)
+	{
+		if (globals->serving_streams[index])
+			fclose(globals->serving_streams[index]);
+		globals->serving_streams[index] = NULL;
+	}
+}
+
 /* a block of a piece asked for, read from this machine's file */
 static boolean block_read(
 	struct connection *connection,
@@ -2820,12 +3564,11 @@ static boolean block_read(
 	unsigned long size;
 	unsigned long offset = (unsigned long)serving->piece * MAP_SHARE_PIECE_BYTES + serving->offset;
 	FILE *stream;
-	boolean read;
 
 	if (catalog_file && catalog_file->ready && map_share_sending())
 	{
 		size = catalog_file->size;
-		stream = fopen(catalog_file->path, "rb");
+		stream = serving_stream_open(catalog_file->path);
 	}
 	else if (connection->download_file[serving->file] != NONE)
 	{
@@ -2843,9 +3586,7 @@ static boolean block_read(
 	if (!stream)
 		return FALSE;
 	*bytes = MIN(MAP_SHARE_BLOCK_BYTES, MIN(size - offset, MAP_SHARE_PIECE_BYTES - serving->offset));
-	read = fseek(stream, (long)offset, SEEK_SET) == 0 && fread(buffer, 1, *bytes, stream) == *bytes;
-	fclose(stream);
-	return read;
+	return fseek(stream, (long)offset, SEEK_SET) == 0 && fread(buffer, 1, *bytes, stream) == *bytes;
 }
 
 /* the pieces asked of this machine, a block at a time, round all the
@@ -2858,8 +3599,11 @@ static void serve_blocks(
 	long limit = upload_limit();
 	boolean sent = TRUE;
 
-	/* (the allowance: the limit a second, a quarter second of it at once) */
-	globals->upload_tokens += (long)(MIN(now - globals->upload_at, 1000UL) * (unsigned long)limit / 1000);
+	/* (the allowance: the limit a second, a quarter second of it at once;
+	the milliseconds times the bytes a second in 64 bits, which pass 32 bits
+	above 4 MB/s) */
+	globals->upload_tokens += (long)((unsigned long long)MIN(now - globals->upload_at, 1000UL) *
+		(unsigned long)limit / 1000);
 	globals->upload_tokens = MIN(globals->upload_tokens, MAX(limit / 4, MAP_SHARE_BLOCK_BYTES * 2));
 	globals->upload_at = now;
 	while (sent && globals->upload_tokens >= MAP_SHARE_BLOCK_BYTES)
@@ -2907,6 +3651,7 @@ static void serve_blocks(
 		}
 		globals->next_connection = (short)((globals->next_connection + 1) % MAXIMUM_CONNECTIONS);
 	}
+	serving_streams_close();
 }
 
 /* whether a download's file's pieces' hashes may be asked of the
@@ -3073,6 +3818,16 @@ static void connections_update(
 
 /* ---------- the client's download, each frame */
 
+/* the download's bytes a second over its last window (in 64 bits: a window's
+bytes times a thousand pass an unsigned long's 32 at 2.1 MB/s, and the rate
+shown wrapped round: 35 MB/s showed as 183 KB/s) */
+static unsigned long download_rate(
+	struct download const *download)
+{
+	return download->last_window_time ?
+		(unsigned long)((unsigned long long)download->last_window_bytes * 1000 / download->last_window_time) : 0;
+}
+
 static void download_update(
 	void)
 {
@@ -3097,6 +3852,7 @@ static void download_update(
 			download_fail("The host did not answer the request for the map.");
 		return;
 	}
+	piece_writes_collect();
 	/* (met by the connections' thread) */
 	if (map_share_globals.failure[0])
 	{
@@ -3129,8 +3885,8 @@ static void download_update(
 
 			/* (a part file as long as the furthest piece written: the pieces
 			it reaches, the last of them perhaps cut short and not taken) */
-			file->stream = piece_hashes && piece_count <= file->piece_count && size <= file->size ?
-				fopen(file->part_path, "r+b") : NULL;
+			if (!piece_hashes || piece_count > file->piece_count || size > file->size || !download_file_streams(file))
+				file->stream = NULL;
 			for (piece = 0; file->stream && piece < piece_count; piece++)
 			{
 				if (!csmemcmp(piece_hashes + piece * MAP_SHARE_HASH_BYTES, file->piece_hashes + piece * MAP_SHARE_HASH_BYTES,
@@ -3191,7 +3947,7 @@ static void download_update(
 		download->logged_at = now;
 		error(_error_silent, "map sharing: %lu of %lu bytes, %d connections, %lu bytes a second",
 			download->done_bytes, download->total_bytes, (int)connections,
-			download->last_window_time ? download->last_window_bytes * 1000 / download->last_window_time : 0);
+			download_rate(download));
 	}
 	if (elapsed(download->window_at, now, RATE_WINDOW))
 	{
@@ -3247,6 +4003,22 @@ static boolean map_share_machine_needs_map_unlocked(
 	return machine && !machine->downloaded && host_machine_downloading(machine);
 }
 
+/* Whether this machine hosts a game on an Xbox multiplayer map of
+custom_maps (custom_xbox_map_level), which only machines with the
+custom_xbox_multiplayer_maps capability can play (network_extensions.c's
+table) */
+boolean custom_xbox_multiplayer_maps_required(
+	void)
+{
+	struct network_game *game;
+
+	if (!global_network_game_server_get())
+		return FALSE;
+	game = network_game_get_game();
+
+	return game && custom_xbox_map_level(game->map.name);
+}
+
 static boolean host_in_game(
 	void)
 {
@@ -3298,6 +4070,12 @@ static void host_offer(
 	}
 	machine->offered = TRUE;
 	machine->asked = FALSE;
+	machine->file_connection_tried = FALSE;
+	if (result == _offer_ok)
+	{
+		machine->file_connection_tried = network_extension_agreed(machine_index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1);
+		host_file_connection_publish(machine_index);
+	}
 	error(_error_silent, "map sharing: offered machine #%ld %s (%d files)%s", machine_index,
 		machine->request.level_name, (int)count, result == _offer_ok ? "" :
 		result == _offer_off ? ": not shared (network.map_share)" : ": unavailable");
@@ -3395,6 +4173,15 @@ static void host_request(
 		host_offer(machine_index, _offer_unavailable);
 		return;
 	}
+	/* (an Xbox map of custom_maps, only to a machine that can play it: one
+	that has told the host so, network_extensions.h; a machine that cannot
+	is told and removed from the game) */
+	if (custom_xbox_map_level(request->level_name) &&
+		!network_extension_agreed(machine_index, NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS, 1))
+	{
+		host_offer(machine_index, _offer_unavailable);
+		return;
+	}
 	needed = custom_edition_map_resource_maps_needed(request->level_name) | FLAG(_map_share_file_map);
 	for (kind = 0; kind < MAXIMUM_FILES; kind++)
 	{
@@ -3463,6 +4250,7 @@ static void host_update(
 		/* (left: another machine may take its slot) */
 		if (!address || address != machine->address)
 		{
+			host_file_connection_end(machine);
 			csmemset(machine, 0, sizeof(*machine));
 			continue;
 		}
@@ -3517,6 +4305,16 @@ static void host_update(
 				continue;
 			}
 			host_sources(index);
+		}
+		/* (a machine whose capabilities came after its offer: the host's file
+		connection published then; a request on joining is sent before the
+		host's announcement is answered) */
+		if (machine->offered && !machine->file_connection && !machine->downloaded && machine->file_count &&
+			!machine->file_connection_tried &&
+			network_extension_agreed(index, NETWORK_CAPABILITY_FILE_SHARE_TCP, 1))
+		{
+			machine->file_connection_tried = TRUE;
+			host_file_connection_publish(index);
 		}
 		if (machine->downloading && !machine->downloaded && machine->offered &&
 			elapsed(machine->sources_at, now, SOURCES_INTERVAL) &&
@@ -3710,6 +4508,7 @@ static void map_share_update_unlocked(
 	{
 		connection_accept();
 		connections_update();
+		fs_source_update();
 		serve_blocks();
 	}
 }
@@ -3766,15 +4565,22 @@ static unsigned long __stdcall map_share_connections_thread(
 		map_share_unlock();
 		if (!readable.fd_count)
 		{
-			Sleep(CONNECTIONS_IDLE_SLEEP);
+			/* (the host's file connection may be the only source) */
+			map_share_lock();
+			piece_writes_collect();
+			fs_source_update();
+			map_share_unlock();
+			Sleep(busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_IDLE_SLEEP);
 			continue;
 		}
 		timeout.tv_sec = 0;
 		timeout.tv_usec = (busy ? CONNECTIONS_BUSY_WAIT : CONNECTIONS_QUIET_WAIT) * 1000;
 		select(0, &readable, writeable.fd_count ? &writeable : NULL, NULL, &timeout);
 		map_share_lock();
+		piece_writes_collect();
 		connection_accept();
 		connections_update();
+		fs_source_update();
 		serve_blocks();
 		map_share_unlock();
 	}
@@ -3912,8 +4718,7 @@ static void map_share_render_unlocked(
 	}
 	else
 	{
-		unsigned long rate = download->last_window_time ?
-			download->last_window_bytes * 1000 / download->last_window_time : 0;
+		unsigned long rate = download_rate(download);
 		short sources = 0;
 		short index;
 

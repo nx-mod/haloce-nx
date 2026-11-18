@@ -50,6 +50,7 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "tag_files/tag_groups.h"
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 
 /* ---------- constants */
 
@@ -285,6 +286,9 @@ void scripted_camera_set(
 		camera_point_index,
 		struct scenario_cutscene_camera_point);
 	camera_time = (short)transition_time / TICKS_PER_SECOND;
+	/* port: a custom campaign's scripted cameras, logged while they are new
+	to the port (port/linux/game/custom_campaigns.c) */
+	custom_campaign_note_camera(camera_point_index);
 	/* port: short cuts also need an explicit reset, before the observer moves */
 	if (camera_time <= 0)
 		sound_listener_motion_reset(NONE);

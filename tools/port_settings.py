@@ -348,13 +348,15 @@ SCREENS = {
         # (27: ten rows, the last clear of the help at 350)
         "spacing": 27,
         "rows": [
-            ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 11)],
+            # (1 to 15: 1 to 10 the Xbox's, 11 to 15 on in its steps, player_ui.c's tables)
+            ("LOOK SENSITIVITY:", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 16)],
              "How fast the right stick turns the view left\nand right.", None),
             # (the profile's own settings.toml's, as Gyro Aim's: SAME is the
             # game's, half of Look Sensitivity's; 1 to 10 are 40 to 260
-            # degrees a second, xinput_sdl.c's halo_stick_pitch_rate)
+            # degrees a second, and 11 to 15 on in the same steps,
+            # xinput_sdl.c's halo_stick_pitch_rate)
             ("VERTICAL SENSITIVITY:", "input.stick_vertical_sensitivity",
-             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 11)],
+             [("SAME", "0")] + [(str(step), str(step)) for step in range(1, 16)],
              "How fast the right stick turns the view up\nand down. SAME: half of Look Sensitivity's.", None),
             ("INVERT LOOK:", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("INVERT FLIGHT:", "profile.flight_inversion", YES_NO,
@@ -656,7 +658,8 @@ _audio["categories"] = [
 
 # Network Setup's map sharing (port/linux/game/map_share.c): this machine's
 # part in another's game, a screen of its own (a category, as Video Setup's)
-SEED_UPLOADS = (64, 128, 256, 512, 1024, 2048, 4096, 8192, 10240)
+# (up to 250 MB/s, the file connection's top: docs/file_share_tcp_plan.md)
+SEED_UPLOADS = (64, 128, 256, 512, 1024, 2048, 4096, 8192, 10240, 16384, 32768, 65536, 131072, 256000)
 _network = SCREENS["network_setup"]
 # (and the multiplayer HUD's rows, and streamer mode, screens of their own:
 # Network Setup has room for ten places, at its spacing of 27)
@@ -732,6 +735,11 @@ SCREENS["gameplay"] = {
          "The game's messages at the bottom left: never,\nin the menus only, or in games too.",
          None),
     ],
+    # (Android's GAME FILES: where the maps, custom_maps, mods and mcc_maps
+    # folders are, and a move of them, _game_files)
+    "categories": [("GAME FILES:", "gameplay/game_files",
+                    "Where your maps, custom maps, mods and MCC\nmaps are kept: the app's storage or a folder.",
+                    "android")],
 }
 # Network Setup's server browser (menu_functions.c's lobby_browser_update): where
 # its games come from (network.listings, master_list.c), the Filters screen's
@@ -1334,6 +1342,7 @@ def settings_files() -> dict:
     files[f"{PE}/network_setup/mcc_import".replace("/", ".") + ".xml"] = _mcc_import()
     files[f"{PE}/network_setup/map_import_page".replace("/", ".") + ".xml"] = _map_import_page()
     files[STEAM_WORKSHOP.replace("/", ".") + ".xml"] = _steam_workshop()
+    files[f"{PE}/gameplay/game_files".replace("/", ".") + ".xml"] = _game_files()
     files[f"{PE}/controls_setup".replace("/", ".") + ".xml"] = _controls_screen()
     return {name: ['<?xml version="1.0" encoding="UTF-8"?>',
                    "<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->",
@@ -2336,7 +2345,7 @@ COOP_SETUP_SCREENS = [
 # Server Setup's map sharing (port/linux/game/map_share.c), for any game,
 # laid out as co-op's options are (its key, its title, its row's help and
 # its rows: menu_functions.c's gametype_options give their settings' values)
-MAP_SHARE_UPLOADS = (256, 512, 1024, 2048, 4096, 8192, 16384, 20480)
+MAP_SHARE_UPLOADS = (256, 512, 1024, 2048, 4096, 8192, 16384, 20480, 32768, 65536, 131072, 256000)
 MAP_SHARE_SETUP = ("map_share_options", "MAP SHARING",
                    "Sharing Custom Edition maps and MCC packages\\nwith joining players, and how fast.", [
     ("map_share", "SHARE MAPS:", ["ON", "OFF"], [
@@ -3654,7 +3663,25 @@ def multiplayer_files() -> dict:
                                           "(tools/port_settings.py) -->", head[2]] + _mods() + ["</menus>", ""],
         THEATER.replace("/", ".") + ".xml": [head[0], "<!-- The port's Theater screen, in the PC version's style "
                                              "(tools/port_settings.py) -->", head[2]] + _theater() + ["</menus>", ""],
+        CUSTOM_CAMPAIGN.replace("/", ".") + ".xml": [head[0], "<!-- What the port adds to a custom campaign's own "
+                                                     "menus (tools/port_settings.py) -->", head[2]] +
+        _custom_campaign() + ["</menus>", ""],
     }
+
+
+# ---------- custom campaigns (port/linux/game/custom_campaigns.c,
+# docs/custom_campaigns.md): a campaign with a ui.map of its own shows its own
+# main menu, to which menu_tags.c adds this key, BACK TO HALO (Y, and a tap on
+# it: its name begins y_butn, ui_widget.c's ui_mouse_key_button), and a Y
+# handler on the screen that runs "port custom campaign back"
+CUSTOM_CAMPAIGN = "custom_campaign"
+
+
+def _custom_campaign() -> list:
+    return _widget(f"{CUSTOM_CAMPAIGN}/y_butn_back_to_halo",
+                   [("type", "text"), ("controller", 1), ("width", 200), ("height", 24),
+                    ("text", "%y-button BACK TO HALO"), ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"),
+                    ("text_y", 2), ("text_flags", "no_focus_test")], [])
 
 
 REPLACED_FOLDERS = [f"{MT}/server_settings"]
@@ -4053,7 +4080,8 @@ def _mcc_import() -> list:
 
 # the screens of a category that are no settings screen (_setting_screen),
 # made by a function of their own
-CUSTOM_SCREENS = {"network_setup/steam_workshop": {"screen": "steam_workshop_screen"}}
+CUSTOM_SCREENS = {"network_setup/steam_workshop": {"screen": "steam_workshop_screen"},
+                  "gameplay/game_files": {"screen": "screen"}}
 
 # ---------- the Steam Workshop (Settings > Network Setup > STEAM WORKSHOP:
 # the host's port/android/host/steam_downloads.c, menu_functions.c's "port
@@ -4094,12 +4122,15 @@ def _steam_workshop() -> list:
                          ['<on event="a" run="port steam choose"/>', '<on event="start" run="port steam choose"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>',
                           f'<child widget="{base}/steam_name" x="12"/>',
-                          f'<child widget="{base}/steam_state" x="250"/>'])
+                          f'<child widget="{base}/steam_state" x="252"/>'])
+    # (the name shortened to fit, steam_update: most of the row, as SIGN IN WITH
+    # ACCOUNT needs; the state whole, kept to 15 characters by the host: "DOWNLOAD
+    # AGAIN?", an account's name shortened)
     lines += _widget(f"{base}/steam_name",
-                     [("type", "text"), ("controller", 1), ("width", 238), ("height", 22), ("font", "ui\\large_ui"),
+                     [("type", "text"), ("controller", 1), ("width", 236), ("height", 22), ("font", "ui\\large_ui"),
                       ("color", "#FF2896FF"), ("text_y", 4)], [])
     lines += _widget(f"{base}/steam_state",
-                     [("type", "text"), ("controller", 1), ("width", 134), ("height", 22), ("font", "ui\\small_ui"),
+                     [("type", "text"), ("controller", 1), ("width", 132), ("height", 22), ("font", "ui\\small_ui"),
                       ("color", "#FF2896FF"), ("align", "center"), ("text_y", 6), ("text_flags", "no_focus_test")],
                      [])
     lines += _widget(f"{base}/steam_details", [("width", 640), ("height", 480)],
@@ -4185,3 +4216,34 @@ def _mcc_downloads() -> list:
                          [f'<on event="a" {action}/>', f'<on event="start" {action}/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>'])
     return lines
+
+
+# ---------- Settings > Gameplay > GAME FILES (Android's): where the maps,
+# custom_maps, mods and mcc_maps folders are (menu_functions.c's "port game
+# files text"), and APP DATA or OTHER FOLDER, which the app asks about and
+# moves them for as the game starts again (HaloActivity.moveGameFiles,
+# GameFiles.java). As MCC DOWNLOADS' (_mcc_downloads)
+def _game_files() -> list:
+    base = f"{PE}/gameplay/game_files"
+    lines = _widget(f"{base}/screen", [("type", "column_list"), ("width", 640), ("height", 480),
+                    ("bitmap", "bitmaps/gradient"),
+                    ("flags", "pass_unhandled_to_focused_child up_down_tabs_children")],
+                    ['<on event="b" back="true"/>', '<on event="back" back="true"/>',
+                     f'<child widget="{base}/description" x="40" y="80"/>',
+                     f'<child widget="{base}/app" x="195" y="300"/>',
+                     f'<child widget="{base}/other" x="195" y="340"/>',
+                     f'<child widget="{base}/back" x="195" y="390"/>',
+                     f'<child widget="{base}/title" x="40" y="24"/>'])
+    lines += _widget(f"{base}/title", [("type", "text"), ("width", 560), ("height", 40),
+                     ("text", "GAME FILES"), ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+    lines += _widget(f"{base}/description", [("type", "text"), ("controller", 1),
+                     ("width", 560), ("height", 210), ("font", "ui\\small_ui"),
+                     ("color", "#FFFFFFFF")], ['<data input="port game files text"/>'])
+    for name, text in [("app", "APP DATA"), ("other", "OTHER FOLDER"), ("back", "BACK")]:
+        action = 'back="true"' if name == "back" else f'run="port game files {name}"'
+        lines += _widget(f"{base}/{name}", [("type", "text"), ("width", 250), ("height", 32),
+                         ("text", text), ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("align", "center")],
+                         [f'<on event="a" {action}/>', f'<on event="start" {action}/>',
+                          '<on event="left_mouse" run="mouse emit accept event"/>'])
+    return lines
+

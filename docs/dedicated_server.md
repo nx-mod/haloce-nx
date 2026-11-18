@@ -322,7 +322,7 @@ in either case, and is kept as the table spells it:
 | `network.votekick_percent` | 1 to 100 |
 | `network.votekick_minutes` | 0 to 60 |
 | `network.votekick_ban_minutes` | 1 to 1440 |
-| `network.map_share_upload` | 16 to 20480 |
+| `network.map_share_upload` | 16 to 256000 |
 | `network.coop_friendly_fire` | `off`, `on`, `shields_only`, `explosives_only` |
 | `network.coop_team_wipe` | `auto`, `revert`, `respawn` (`auto`: a public server, `server.public` with internet play, only respawns the team) |
 | `network.shield_effects` | `stock`, `glow`, `light_show`, `overshield`, `glow_overshield`, `light_show_overshield`, `players` |
@@ -895,8 +895,10 @@ entries. `config.toml` keeps a string setting of up to 4096 characters, so
 a rotation that long is saved whole and read back after a restart.
 
 - The map is a multiplayer map's name (`bloodgulch`: the Xbox's
-  `maps/<name>.map`, else a Custom Edition map of `custom_maps`),
-  `custom_maps\<name>` (a Custom Edition map; `/` is taken for `\`), or a
+  `maps/<name>.map`, else a map of `custom_maps`),
+  `custom_maps\<name>` (a Custom Edition map, or an Xbox multiplayer map,
+  whose game needs every machine to have the `custom_xbox_multiplayer_maps`
+  capability: `docs/network_extensions.md`; `/` is taken for `\`), or a
   level's path (`levels\test\bloodgulch\bloodgulch`). A campaign level is
   played as co-op only: `<level>:coop`, at `server.coop_difficulty`.
 - The gametype (`slayer` when there is none) is a built-in's name

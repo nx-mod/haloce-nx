@@ -164,6 +164,9 @@ boolean network_replay_live_begin(long player_index);
 boolean network_replay_live_update(void);
 void network_replay_live_end(void);
 boolean network_replay_live(void);
+/* (the host, each tick: network_distributed.c) a player's facing as the tick
+ran it, for the live eyes view to turn smoothly between */
+void network_replay_live_facing(short player_index, short yaw, short pitch);
 
 /* a skip ahead's held frame (render.c, rasterizer_xbox_screen_effect.c):
 whether the frame being drawn is the one to hold (its 3D view copied, and

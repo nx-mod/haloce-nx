@@ -115,7 +115,7 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_frame_fences.py tools/test_android_static_geometry.py tools/test_android_render_policy.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
+          python -m pytest -q tools/test_linux_port.py tools/test_android_asm_convert.py tools/test_android_mirror_uploads.py tools/test_android_frame_fences.py tools/test_android_static_geometry.py tools/test_android_render_policy.py tools/test_android_ce_texture_cache.py tools/test_host_watch_hash.py tools/test_host_units.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_touch_menu.py tools/test_network_extensions.py tools/test_profile.py tools/stagekit/tests tools/test_net_compare.py tools/test_server_sim.py tools/test_egg.py tools/test_deploy_gametypes.py
           # the harness's cases are independent (each builds in its own folder): across the runner's cores
           python -m pytest -q -n auto tools/harness
           # the dedicated server: --version, and --server without maps refused (exit code 2); its cases with
@@ -128,7 +128,7 @@ jobs:
             tools/test_mcc_share.py tools/test_mcc_share_rules.py tools/test_mcc_share_stage.py \
             tools/test_mcc_share_storage.py tools/test_mcc_share_metadata.py tools/test_mcc_load_network.py \
             tools/test_checkpoint_epoch.py tools/test_coop_checkpoint.py tools/test_coop_checkpoint_recovery.py \
-            tools/test_mcc_checkpoint.py tools/test_mcc_import.py tools/test_steam_client.py tools/test_host_mcc_hash.py
+            tools/test_mcc_checkpoint.py tools/test_mcc_import.py tools/test_mcc_publish_across.py tools/test_steam_client.py tools/test_host_mcc_hash.py
           python -m pytest -q tools/test_hud_corrections.py
 
       - name: Compile cache

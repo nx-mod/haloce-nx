@@ -105,6 +105,12 @@ public class LauncherActivity extends Activity {
 
     private void startAfterMigration() {
         Updater.moveToVulkanDefault(dataRoot);
+        // (the game's GAME FILES asked for its files to move: done before it opens them)
+        File moveTo = dataRoot != null ? GameFiles.requested(dataRoot) : null;
+        if (moveTo != null) {
+            moveGameFiles(moveTo);
+            return;
+        }
         if (haveData()) {
             startGameAfterDriver();
             return;
@@ -170,9 +176,14 @@ public class LauncherActivity extends Activity {
 
     private boolean gameStarted;
     private boolean profileStorageAsked;
+    /**
+     * the game's files moving (GameFiles), or a move that stopped waiting for the player: the game is not started
+     * meanwhile (onResume's check of the data would start it on the files' old places, as the move goes on)
+     */
+    private boolean movingGameFiles;
 
     private void startGame() {
-        if (gameStarted)
+        if (gameStarted || movingGameFiles)
             return;
         if (!profileFolderReady())
             return;
@@ -472,9 +483,100 @@ public class LauncherActivity extends Activity {
             }
             setStatus("All files access was not allowed. Use the data folder, or allow it to use another folder.");
         }
-        // data pushed with adb while this screen was open (not while a disc image is extracted)
-        if ((pick == null || pick.isEnabled()) && haveData())
+        // data pushed with adb while this screen was open (not while a disc image is extracted, nor while the game's
+        // files move)
+        if (!movingGameFiles && (pick == null || pick.isEnabled()) && haveData())
             startGameAfterDriver();
+    }
+
+    /* ---------- the game's files moved (GameFiles: the game's Settings > Gameplay > GAME FILES asked for it) */
+
+    /** the move's screen: its progress while the files move, then the game; what went wrong, and a way on */
+    private void moveGameFiles(File base) {
+        movingGameFiles = true;
+        boolean app = base.equals(dataRoot);
+        LinearLayout layout = screen("Moving the game's files", "The maps, custom maps, mods and MCC maps are moving "
+            + "to " + (app ? "the app's storage" : base.getAbsolutePath()) + ". Keep the app open until it's done.");
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(1000);
+        LinearLayout.LayoutParams progressLayout = new LinearLayout.LayoutParams(dp(480),
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        progressLayout.topMargin = dp(16);
+        layout.addView(progress, progressLayout);
+        addStatus(layout);
+        setContentView(layout);
+        setStatus("Starting...");
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // (a folder of the player's needs All files access, which may have been turned off since)
+        if (!app && !MapsFolder.hasStorageAccess(this)) {
+            moveFailed(base, "The app is not allowed to use " + base.getAbsolutePath() + " any more: allow All files "
+                + "access in Android's settings for SlipstreamCE, then try again.");
+            return;
+        }
+        new Thread(() -> {
+            String problem = GameFiles.run(dataRoot, base, (text, permille) -> report("Moving " + text, permille));
+            // (what is there now, for the result's screen)
+            long size = problem == null ? GameFiles.totalSize(dataRoot) : 0;
+            handler.post(() -> {
+                getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                if (problem != null) {
+                    moveFailed(base, problem);
+                    return;
+                }
+                progress = null;
+                moveDone("The game's files are now in " + (app ? "the app's storage" : base.getAbsolutePath()) + " ("
+                    + GameFiles.size(size) + ").");
+            });
+        }, "halo-game-files-move").start();
+    }
+
+    /** how long the result's screen waits before the game starts by itself */
+    private static final int MOVE_DONE_MILLISECONDS = 5000;
+
+    /** a move done (or undone): where the files are, then the game (CONTINUE, or by itself after a few seconds) */
+    private void moveDone(String text) {
+        LinearLayout layout = screen("The game's files moved", text);
+        boolean[] gone = { false };
+        Runnable proceed = () -> {
+            if (gone[0])
+                return;
+            gone[0] = true;
+            movingGameFiles = false;
+            startAfterMigration();
+        };
+        Button proceedButton = button(layout, "Continue", v -> proceed.run());
+        setContentView(layout);
+        proceedButton.requestFocus();
+        handler.postDelayed(proceed, MOVE_DONE_MILLISECONDS);
+    }
+
+    /** a move that stopped: why, and TRY AGAIN, or MOVE THEM BACK (what had moved put back where it was) */
+    private void moveFailed(File base, String problem) {
+        LinearLayout layout = screen("The game's files did not finish moving", problem + "\n\nNothing is lost: "
+            + "the files that moved are in " + base.getAbsolutePath() + ", the rest where they were.");
+        Button again = button(layout, "Try again", v -> moveGameFiles(base));
+        button(layout, "Move them back", v -> {
+            LinearLayout moving = screen("Moving the game's files back", "Keep the app open until it's done.");
+            progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(1000);
+            moving.addView(progress, new LinearLayout.LayoutParams(dp(480), LinearLayout.LayoutParams.WRAP_CONTENT));
+            addStatus(moving);
+            setContentView(moving);
+            new Thread(() -> {
+                String back = GameFiles.back(dataRoot, base, (text, permille) -> report("Moving " + text, permille));
+                handler.post(() -> {
+                    if (back != null) {
+                        moveFailed(base, back);
+                        return;
+                    }
+                    progress = null;
+                    moveDone("The game's files that had moved are back where they were.");
+                });
+            }, "halo-game-files-back").start();
+        });
+        addStatus(layout);
+        setContentView(layout);
+        again.requestFocus();
     }
 
     /* ---------- a folder of the player's own for the maps (MapsFolder) */

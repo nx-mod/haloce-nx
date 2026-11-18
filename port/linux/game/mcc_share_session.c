@@ -17,9 +17,6 @@
 #define MCC_SHARE_REUSE_SLICE 0x400000u
 /* A local copy's time an update: it hashes as it copies, on the game's thread. */
 #define MCC_SHARE_REUSE_MILLISECONDS 12u
-/* The longest a file's host request is held for reuse_wait: the host gives a
- * transfer up when it has not advanced for MCC_SHARE_ACTIVE_ADVANCED. */
-#define MCC_SHARE_HOLD_LIMIT 60000u
 /* how long the last package's digests stand in for hashing it again */
 #define MCC_SHARE_HASHED_LIFETIME 600000u
 
@@ -638,6 +635,7 @@ static void client_idle(struct mcc_share *share)
     share->have_pending=0;
     share->state=MCC_SHARE_CLIENT_IDLE;
     share->outstanding=0;
+    share->external_bytes=0;
 }
 
 static int client_send(struct mcc_share *share, uint8_t op, uint8_t file, uint8_t flags,
@@ -699,27 +697,10 @@ static void client_pump(struct mcc_share *share)
         !share->outstanding) {
         struct mcc_share_file const *file=&share->stage.files[current];
         char path[1024];
-        int resource=file->kind==MCC_SHARE_FILE_BITMAPS || file->kind==MCC_SHARE_FILE_SOUNDS,found=0;
-        uint32_t now=share_now(share);
         share->reuse_checked_file=current;
         memset(path,0,sizeof(path));
-        if (resource && share->env.reuse_file) found=share->env.reuse_file(share->env.user,file,path);
-        if (resource && !found && share->env.reuse_wait) {
-            if (share->hold_file!=current) { share->hold_file=current; share->hold_since=now; }
-            if (!share_elapsed(now,share->hold_since,MCC_SHARE_HOLD_LIMIT) &&
-                share->env.reuse_wait(share->env.user,file,share->host_rate)) {
-                /* Asked again next update; the host hears from us meanwhile. */
-                share->reuse_checked_file=-1;
-                share->progress_at=now;
-                if (share_elapsed(now,share->reported_at,MCC_SHARE_OFFER_HEARTBEAT) &&
-                    client_send(share,MCC_SHARE_OP_MANIFEST,0,0,0,0)) share->reported_at=now;
-                return;
-            }
-            /* (it may have come in just as the hold ended) */
-            memset(path,0,sizeof(path));
-            found=share->env.reuse_file(share->env.user,file,path);
-        }
-        if (found) {
+        if (share->env.reuse_file && (file->kind==MCC_SHARE_FILE_BITMAPS || file->kind==MCC_SHARE_FILE_SOUNDS) &&
+            share->env.reuse_file(share->env.user,file,path)) {
             long bytes=-1;
             if (memchr(path,0,sizeof(path))) share->reuse_stream=share_open_native(share,path);
             if (share->reuse_stream && !fseek(share->reuse_stream,0,SEEK_END)) bytes=ftell(share->reuse_stream);
@@ -807,9 +788,6 @@ int mcc_share_client_begin(struct mcc_share *share, char const *level, unsigned 
     share->request_offset=0;
     share->outstanding=0;
     share->reuse_checked_file=-1;
-    share->hold_file=-1;
-    share->host_rate=share->host_rate_bytes=share->host_bytes=0;
-    share->host_rate_at=share_now(share);
     share->offer_count=share->offer_received=0;
     share->offer_total=0;
     share->state=MCC_SHARE_CLIENT_ASKING;
@@ -920,14 +898,6 @@ static void client_chunk(struct mcc_share *share, struct mcc_share_response cons
     share->outstanding--;
     result=mcc_share_stage_write(&share->stage,data,head->length);
     share->progress_at=share_now(share);
-    share->host_bytes+=head->length;
-    if (share_elapsed(share->progress_at,share->host_rate_at,1000u)) {
-        uint32_t measured=(uint32_t)((uint64_t)(share->host_bytes-share->host_rate_bytes)*1000u/
-            (share->progress_at-share->host_rate_at));
-        share->host_rate=share->host_rate ? (share->host_rate+measured)/2 : measured;
-        share->host_rate_bytes=share->host_bytes;
-        share->host_rate_at=share->progress_at;
-    }
     switch (result) {
     case MCC_SHARE_STAGE_OK:
     case MCC_SHARE_STAGE_FILE_DONE:
@@ -957,7 +927,6 @@ int mcc_share_client_external(struct mcc_share *share, void const *data, uint32_
         if (wanted>bytes) wanted=bytes;
         result=mcc_share_stage_write(&share->stage,at,wanted);
         share->progress_at=share_now(share);
-        share->host_bytes+=wanted;
         at+=wanted;
         bytes-=wanted;
         if (result==MCC_SHARE_STAGE_ALL_DONE) {
@@ -979,6 +948,37 @@ int mcc_share_client_external(struct mcc_share *share, void const *data, uint32_
 void mcc_share_client_external_fail(struct mcc_share *share, char const *message)
 {
     if (share->state==MCC_SHARE_CLIENT_TRANSFERRING) client_fail(share,message);
+}
+
+int mcc_share_client_external_file(struct mcc_share *share)
+{
+    enum mcc_share_stage_result result;
+    if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING) return 0;
+    result=mcc_share_stage_external_done(&share->stage);
+    share->external_bytes=0;
+    share->progress_at=share_now(share);
+    if (result==MCC_SHARE_STAGE_ALL_DONE) {
+        share->state=MCC_SHARE_CLIENT_VERIFYING;
+        return 1;
+    }
+    if (result!=MCC_SHARE_STAGE_FILE_DONE) {
+        client_fail(share,"The files from the host could not be written. Nothing was installed.");
+        return -1;
+    }
+    return 1;
+}
+
+void mcc_share_client_external_progress(struct mcc_share *share, uint32_t bytes)
+{
+    if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING) return;
+    if (bytes!=share->external_bytes) share->progress_at=share_now(share);
+    share->external_bytes=bytes;
+}
+
+void mcc_share_client_external_abort(struct mcc_share *share)
+{
+    mcc_share_stage_external_abort(&share->stage);
+    share->external_bytes=0;
 }
 
 void mcc_share_client_response(struct mcc_share *share, void const *message, unsigned bytes)
@@ -1066,7 +1066,7 @@ int mcc_share_client_percent(struct mcc_share const *share)
     if (share->state==MCC_SHARE_CLIENT_IDLE) return -1;
     if (share->state==MCC_SHARE_CLIENT_VERIFYING) return 100;
     if (share->state!=MCC_SHARE_CLIENT_TRANSFERRING || !share->stage.total) return 0;
-    return (int)(((uint64_t)share->stage.done*100u)/share->stage.total);
+    return (int)(((uint64_t)(share->stage.done+share->external_bytes)*100u)/share->stage.total);
 }
 
 static void client_update(struct mcc_share *share)

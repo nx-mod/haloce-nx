@@ -11,6 +11,14 @@
 
 void host_logf(int priority, const char *format, ...) { (void)priority; (void)format; }
 
+/* host_mcc_hash.c's: the folder holding mcc_maps, MCC_ROOT when the test moves it (game.mcc.path) */
+char const *host_mcc_maps_parent(char const *data_root)
+{
+	char const *moved = getenv("MCC_ROOT");
+
+	return moved && *moved ? moved : data_root;
+}
+
 int main(int argc, char **argv)
 {
 	char custom[1024], report[HOST_MCC_IMPORT_TEXT_SIZE], title[96], destination[64];

@@ -414,6 +414,8 @@ static struct
 	/* hosting: while the game listens on hosting_socket, and its game may be
 	joined from the internet (p2p_set_hosting_allowed) */
 	int hosting_socket;
+	/* the host's file connection listens (p2p_set_file_share_listening) */
+	int file_share_listening;
 	int hosting;
 	int hosting_lan_only;
 	int has_token;
@@ -481,6 +483,13 @@ static struct
 	int upnp_forwarded;
 	struct p2p_candidate upnp_candidate;
 	unsigned long upnp_time;
+	/* ... and the host's file connection's TCP port (P2P_FILE_SHARE_PORT),
+	while it listens in an internet game: whether it was asked, when, and
+	what the router forwards (p2p_file_share_endpoint) */
+	int upnp_tcp_asked;
+	int upnp_tcp_forwarded;
+	struct p2p_candidate upnp_tcp_candidate;
+	unsigned long upnp_tcp_time;
 	/* network.public_address, looked up (an address and port joiners reach
 	this machine at, behind a NAT with one forwarded port): offered first;
 	the text it was looked up from, and when */
@@ -490,6 +499,26 @@ static struct
 	unsigned long public_time;
 	int public_logged;
 } p2p = { .tunnel_socket = -1, .handoff_socket = -1, .hosting_socket = -1 };
+
+void p2p_set_file_share_listening(int listening)
+{
+	p2p.file_share_listening = listening != 0;
+}
+
+int p2p_file_share_endpoint(unsigned long *address, unsigned short *port)
+{
+	int forwarded;
+
+	pthread_mutex_lock(&p2p_lock);
+	forwarded = p2p.upnp_tcp_forwarded && p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+	if (forwarded)
+	{
+		*address = p2p.upnp_tcp_candidate.address;
+		*port = p2p.upnp_tcp_candidate.port;
+	}
+	pthread_mutex_unlock(&p2p_lock);
+	return forwarded;
+}
 
 /* the proxy (its index + 1) with each local port (all of theirs are on
 p2p.local_address) */
@@ -2103,9 +2132,9 @@ void p2p_socket_port(int socket, int stream, int listening, unsigned short port)
 		entry->listening |= (unsigned char)(listening != 0);
 	}
 	/* the game listens for connections while it hosts (on any port but map
-	sharing's, which every player of a game listens on, and the MCC fast
-	path's, mcc_fast.c) */
-	if (stream && listening && port != network_short(P2P_MAP_SHARE_PORT) && port != network_short(P2P_MCC_FAST_PORT))
+	sharing's, which every player of a game listens on, and the file
+	connection's, which the host's own listener takes) */
+	if (stream && listening && port != network_short(P2P_MAP_SHARE_PORT) && port != network_short(P2P_FILE_SHARE_PORT))
 		p2p.hosting_socket = socket;
 	/* (and no stand-in that closed has the port now) */
 	forget_closed(stream != 0, port);
@@ -2155,6 +2184,10 @@ peer */
 static int game_port_open(int stream, unsigned short port)
 {
 	int index;
+
+	/* (the host's file connection's listener, which is not the game's) */
+	if (stream && port == network_short(P2P_FILE_SHARE_PORT) && p2p.file_share_listening)
+		return 1;
 
 	for (index = 0; index < MAXIMUM_GAME_PORTS; index++)
 	{
@@ -2331,7 +2364,13 @@ static void stream_tune(struct stream *stream, int bulk_count)
 	else if (stream->share < 1000)
 		stream->share = stream->share + 50 < 1000 ? stream->share + 50 : 1000;
 	/* (the cap in KCP messages a second, over twice the round trip) */
-	ideal = (kilobytes > 0 ? kilobytes : 1024) * 1024 / STREAM_CHUNK_SIZE * 2 * rtt / 1000;
+	/* (in 64 bits: 250 MB/s over a long round trip passes a long's range;
+	no more than the whole budget, which the window never passes anyway) */
+	{
+		long long wanted = (long long)(kilobytes > 0 ? kilobytes : 1024) * 1024 / STREAM_CHUNK_SIZE * 2 * rtt / 1000;
+
+		ideal = wanted < BULK_WINDOW_BUDGET ? (long)wanted : BULK_WINDOW_BUDGET;
+	}
 	budget = BULK_WINDOW_BUDGET / (bulk_count > 0 ? bulk_count : 1);
 	window = ideal < budget ? ideal : budget;
 	if (window > BULK_WINDOW_MAXIMUM)
@@ -2436,7 +2475,7 @@ static void listener_readable(struct listener *listener)
 		stream->socket = socket;
 		stream->state = _stream_open_state;
 		if (listener->remote_port == network_short(P2P_MAP_SHARE_PORT) ||
-			listener->remote_port == network_short(P2P_MCC_FAST_PORT))
+			listener->remote_port == network_short(P2P_FILE_SHARE_PORT))
 			stream_make_bulk(stream);
 		put_short(open, listener->remote_port);
 		put_short(open + 2, from.sin_port);
@@ -2452,7 +2491,7 @@ static void stream_opened(struct stream *stream, const unsigned char *data, int 
 	if (stream->state != _stream_awaiting_open || size < 4)
 		return;
 	stream->remote_port = get_short(data + 2);
-	if (get_short(data) == network_short(P2P_MAP_SHARE_PORT) || get_short(data) == network_short(P2P_MCC_FAST_PORT))
+	if (get_short(data) == network_short(P2P_MAP_SHARE_PORT) || get_short(data) == network_short(P2P_FILE_SHARE_PORT))
 		stream_make_bulk(stream);
 	/* only to where the game listens: nothing else here is the peer's to
 	reach */
@@ -3566,7 +3605,6 @@ static DWORD WINAPI upnp_thread(void *unused)
 	if (forwarded && previous_port && previous_port != external_port)
 		posix_upnp_stop_forwarding_udp(previous_port);
 	pthread_mutex_lock(&p2p_lock);
-	p2p.upnp_working = 0;
 	p2p.upnp_time = p2p_now();
 	if (forwarded)
 	{
@@ -3586,6 +3624,57 @@ static DWORD WINAPI upnp_thread(void *unused)
 	{
 		platform_log("Internet play: UPnP: %s", error);
 	}
+	/* the host's file connection's port, while it listens in an internet game;
+	let go when it no longer does */
+	{
+		int want_tcp = p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+		int tcp_forwarded = p2p.upnp_tcp_forwarded;
+		unsigned short previous_tcp = tcp_forwarded ? p2p.upnp_tcp_candidate.port : 0;
+
+		pthread_mutex_unlock(&p2p_lock);
+		if (want_tcp)
+		{
+			posix_ulong tcp_address = 0;
+			unsigned short tcp_port = 0;
+			int tcp = posix_upnp_forward_tcp(network_short(P2P_FILE_SHARE_PORT),
+				previous_tcp ? previous_tcp : network_short(P2P_FILE_SHARE_PORT), &tcp_address, &tcp_port, error,
+				sizeof(error));
+
+			if (tcp && previous_tcp && previous_tcp != tcp_port)
+				posix_upnp_stop_forwarding_tcp(previous_tcp);
+			pthread_mutex_lock(&p2p_lock);
+			p2p.upnp_tcp_asked = 1;
+			p2p.upnp_tcp_time = p2p_now();
+			if (tcp)
+			{
+				char text[LOG_ADDRESS_SIZE];
+
+				if (!p2p.upnp_tcp_forwarded || p2p.upnp_tcp_candidate.address != tcp_address ||
+					p2p.upnp_tcp_candidate.port != tcp_port)
+				{
+					platform_log("Internet play: the router forwards TCP %s to the file connection (UPnP)",
+						log_address_ipv4(tcp_address, tcp_port, text, sizeof(text)));
+				}
+				p2p.upnp_tcp_forwarded = 1;
+				p2p.upnp_tcp_candidate.address = tcp_address;
+				p2p.upnp_tcp_candidate.port = tcp_port;
+			}
+			else if (!p2p.upnp_tcp_forwarded)
+				platform_log("Internet play: UPnP for the file connection: %s", error);
+			pthread_mutex_unlock(&p2p_lock);
+		}
+		else if (tcp_forwarded)
+		{
+			posix_upnp_stop_forwarding_tcp(previous_tcp);
+			pthread_mutex_lock(&p2p_lock);
+			p2p.upnp_tcp_forwarded = 0;
+			p2p.upnp_tcp_asked = 0;
+			pthread_mutex_unlock(&p2p_lock);
+		}
+	}
+	/* (done with the router: another ask may start) */
+	pthread_mutex_lock(&p2p_lock);
+	p2p.upnp_working = 0;
 	pthread_mutex_unlock(&p2p_lock);
 	return 0;
 }
@@ -3621,7 +3710,18 @@ static void p2p_shutdown(void)
 		external_port = p2p.upnp_candidate.port;
 		p2p.upnp_forwarded = 0;
 	}
-	pthread_mutex_unlock(&p2p_lock);
+	{
+		unsigned short tcp_port = 0;
+
+		if (p2p.upnp_tcp_forwarded && !p2p.upnp_working)
+		{
+			tcp_port = p2p.upnp_tcp_candidate.port;
+			p2p.upnp_tcp_forwarded = 0;
+		}
+		pthread_mutex_unlock(&p2p_lock);
+		if (tcp_port)
+			posix_upnp_stop_forwarding_tcp(tcp_port);
+	}
 	if (external_port)
 		posix_upnp_stop_forwarding_udp(external_port);
 }
@@ -3669,6 +3769,16 @@ static void update_upnp(void)
 		ask = elapsed(p2p.upnp_time, UPNP_RENEW_INTERVAL);
 	else
 		ask = upnp_needed() && (!p2p.upnp_asked || elapsed(p2p.upnp_time, UPNP_RETRY_INTERVAL));
+	/* (and the file connection's port: wanted, or let go) */
+	{
+		int want_tcp = p2p.file_share_listening && p2p.hosting && !p2p.hosting_lan_only;
+
+		if (want_tcp && !p2p.upnp_tcp_forwarded &&
+			(!p2p.upnp_tcp_asked || elapsed(p2p.upnp_tcp_time, UPNP_RETRY_INTERVAL)))
+			ask = 1;
+		if (!want_tcp && p2p.upnp_tcp_forwarded)
+			ask = 1;
+	}
 	if (!ask)
 		return;
 	if (p2p.upnp_thread)

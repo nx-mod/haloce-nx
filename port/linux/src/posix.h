@@ -157,6 +157,10 @@ int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, p
 /* stops the router forwarding that port (network byte order) of its, which
 posix_upnp_forward_udp set up; blocks */
 void posix_upnp_stop_forwarding_udp(unsigned short external_port);
+/* the same for a TCP port (the host's file connection's: p2p.c), and its end */
+int posix_upnp_forward_tcp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
+	unsigned short *external_port, char *error, int error_size);
+void posix_upnp_stop_forwarding_tcp(unsigned short external_port);
 /* Process shutdown only: stop starting further router requests. Safe to
 call while forwarding runs; it cannot interrupt a library call in progress. */
 void posix_upnp_cancel(void);

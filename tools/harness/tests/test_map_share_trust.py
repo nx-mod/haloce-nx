@@ -68,9 +68,10 @@ def generated(fault=None, faulty_function=None):
     for member in ("OFFER_TIMEOUT", "_offer_ok", "_offer_in_progress_bit", "_progress_downloading",
                    "_file_awaiting_hashes"):
         config += enum_with(source, member) + "\n"
+    config += enum_with(source, "MAXIMUM_FS_PIECES") + "\n"
     for name in ("distributed_map_share_request", "distributed_map_share_offer", "distributed_map_share_offer_file",
                  "distributed_map_share_progress", "download_file", "source", "download", "request", "serving",
-                 "connection", "host_machine", "map_share_globals"):
+                 "connection", "host_machine", "fs_source", "map_share_globals"):
         config += structure(source, name) + "\n"
     text = ""
     for name in FUNCTIONS:

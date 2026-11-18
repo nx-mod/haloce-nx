@@ -11,6 +11,9 @@ addresses (32-bit numbers, which are the host's).
 #include <string.h>
 
 const char *platform_data_root(void);
+/* the folder holding mcc_maps (xbox_files.c), told to the host first */
+const char *platform_mcc_root(void);
+void host_mcc_root(unsigned int path);
 
 /* the host's (port/android/guest/runtime/guest_host.h) */
 void host_steam_open(unsigned int data_root);
@@ -39,6 +42,7 @@ void steam_screen_open(void)
 	static char root[1024];
 
 	strncpy(root, platform_data_root(), sizeof(root) - 1);
+	host_mcc_root(HOST_ADDRESS(platform_mcc_root()));
 	host_steam_open(HOST_ADDRESS(root));
 }
 

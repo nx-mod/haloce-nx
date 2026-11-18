@@ -333,6 +333,11 @@ Xbox's 102 (ui_widget_event_handler_functions.c), which this build has not */
 #define UI_WIDGET_CHILD_BYTES 0x50
 #define UI_WIDGET_CHILD_VERTICAL_OFFSET 0x36
 #define XBOX_WIDGET_FUNCTION_COUNT 102
+/* its game data inputs (struct ui_widget_game_data_input_reference: the
+function first), of which the Xbox has 41 */
+#define UI_WIDGET_GAME_DATA_INPUTS_OFFSET 0x48
+#define UI_WIDGET_GAME_DATA_INPUT_BYTES 0x24
+#define XBOX_GAME_DATA_INPUT_COUNT 41
 /* the multiplayer pause menu's list, and the Xbox's two items of it */
 #define MULTIPLAYER_PAUSE_LIST_NAME "ui\\shell\\multiplayer_game\\pause_game\\mp_pause_list"
 #define MULTIPLAYER_PAUSE_RESUME_NAME "resume_game_button"
@@ -3551,19 +3556,36 @@ static void multiplayer_score_hint_convert(
 }
 
 /* Halo PC's widgets run its own functions besides the Xbox's, numbered past
-them: this build has none of those (its menus' own are other numbers, from
-PC_MENU_FUNCTION_BASE), and a handler running one would only log an invalid
-function. Those handlers run none. */
+them: this build answers none by those numbers (its menus' own are other
+numbers, from PC_MENU_FUNCTION_BASE), and a handler running one would only
+log an invalid function. Those handlers run none, unless the port gives the
+function a number of its own (custom_edition_widget_renumber_set: a custom
+campaign's ui.map), as it does the game data inputs past the Xbox's 41. */
+static custom_edition_widget_renumber_proc widget_event_function_renumber;
+static custom_edition_widget_renumber_proc widget_game_data_input_renumber;
+
+void custom_edition_widget_renumber_set(
+	custom_edition_widget_renumber_proc event_function,
+	custom_edition_widget_renumber_proc game_data_input)
+{
+	widget_event_function_renumber = event_function;
+	widget_game_data_input_renumber = game_data_input;
+}
+
 static void widget_pc_functions_clear(
 	struct load_state const *state,
 	uint32_t widget_offset,
+	char const *map_name,
 	struct custom_edition_conversion_report *report)
 {
 	int32_t handler_count;
 	uint32_t handlers_offset;
 	int32_t handler_index;
+	int32_t input_count;
+	uint32_t inputs_offset;
+	int32_t input_index;
 
-	if (!loaded_block_get(
+	if (loaded_block_get(
 			state->tag_cache + widget_offset + UI_WIDGET_EVENT_HANDLERS_OFFSET,
 			CUSTOM_EDITION_TAG_CACHE_ADDRESS,
 			state->used_bytes,
@@ -3571,18 +3593,49 @@ static void widget_pc_functions_clear(
 			&handler_count,
 			&handlers_offset))
 	{
-		return;
-	}
-	for (handler_index = 0; handler_index < handler_count; handler_index++)
-	{
-		uint8_t *handler = state->tag_cache + handlers_offset + (uint32_t)handler_index * UI_WIDGET_EVENT_HANDLER_BYTES;
-		uint32_t flags = read_u32(handler + UI_WIDGET_EVENT_HANDLER_FLAGS_OFFSET);
-
-		if ((flags & UI_WIDGET_EVENT_HANDLER_RUN_FUNCTION_FLAG) &&
-			read_s16(handler + UI_WIDGET_EVENT_HANDLER_FUNCTION_OFFSET) >= XBOX_WIDGET_FUNCTION_COUNT)
+		for (handler_index = 0; handler_index < handler_count; handler_index++)
 		{
+			uint8_t *handler = state->tag_cache + handlers_offset + (uint32_t)handler_index * UI_WIDGET_EVENT_HANDLER_BYTES;
+			uint32_t flags = read_u32(handler + UI_WIDGET_EVENT_HANDLER_FLAGS_OFFSET);
+			int16_t function = read_s16(handler + UI_WIDGET_EVENT_HANDLER_FUNCTION_OFFSET);
+			long renumbered;
+
+			if (!(flags & UI_WIDGET_EVENT_HANDLER_RUN_FUNCTION_FLAG) || function < XBOX_WIDGET_FUNCTION_COUNT)
+				continue;
+			renumbered = widget_event_function_renumber ? widget_event_function_renumber(map_name, function) : -1;
+			if (renumbered >= 0 && renumbered <= INT16_MAX)
+			{
+				write_u16(handler + UI_WIDGET_EVENT_HANDLER_FUNCTION_OFFSET, (uint16_t)renumbered);
+				report->widget_functions_renumbered++;
+				continue;
+			}
 			write_u32(handler + UI_WIDGET_EVENT_HANDLER_FLAGS_OFFSET, flags & ~UI_WIDGET_EVENT_HANDLER_RUN_FUNCTION_FLAG);
 			report->widget_functions_cleared++;
+		}
+	}
+	if (widget_game_data_input_renumber &&
+		loaded_block_get(
+			state->tag_cache + widget_offset + UI_WIDGET_GAME_DATA_INPUTS_OFFSET,
+			CUSTOM_EDITION_TAG_CACHE_ADDRESS,
+			state->used_bytes,
+			UI_WIDGET_GAME_DATA_INPUT_BYTES,
+			&input_count,
+			&inputs_offset))
+	{
+		for (input_index = 0; input_index < input_count; input_index++)
+		{
+			uint8_t *input = state->tag_cache + inputs_offset + (uint32_t)input_index * UI_WIDGET_GAME_DATA_INPUT_BYTES;
+			int16_t function = read_s16(input);
+			long renumbered;
+
+			if (function < XBOX_GAME_DATA_INPUT_COUNT)
+				continue;
+			renumbered = widget_game_data_input_renumber(map_name, function);
+			if (renumbered >= 0 && renumbered <= INT16_MAX)
+			{
+				write_u16(input, (uint16_t)renumbered);
+				report->widget_inputs_renumbered++;
+			}
 		}
 	}
 
@@ -3876,7 +3929,7 @@ enum cache_file_status custom_edition_cache_convert(
 		if (group_tag == UI_WIDGET_DEFINITION_GROUP_TAG &&
 			tag_cache_offset(&state, read_u32(instance + TAG_INSTANCE_ADDRESS_OFFSET), UI_WIDGET_DEFINITION_BYTES, &offset))
 		{
-			widget_pc_functions_clear(&state, offset, report);
+			widget_pc_functions_clear(&state, offset, map_name, report);
 			if (!strcmp(custom_edition_cache_tag_name(tag_cache, loaded_bytes, tag_index), MULTIPLAYER_PAUSE_LIST_NAME))
 				multiplayer_pause_list_convert(&state, offset, report);
 		}

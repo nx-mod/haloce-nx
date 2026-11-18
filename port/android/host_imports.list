@@ -70,6 +70,7 @@ host_replay_store_append
 host_replay_store_read
 host_replay_store_free
 host_mcc_import_start
+host_mcc_root
 host_mcc_import_state
 host_mcc_import_progress
 host_mcc_import_question
@@ -111,13 +112,30 @@ host_steam_text_wanted
 host_steam_text_caption
 host_steam_text_typed
 host_steam_qr
-# a joiner's fetch of an MCC package's resource maps from the Workshop (steam_downloads.c)
-host_steam_fetch_start
-host_steam_fetch_status
-host_steam_fetch_skip
-host_steam_fetch_stop
+# a joiner's MCC package from the Workshop (steam_downloads.c)
 host_steam_shared_fetch
 host_steam_shared_state
 host_steam_install_start
 host_steam_install_status
+host_steam_install_progress
 host_steam_take_rescan
+# files between two SlipstreamCE machines over a connection of their own (host_file_share.c)
+host_fs_host_frame
+host_fs_rate_facts
+host_fs_allowance
+host_fs_serve_begin
+host_fs_serve_file
+host_fs_serve_ready
+host_fs_serve_progress
+host_fs_serve_end
+host_fs_fetch_begin
+host_fs_direct
+host_fs_fetch_file
+host_fs_fetch_start
+host_fs_fetch_status
+host_fs_fetch_stop
+host_fs_pieces_begin
+host_fs_pieces_ask
+host_fs_pieces_take
+host_fs_pieces_state
+host_fs_pieces_stop

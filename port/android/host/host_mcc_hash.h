@@ -6,6 +6,9 @@
 #ifndef HOST_MCC_HASH_H
 #define HOST_MCC_HASH_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 /* each map of an installed package folder (an absolute path) fingerprinted
  * and kept, with the package's own bitmaps.map and sounds.map, in every way
  * the guest may ask for it; cancel (may be NULL) stops it when it becomes
@@ -14,9 +17,13 @@
 int host_mcc_hash_package(char const *data_root, char const *folder, volatile int const *cancel,
 	void (*progress)(unsigned long long done, unsigned long long total, void *context), void *context);
 
-/* a file's plain SHA-256 (the CPU's instructions when it has them): 1, or 0
- * when it could not be read or cancel (may be NULL) became nonzero */
-int host_sha256_file(char const *path, unsigned char digest[32], volatile int const *cancel);
+/* the folder holding mcc_maps (config.toml's game.mcc.path, which the guest
+ * reads: platform_mcc_root), told by the guest as it starts (guest_host.h's
+ * host_mcc_root); and what the host's MCC code takes it to be: that, else the
+ * data root it was given. mcc_staging, the Steam session and the import inbox
+ * stay in the data root. */
+void host_mcc_root(unsigned int path);
+char const *host_mcc_maps_parent(char const *data_root);
 
 /* the guest's (guest_host.h) */
 int host_mcc_hash_start(unsigned int request);
@@ -27,5 +34,17 @@ void host_mcc_hash_cancel(int id);
 int host_sha256_start(unsigned int path);
 int host_sha256_poll(int id, unsigned int digest, unsigned int size);
 void host_sha256_cancel(int id);
+
+/* SHA-256 a piece at a time, with the CPU's instructions when it has them
+ * (the host's other users: host_file_share.c) */
+struct host_sha256 {
+	uint32_t state[8];
+	unsigned char block[64];
+	uint64_t length;
+	unsigned used;
+};
+void host_sha256_begin(struct host_sha256 *sha);
+void host_sha256_add(struct host_sha256 *sha, void const *data, size_t size);
+void host_sha256_end(struct host_sha256 const *sha, unsigned char digest[32]);
 
 #endif

@@ -258,24 +258,50 @@ static BOOL same_name(const char *first, const char *second)
 	return !*first && !*second;
 }
 
-/* d:\'s maps and custom_maps folders, if game.maps.path or
-game.custom_maps.path moves them (the path's first name, which is matched
-whatever its case): the folder, else NULL */
-static const char *moved_folder(const char *name)
+/* the folder holding mcc_maps: game.mcc.path's (Android's GAME FILES moves
+it with the maps: GameFiles.java), else the data root. mcc_staging stays in
+the data root (a package published from it to another storage is copied:
+posix_mcc_share_publish). Read once. */
+const char *platform_mcc_root(void)
 {
-	static char maps[MAX_PATH], custom_maps[MAX_PATH];
+	static char root[MAX_PATH];
 	static int read;
 
 	if (!read)
 	{
 		read = 1;
+		configured_folder("game.mcc.path", root, sizeof(root));
+		if (!root[0])
+			snprintf(root, sizeof(root), "%s", platform_data_root());
+	}
+	return root;
+}
+
+/* d:\'s maps, custom_maps and mcc_maps folders, if game.maps.path,
+game.custom_maps.path or game.mcc.path moves them (the path's first name,
+which is matched whatever its case): the folder, else NULL */
+static const char *moved_folder(const char *name)
+{
+	static char maps[MAX_PATH], custom_maps[MAX_PATH], mcc_maps[MAX_PATH];
+	static int read;
+
+	if (!read)
+	{
+		char mcc[MAX_PATH];
+
+		read = 1;
 		configured_folder("game.maps.path", maps, sizeof(maps));
 		configured_folder("game.custom_maps.path", custom_maps, sizeof(custom_maps));
+		configured_folder("game.mcc.path", mcc, sizeof(mcc));
+		if (mcc[0])
+			snprintf(mcc_maps, sizeof(mcc_maps), "%s/mcc_maps", mcc);
 	}
 	if (maps[0] && same_name(name, "maps"))
 		return maps;
 	if (custom_maps[0] && same_name(name, "custom_maps"))
 		return custom_maps;
+	if (mcc_maps[0] && same_name(name, "mcc_maps"))
+		return mcc_maps;
 	return NULL;
 }
 
@@ -306,7 +332,7 @@ static int translate_workshop(const char *cursor, char *resolved, unsigned long 
 	while (*cursor == '\\' || *cursor == '/')
 		cursor++;
 	/* MCC-owned local layout resolution is independent of Steam discovery. */
-	if (mcc_local_package_path(cursor, platform_data_root(), resolved, size))
+	if (mcc_local_package_path(cursor, platform_mcc_root(), resolved, size))
 	{
 		*rest = cursor + strlen(cursor);
 		return 1;
@@ -315,7 +341,7 @@ static int translate_workshop(const char *cursor, char *resolved, unsigned long 
 		return 0;
 	cursor += 9;
 	/* MCC-owned resource discovery also serves the virtual fopen path. */
-	if (steam_workshop_resource_path(cursor, platform_data_root(), resolved, size))
+	if (steam_workshop_resource_path(cursor, platform_mcc_root(), resolved, size))
 	{
 		*rest = cursor + strlen(cursor);
 		return 1;
@@ -329,9 +355,9 @@ static int translate_workshop(const char *cursor, char *resolved, unsigned long 
 	if (!length || (cursor[length] && cursor[length] != '\\' && cursor[length] != '/'))
 		return 0;
 	/* a package folder of that name in the data root wins */
-	if (posix_find_entry_case_insensitive(platform_data_root(), "mcc_maps", local_name, sizeof(local_name)))
+	if (posix_find_entry_case_insensitive(platform_mcc_root(), "mcc_maps", local_name, sizeof(local_name)))
 	{
-		snprintf(data_folder, sizeof(data_folder), "%s/%s", platform_data_root(), local_name);
+		snprintf(data_folder, sizeof(data_folder), "%s/%s", platform_mcc_root(), local_name);
 		if (posix_find_entry_case_insensitive(data_folder, id, local_name, sizeof(local_name)))
 			return 0;
 	}
@@ -646,13 +672,12 @@ static struct platform_file *file_from_handle(HANDLE handle)
 }
 
 /* The game is about to write a new map over one of its map cache files
-(source/cache/cache_files_windows.c). The Switch's host keeps those files in
-memory (port/switch/host/host_memory_files.c): the file is emptied and given
-its size back, so the old map's memory goes before the new map's is taken.
-A file on a disk is written over as it is. */
+(source/cache/cache_files_windows.c). The hosts keep those files in memory
+(port/android/host/host_memory_files.c, on the Switch, Android and the PS5):
+the file is emptied and given its size back, so the old map's memory goes
+before the new map's is taken. */
 void platform_file_discard(HANDLE handle)
 {
-#ifdef HALO_SWITCH
 	struct platform_file *file = file_from_handle(handle);
 	struct posix_file_information information;
 
@@ -661,9 +686,6 @@ void platform_file_discard(HANDLE handle)
 		posix_truncate(file->descriptor, 0, 0);
 		posix_truncate(file->descriptor, information.size_low, information.size_high);
 	}
-#else
-	(void)handle;
-#endif
 }
 
 HANDLE WINAPI CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mode,

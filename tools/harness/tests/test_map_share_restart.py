@@ -35,7 +35,7 @@ NEGATIVE_CONTROLS = {
 }
 
 FUNCTIONS = ("get_long", "remote_piece_had", "remote_pieces_forget", "download_file_close", "request_remove",
-             "download_end", "download_unfinish", "download_finish", "piece_choose", "frame_state", "frame_have",
+             "download_end", "download_unfinish", "download_finish", "piece_got", "piece_choose", "frame_state", "frame_have",
              "frame_refuse")
 
 
@@ -51,8 +51,9 @@ def generated(fault=None, faulty_function=None):
     for member in ("OFFER_TIMEOUT", "_have_none", "_download_none", "_file_awaiting_hashes",
                    "_connection_connecting"):
         config += enum_with(source, member) + "\n"
+    config += enum_with(source, "MAXIMUM_FS_PIECES") + "\n"
     for name in ("distributed_map_share_request", "download_file", "source", "download", "request", "serving",
-                 "connection", "host_machine", "map_share_globals"):
+                 "connection", "host_machine", "fs_source", "map_share_globals"):
         config += structure(source, name) + "\n"
     text = ""
     for name in FUNCTIONS:

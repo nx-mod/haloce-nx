@@ -579,4 +579,7 @@ the camera; NULL (the default) for a build whose shots always do */
 typedef boolean (*network_damage_fire_origin_source)(short local_player_index, real_vector3d *offset);
 void network_damage_set_fire_origin_source(network_damage_fire_origin_source source);
 
+/* (the host) its clients' round trips, averaged, in milliseconds; 0 for none */
+long network_distributed_host_round_trip_milliseconds(void);
+
 #endif // __NETWORK_DISTRIBUTED_H

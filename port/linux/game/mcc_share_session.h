@@ -113,12 +113,6 @@ struct mcc_share_env {
     /* Optional verified-receipt candidate for bitmaps/sounds only. Return zero
      * when absent; the core copies and hashes the actual bytes before HAVE. */
     int (*reuse_file)(void *user, struct mcc_share_file const *file, char path[1024]);
-    /* Optional, bitmaps/sounds only, asked when the host's turn comes to a file
-     * reuse_file did not find: nonzero holds the host's request for it a while
-     * (the file is on its way from elsewhere, sooner than the host would send
-     * it: host_rate is the host's bytes a second so far, 0 not known). The core
-     * asks again each update and holds a file at most MCC_SHARE_HOLD_LIMIT. */
-    int (*reuse_wait)(void *user, struct mcc_share_file const *file, uint32_t host_rate);
     void (*finished)(void *user, int ok, char const *message);   /* installed, or why not */
     /* host */
     int (*send_response)(void *user, long machine, void const *message, unsigned bytes);
@@ -136,9 +130,10 @@ struct mcc_share_env {
      * threads), not a slice a frame here. begin: a job, or -1 (hashed here);
      * poll: 1 done, 0 not yet, -1 failed; cancel releases a job not done. */
     /* Optional, the joiner: nonzero while the files come another way (a
-     * SlipstreamCE host's own connection, mcc_fast.c): no chunks asked of the
-     * host, its transfer kept alive; the bytes are given with
-     * mcc_share_client_external. Zero again before any came: chunks as usual. */
+     * SlipstreamCE host's own file connection, port/android/host/host_file_share.c):
+     * no chunks asked of the host, its transfer kept alive; the files are
+     * taken with mcc_share_client_external_file (or the bytes given with
+     * mcc_share_client_external). Zero again before any came: chunks as usual. */
     int (*transfer_elsewhere)(void *user);
     int (*hash_begin)(void *user, char const *path);
     int (*hash_poll)(void *user, int job, uint8_t digest[32], uint64_t *size);
@@ -236,13 +231,10 @@ struct mcc_share {
     int outstanding;
     FILE *reuse_stream;
     int reuse_checked_file, reuse_file, have_pending;
-    /* the file whose host request reuse_wait holds, and since when */
-    int hold_file;
-    uint32_t hold_since;
-    /* the host's bytes a second (smoothed), and the bytes and time it was last measured from */
-    uint32_t host_rate, host_rate_bytes, host_rate_at, host_bytes;
     char credit[MCC_SHARE_CREDIT_SIZE];
     struct mcc_share_stage stage;
+    /* bytes of the current file another writer has written (its progress) */
+    uint32_t external_bytes;
 };
 
 /* Host admission requires sharing enabled and a validated package identity.
@@ -286,5 +278,13 @@ int mcc_share_client_percent(struct mcc_share const *share);
 int mcc_share_client_external(struct mcc_share *share, void const *data, uint32_t bytes);
 /* That way lost after some bytes came: the download fails with this. */
 void mcc_share_client_external_fail(struct mcc_share *share, char const *message);
+/* The files written in place by another writer (the host's file
+ * connection, host_file_share.c), which checks each file's size and SHA-256:
+ * the current one is whole (1, -1 if the download failed); how much of it
+ * is there so far, for the progress; and that writer gone before any file was
+ * taken (its .part files deleted, the host's chunks asked for instead). */
+int mcc_share_client_external_file(struct mcc_share *share);
+void mcc_share_client_external_progress(struct mcc_share *share, uint32_t bytes);
+void mcc_share_client_external_abort(struct mcc_share *share);
 void mcc_share_refusal_text(enum mcc_share_result result, char const *level, char *text, unsigned size);
 #endif

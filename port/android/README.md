@@ -288,7 +288,12 @@ the `settings.toml` in its folder (`config.toml`'s are those of a profile that
 has not set them). The gyroscope aims while the touch controls show.
 - "Options" opens these items:
   - "General": the phone's vibration (on by default; it follows the
-    vibration setting of the game's profile), a floating move stick (off by default: the stick goes
+    vibration setting of the game's profile), "Split screen" (off by
+    default: the left half of the screen moves, with the stick where your
+    thumb lands, drawn only while it is held; the right half looks; a tap
+    on the right half fires, and a double tap held there fires as long as
+    the finger stays and still aims; the Fire buttons are hidden while it
+    is on, and the other buttons press as before), a floating move stick (off by default: the stick goes
     where your thumb lands in the lower left of the screen), the opacity of
     the controls, how many fingers tap together to open the cheat menu
     (three, the default, or four), "Held buttons don't aim" (off by

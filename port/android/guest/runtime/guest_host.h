@@ -170,6 +170,10 @@ map chosen, or each in a .zip file chosen, into folder (a path: custom_maps;
 HaloActivity.importMaps); returns at once, the copy done on the app's own
 thread */
 void host_android_import_maps(const char *folder);
+/* the game's files moved to the app's storage ("app") or a folder the player
+picks ("other"): the app asks, then starts the game again to move them
+(HaloActivity.moveGameFiles) */
+void host_android_move_game_files(const char *where);
 
 /* ---------- the on-screen touch controls (host_touch.c, android_imports.list) */
 
@@ -233,6 +237,9 @@ void host_replay_store_free(void);
 /* the map lists' IMPORT, done by the host (port/android/host/host_mcc_import.c, which
 says what each does; the guest's wrappers are port/linux/src/mcc_import.c's) */
 int host_mcc_import_start(unsigned int root, unsigned int custom_maps);
+/* the folder holding mcc_maps (game.mcc.path, else the data root), told once
+as the game starts (port/android/host/host_mcc_hash.c) */
+void host_mcc_root(unsigned int path);
 int host_mcc_import_state(void);
 void host_mcc_import_progress(unsigned int text, unsigned int size);
 int host_mcc_import_question(unsigned int title, unsigned int title_size, unsigned int destination,
@@ -279,21 +286,36 @@ int host_steam_text_wanted(unsigned int initial, int initial_size, unsigned int 
 void host_steam_text_caption(int kind, unsigned int text, int text_size);
 void host_steam_text_typed(int kind, unsigned int text, int saved);
 int host_steam_qr(unsigned int modules, int capacity, unsigned int serial);
-/* a joiner's fetch of an MCC package's own bitmaps.map and sounds.map from
-the Workshop item it is, beside the host's download (steam_downloads.c):
-records of fixed-size fields (struct host_steam_fetch_file, _status there) */
-int host_steam_fetch_start(unsigned int data_root, unsigned int id_low, unsigned int id_high, unsigned int files,
-	int count);
-int host_steam_fetch_status(int index, unsigned int status);
-void host_steam_fetch_skip(int index);
-void host_steam_fetch_stop(void);
 /* MCC's shared sets (the base resources no host sends): queued when missing */
 int host_steam_shared_fetch(unsigned int data_root);
 int host_steam_shared_state(void);
 /* a whole Workshop item installed in mcc_maps for a joiner (a package with no resource maps of its own) */
 int host_steam_install_start(unsigned int data_root, unsigned int id_low, unsigned int id_high);
 int host_steam_install_status(void);
+/* its progress, in KB: done, of all (0 not yet known), and a second */
+void host_steam_install_progress(unsigned int progress);
 /* files put in mcc_maps by the Steam downloader since the last ask (once) */
 int host_steam_take_rescan(void);
+/* files between two SlipstreamCE machines over a connection of their own
+(port/android/host/host_file_share.h says what each does) */
+int host_fs_host_frame(int hosting, unsigned int limit);
+void host_fs_rate_facts(int in_game, unsigned int game_bytes, unsigned int round_trip);
+unsigned int host_fs_allowance(void);
+int host_fs_serve_begin(unsigned int session, unsigned int token, int count);
+int host_fs_serve_file(unsigned int session, int index, unsigned int path, unsigned int size);
+int host_fs_serve_ready(unsigned int session);
+int host_fs_serve_progress(unsigned int session, unsigned int out);
+void host_fs_serve_end(unsigned int session);
+int host_fs_fetch_begin(unsigned int address, int port, unsigned int session, unsigned int token, int count);
+void host_fs_direct(unsigned int address, int port);
+int host_fs_fetch_file(int index, int file, unsigned int path, unsigned int size, unsigned int sha256);
+int host_fs_fetch_start(void);
+int host_fs_fetch_status(unsigned int out);
+void host_fs_fetch_stop(void);
+int host_fs_pieces_begin(unsigned int address, int port, unsigned int session, unsigned int token);
+int host_fs_pieces_ask(int file, unsigned int offset, unsigned int length, unsigned int hash);
+int host_fs_pieces_take(unsigned int buffer, unsigned int out);
+int host_fs_pieces_state(void);
+void host_fs_pieces_stop(void);
 
 #endif

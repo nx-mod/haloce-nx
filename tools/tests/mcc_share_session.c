@@ -147,8 +147,6 @@ static struct {
     int stop_after_page;
     int check_result,check_polls,check_cancels,install_calls,install_ok,prepare_mode;
     int verify_heartbeats;
-    /* reuse_wait: its calls and answer; whether the held files have come in */
-    int wait_calls, wait_answer, reuse_ready;
     /* hash_begin's jobs: their files, polls each, cancels; a failing one */
     char hash_paths[4][1024];
     int hash_jobs, hash_polls[4], hash_cancels, hash_fail;
@@ -280,17 +278,6 @@ static int env_reuse(void *u, struct mcc_share_file const *file, char path[1024]
     W.reuse_candidates++;
     snprintf(path,1024,"%scached/%s",J,W.reuse_missing ? "missing.map" : file->leaf);
     return 1;
-}
-/* a resource on its way from elsewhere (the Workshop): not here until reuse_ready */
-static int env_reuse_late(void *u, struct mcc_share_file const *file, char path[1024])
-{
-    return W.reuse_ready ? env_reuse(u,file,path) : 0;
-}
-static int env_wait(void *u, struct mcc_share_file const *file, uint32_t host_rate)
-{
-    (void)u;(void)file;(void)host_rate;
-    W.wait_calls++;
-    return W.wait_answer;
 }
 /* a file hashed elsewhere: done on its third poll */
 static int env_hash_begin(void *u, char const *path)
@@ -1262,52 +1249,6 @@ int main(int argc,char **argv)
         return 0;
     }
 
-    if (!strcmp(argv[1],"hold_reuse") || !strcmp(argv[1],"hold_limit") || !strcmp(argv[1],"hold_declined")) {
-        char path[400],source[400];
-        unsigned char *data;
-        unsigned bytes;
-        snprintf(path,sizeof(path),"%scached",J);CHECK(io_make(path));
-        for (i=1;i<=2;i++) {
-            snprintf(source,sizeof(source),"%smcc_maps/solar_flare/%s",H,names[i]);
-            data=read_file(source,&bytes);CHECK(data);
-            snprintf(path,sizeof(path),"%scached/%s",J,names[i]);
-            CHECK(write_file(path,data,bytes));free(data);
-        }
-        W.join.env.reuse_file=env_reuse_late;
-        W.join.env.reuse_wait=env_wait;
-        W.reuse_mask=(1u<<MCC_SHARE_FILE_BITMAPS)|(1u<<MCC_SHARE_FILE_SOUNDS);
-        W.wait_answer=strcmp(argv[1],"hold_declined")!=0;
-        CHECK(mcc_share_client_begin(&W.join,LEVEL,W.digest));
-        for (i=0;i<400 && !W.wait_calls;i++) step();
-        CHECK(W.wait_calls && W.join.stage.current==1);
-        if (!strcmp(argv[1],"hold_declined")) {
-            /* the host asked at once */
-            for (i=0;i<5;i++) step();
-            CHECK(W.file_requests[1]);
-            CHECK(run_until_finished(2000) && W.finished_ok && !W.have_requests);
-            return 0;
-        }
-        /* held: nothing asked of the host for it, the host hearing from us */
-        /* (past the host's 30 s idle limit: the hold's heartbeats keep it) */
-        for (i=0;i<40;i++) { W.clock+=980; step(); }
-        CHECK(!W.file_requests[1] && !W.finished && W.host.transfers[0].used);
-        if (!strcmp(argv[1],"hold_reuse")) {
-            W.reuse_ready=1;
-            CHECK(run_until_finished(2000) && W.finished_ok);
-            CHECK(W.have_requests==2 && !W.file_requests[1] && !W.file_requests[2]);
-            for (i=0;i<5;i++) step();
-            CHECK(W.host_completions==1);
-            return 0;
-        }
-        /* never in: each file asked of the host once its hold reaches the limit,
-           the host's transfer kept the while */
-        for (i=0;i<400 && !W.finished;i++) { W.clock+=980; step(); }
-        CHECK(W.finished && W.finished_ok && W.file_requests[1] && W.file_requests[2] && !W.have_requests);
-        for (i=0;i<5;i++) step();
-        CHECK(W.host_completions==1);
-        return 0;
-    }
-
     if (!strcmp(argv[1],"hashed_elsewhere") || !strcmp(argv[1],"hashed_elsewhere_fails")) {
         W.host.env.hash_begin=env_hash_begin;
         W.host.env.hash_poll=env_hash_poll;
@@ -1369,6 +1310,83 @@ int main(int argc,char **argv)
         }
         CHECK(W.join.state==MCC_SHARE_CLIENT_VERIFYING);
         /* (the host's adapter marks the transfer fully asked for, as mcc_share.c does) */
+        W.host.transfers[0].request_file=W.host.transfers[0].package.count;
+        W.host.transfers[0].request_offset=0;
+        CHECK(run_until_finished(2000) && W.finished_ok);
+        for (i=0;i<5;i++) step();
+        CHECK(W.host_completions==1 && !W.file_requests[0]);
+        for (i=0;i<4;i++) {
+            char a[400],b[400];
+            snprintf(a,sizeof(a),"%smcc_maps/solar_flare/%s",H,names[i]);
+            snprintf(b,sizeof(b),"%smcc_maps/solar_flare/%s",J,names[i]);
+            CHECK(same_file(a,b));
+        }
+        return 0;
+    }
+
+    /* the files written in place by another writer (the host's file
+     * connection, host_file_share.c): each file's .part named by the stage,
+     * written there, taken whole; lost after one was taken (every .part
+     * gone); given up before any was (the host's chunks from the start) */
+    if (!strcmp(argv[1],"external_file") || !strcmp(argv[1],"external_file_late") ||
+        !strcmp(argv[1],"external_file_abort")) {
+        char path[400],part[512];
+        unsigned char *data;
+        unsigned bytes;
+        int file;
+        W.join.env.transfer_elsewhere=env_elsewhere;
+        W.elsewhere=1;
+        CHECK(mcc_share_client_begin(&W.join,LEVEL,W.digest));
+        for (i=0;i<200 && W.join.state!=MCC_SHARE_CLIENT_TRANSFERRING;i++) step();
+        CHECK(W.join.state==MCC_SHARE_CLIENT_TRANSFERRING);
+        for (i=0;i<5;i++) step();
+        CHECK(!W.file_requests[0]);
+        /* (the paths, before anything is written: any file's, from current on) */
+        CHECK(mcc_share_stage_external_path(&W.join.stage,3,part,sizeof(part)) && strstr(part,".part"));
+        if (!strcmp(argv[1],"external_file_abort")) {
+            for (file=0;file<2;file++) {
+                snprintf(path,sizeof(path),"%smcc_maps/solar_flare/%s",H,names[file]);
+                data=read_file(path,&bytes);CHECK(data);
+                CHECK(mcc_share_stage_external_path(&W.join.stage,file,part,sizeof(part)));
+                CHECK(write_file(part,data,file ? bytes/2 : bytes));
+                free(data);
+            }
+            mcc_share_client_external_abort(&W.join);
+            CHECK(mcc_share_stage_external_path(&W.join.stage,0,part,sizeof(part)));
+            CHECK(!read_file(part,&bytes));
+            mcc_share_client_external_abort(&W.join);
+            W.elsewhere=0;
+            CHECK(run_until_finished(2000) && W.finished_ok && W.file_requests[0]);
+            for (i=0;i<4;i++) {
+                char a[400],b[400];
+                snprintf(a,sizeof(a),"%smcc_maps/solar_flare/%s",H,names[i]);
+                snprintf(b,sizeof(b),"%smcc_maps/solar_flare/%s",J,names[i]);
+                CHECK(same_file(a,b));
+            }
+            return 0;
+        }
+        for (file=0;file<4;file++) {
+            snprintf(path,sizeof(path),"%smcc_maps/solar_flare/%s",H,names[file]);
+            data=read_file(path,&bytes);CHECK(data);
+            CHECK(mcc_share_stage_external_path(&W.join.stage,file,part,sizeof(part)));
+            if (!strcmp(argv[1],"external_file_late") && file==1) {
+                /* half of this one, the next's begun, then the connection lost */
+                CHECK(write_file(part,data,bytes/2));
+                CHECK(mcc_share_stage_external_path(&W.join.stage,2,part,sizeof(part)));
+                CHECK(write_file(part,data,7));
+                free(data);
+                mcc_share_client_external_fail(&W.join,"lost");
+                CHECK(W.finished && !W.finished_ok && staging_gone());
+                return 0;
+            }
+            CHECK(write_file(part,data,bytes));
+            mcc_share_client_external_progress(&W.join,bytes/2);
+            CHECK(mcc_share_client_percent(&W.join)>=0);
+            CHECK(mcc_share_client_external_file(&W.join)==1);
+            CHECK(W.join.external_bytes==0);
+            free(data);
+        }
+        CHECK(W.join.state==MCC_SHARE_CLIENT_VERIFYING);
         W.host.transfers[0].request_file=W.host.transfers[0].package.count;
         W.host.transfers[0].request_offset=0;
         CHECK(run_until_finished(2000) && W.finished_ok);

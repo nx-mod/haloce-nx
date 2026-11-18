@@ -722,8 +722,14 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         ANDROID_PORT_DIR / "host" / "host_mcc_convert.c",
         # an MCC package's fingerprint on the host's threads, as Android's and the PS5's
         ANDROID_PORT_DIR / "host" / "host_mcc_hash.c",
+        # the game's map cache files kept in memory, as Android's and the PS5's
+        ANDROID_PORT_DIR / "host" / "host_memory_files.c",
         # the Steam Workshop screen's Steam client, as Android's and the PS5's
         *(ANDROID_PORT_DIR / "host" / f"{name}.c" for name in STEAM_HOST_FILES),
+        # files over a connection of their own, as Android's and the PS5's, with
+        # Monocypher's X25519 and ChaCha20-Poly1305
+        ANDROID_PORT_DIR / "host" / "host_file_share.c", ANDROID_PORT_DIR / "host" / "host_file_share_crypto.c",
+        MONOCYPHER_DIR / "monocypher.c",
     ]
     # the port's zlib (inflate only, its names z_), for the high-res HUD's
     # PNGs, which the host decodes as a map loads (host_dk_hud.c)
@@ -774,6 +780,9 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         # signed values as the guest's -fwrapv defines)
         if source.name == "host_mcc_convert.c":
             cflags = f"{host_cflags} -fwrapv"
+        # (the file connection's: Monocypher's X25519 and ChaCha20-Poly1305)
+        if source.name in ("host_file_share_crypto.c", "monocypher.c"):
+            cflags = f"{host_cflags} -I{MONOCYPHER_DIR}"
         n.build(outputs=obj, rule="switch_host_cc", inputs=source, variables={"cflags": cflags},
                 implicit=[syscall_h])
         host_objects.append(obj)

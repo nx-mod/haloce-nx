@@ -158,4 +158,11 @@ void network_coop_skip_done(void);
 /* the vote count to show, if a skippable cinematic is playing */
 boolean network_coop_skip_vote_status(short *votes, short *voters, boolean *voted);
 
+/* network_replay_playback.c: a replay's view of a cutscene. While a co-op
+cinematic is playing with the scripts holding the camera, the camera they
+hold (a client's, as the host sent it, between its last two ticks by
+fraction; the host's own, its window's), and TRUE; else FALSE. */
+struct observer_result;
+boolean network_coop_cutscene_camera(real fraction, struct observer_result *camera);
+
 #endif

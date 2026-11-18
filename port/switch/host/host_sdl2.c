@@ -1533,6 +1533,12 @@ void host_android_import_maps(const char *folder)
 	(void)folder;
 }
 
+/* (Settings > Gameplay > GAME FILES is Android's alone) */
+void host_android_move_game_files(const char *where)
+{
+	(void)where;
+}
+
 void host_touch_read(int32_t *state)
 {
 	memset(state, 0, 7 * sizeof(*state));

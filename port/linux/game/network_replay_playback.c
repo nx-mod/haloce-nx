@@ -118,9 +118,11 @@ the way put back (playback_seek_chase); back, once it is let go.
 #include "camera/director.h"
 #include "camera/following_camera.h"
 #include "camera/observer.h"
+#include "cutscene/cinematics.h"
 #include "sound/sound_manager.h"
 #include "network_distributed.h"
 #include "network_replay.h"
+#include "network_coop.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -291,6 +293,14 @@ left of one goes (seconds of the game to go to a third) */
 #define EYES_CORRECTION_MINIMUM 0.02f
 #define EYES_CORRECTION_MAXIMUM 2.0f
 #define EYES_CORRECTION_TIME 0.1f
+/* the host watching live: how many of each player's facings it keeps
+(network_replay_live_facing: one a tick their input changed, a second or
+more: the view needs those since EYES_LIVE_DELAY_TICKS ago), and how far
+behind the game the eyes view's aim turns (ticks: the facing after the
+moment then known, though a client's input comes to the host unevenly, a
+tick or two late and two at once) */
+#define EYES_LIVE_FACINGS 32
+#define EYES_LIVE_DELAY_TICKS 3.0f
 /* the free camera: how fast it moves (world units a second), turns
 (radians a second, the stick all the way) and how far it pitches */
 #define FREE_CAMERA_SPEED 6.0f
@@ -571,6 +581,12 @@ static struct
 	real eyes_time;
 	real_point3d eyes_drawn;
 	real_vector3d eyes_offset;
+	/* the host watching live: each player's (by absolute index) facings as
+	its ticks ran them, EYES_LIVE_FACINGS a player, the newest last
+	(network_replay_live_facing; in the heap while it watches, not the guest
+	image's: NULL, none and the unit's aim) */
+	struct replay_facing *live_facings;
+	long live_facing_count[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	/* the buttons held at the last idle (each press counted once) */
 	boolean held[NUMBER_OF_GAMEPAD_BUTTONS];
 	/* the view, the speed (replay_speeds'), and whether the scores are
@@ -713,6 +729,9 @@ static struct
 	/* the host watching its game live (network_replay_live_begin): the
 	cameras' and the players' alone, nothing of a file's */
 	boolean live;
+	/* a campaign level's cutscene has the view (playback_cutscene_frame):
+	the view chosen waits until it ends, and Y does nothing meanwhile */
+	boolean cutscene;
 } playback = { NULL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, FALSE, NONE };
 
 /* whether a view is up: a replay's, or the host's live */
@@ -937,6 +956,7 @@ static void playback_free(
 	playback.hidden = FALSE;
 	playback.paused = FALSE;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.threat_tick = NONE;
 	playback.threat_field_of_view = 0.0f;
 	playback_keyframes_free();
@@ -2153,7 +2173,8 @@ boolean network_replay_playback_idle(
 		}
 		playback_scrub(now);
 	}
-	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
+	/* (heard but let be during a campaign cutscene, which has the view) */
+	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y) && !playback.cutscene)
 	{
 		playback.view = (short)((playback.view + 1) % NUMBER_OF_REPLAY_VIEWS);
 		/* (the free camera follows the player until it is flown; behind
@@ -3381,7 +3402,9 @@ static real playback_angle_between(
 from the facing their ticks run to the next one the replay has
 (playback_index_facings); FALSE when it has none of theirs yet. A facing
 read at a tick is what the client's next tick runs: it is theirs from then
-(its tick and 1). */
+(its tick and 1). Watching live, the host's facings of them
+(network_replay_live_facing), EYES_LIVE_DELAY_TICKS behind the moment, so
+that the next is known. */
 static boolean playback_eyes_facing(
 	short player_index,
 	real time,
@@ -3390,17 +3413,29 @@ static boolean playback_eyes_facing(
 	struct replay_facing const *facings;
 	long low = 0;
 	long high;
+	long count;
 	real from;
 	real to;
 	real fraction;
 
-	if (!playback.facings || player_index < 0 || player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS ||
-		!playback.facing_count[player_index])
-	{
+	if (player_index < 0 || player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
 		return FALSE;
+	if (playback.live)
+	{
+		if (!playback.live_facings)
+			return FALSE;
+		facings = playback.live_facings + player_index * EYES_LIVE_FACINGS;
+		count = playback.live_facing_count[player_index];
+		time -= EYES_LIVE_DELAY_TICKS;
 	}
-	facings = playback.facings + playback.facing_first[player_index];
-	high = playback.facing_count[player_index];
+	else
+	{
+		facings = playback.facings ? playback.facings + playback.facing_first[player_index] : NULL;
+		count = playback.facings ? playback.facing_count[player_index] : 0;
+	}
+	if (!count)
+		return FALSE;
+	high = count;
 	/* (the last whose moment the time has reached) */
 	if ((real)(facings[0].tick + 1) > time)
 		return FALSE;
@@ -3415,7 +3450,7 @@ static boolean playback_eyes_facing(
 	}
 	facing->yaw = distributed_angle_unpack(facings[low].yaw, FALSE);
 	facing->pitch = distributed_angle_unpack(facings[low].pitch, TRUE);
-	if (low + 1 >= playback.facing_count[player_index] ||
+	if (low + 1 >= count ||
 		facings[low + 1].tick - facings[low].tick > EYES_FACING_MAXIMUM_TICKS)
 	{
 		return TRUE;
@@ -3673,6 +3708,56 @@ static void playback_behind_camera(
 	playback_camera_set(&position, &forward);
 }
 
+/* the eyes view of the player watched, their unit_index: what they saw, a
+seat with a third-person camera's view, a Warthog's or a Ghost's, else their
+own eyes with their arms and weapon, as the director chooses for a player
+(director.c) */
+static void playback_eyes_view(
+	long unit_index)
+{
+	director_perspective perspective;
+
+	if (director_desired_perspective(unit_index, &perspective) &&
+		object_get(unit_index)->object.parent_object_index != NONE)
+	{
+		playback_seat_camera(unit_index);
+	}
+	else
+	{
+		playback_eyes_camera(unit_index, (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(playback.watched));
+		playback.first_person = TRUE;
+	}
+}
+
+/* A campaign level's cutscene (network co-op's, network_coop.c) is shown as
+its players saw it, whatever view is chosen: through the camera the host's
+scripts hold, or, while they leave the camera with the players, through the
+eyes of the player watched (unit_index). Returns whether it made the view.
+Once the cutscene ends the view chosen comes back, the free and cinematic
+cameras placed again by the player, who has likely been moved. */
+static boolean playback_cutscene_frame(
+	long unit_index)
+{
+	struct observer_result camera;
+
+	if (!network_coop_active() || !cinematic_in_progress())
+	{
+		if (playback.cutscene && (playback.view == _replay_view_free || playback.view == _replay_view_cinematic))
+			playback.free_placing = TRUE;
+		playback.cutscene = FALSE;
+		return FALSE;
+	}
+	playback.cutscene = TRUE;
+	if (network_coop_cutscene_camera(render_interpolation_fraction(), &camera))
+	{
+		playback.camera = camera;
+		playback.camera_valid = TRUE;
+	}
+	else if (unit_index != NONE)
+		playback_eyes_view(unit_index);
+	return TRUE;
+}
+
 void network_replay_playback_frame(
 	void)
 {
@@ -3705,6 +3790,8 @@ void network_replay_playback_frame(
 	}
 	unit_index = player ? player->unit_index : NONE;
 	playback.first_person = FALSE;
+	if (playback_cutscene_frame(unit_index))
+		return;
 	/* (the free camera, until it is placed, is the view before it; the
 	cinematic one's too) */
 	if ((playback.view == _replay_view_free || playback.view == _replay_view_cinematic) &&
@@ -3713,23 +3800,7 @@ void network_replay_playback_frame(
 	else if (unit_index == NONE)
 		return;
 	else if (playback.view == _replay_view_eyes)
-	{
-		director_perspective perspective;
-
-		/* (what the player saw: a seat with a third-person camera's view, a
-		Warthog's or a Ghost's, else their own eyes with their arms and
-		weapon, as the director chooses for a player: director.c) */
-		if (director_desired_perspective(unit_index, &perspective) &&
-			object_get(unit_index)->object.parent_object_index != NONE)
-		{
-			playback_seat_camera(unit_index);
-		}
-		else
-		{
-			playback_eyes_camera(unit_index, (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(playback.watched));
-			playback.first_person = TRUE;
-		}
-	}
+		playback_eyes_view(unit_index);
 	else
 		playback_behind_camera(unit_index, main_get_seconds_elapsed());
 }
@@ -3743,7 +3814,7 @@ long network_replay_watched_player(
 boolean network_replay_viewing_eyes(
 	void)
 {
-	return playback_viewing() && playback.view == _replay_view_eyes && playback.first_person;
+	return playback_viewing() && (playback.view == _replay_view_eyes || playback.cutscene) && playback.first_person;
 }
 
 struct observer_result const *network_replay_camera(
@@ -3785,6 +3856,7 @@ boolean network_replay_live_begin(
 	playback.watched = player_index != NONE && player_try_and_get(player_index) ? player_index : NONE;
 	playback.view = _replay_view_behind;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.first_person = FALSE;
 	playback.behind_orbiting = FALSE;
 	playback.behind_zoom = 1.0f;
@@ -3797,9 +3869,53 @@ boolean network_replay_live_begin(
 	playback.ended = 0;
 	playback.eyes_unit = NONE;
 	playback.threat_tick = NONE;
+	csmemset(playback.live_facing_count, 0, sizeof(playback.live_facing_count));
+	if (!playback.live_facings)
+		playback.live_facings = (struct replay_facing *)malloc(
+			HALO_PORT_MAXIMUM_NETWORK_PLAYERS * EYES_LIVE_FACINGS * sizeof(struct replay_facing));
 	playback_buttons_held_now();
 	error(_error_log, "host: watching the game live");
 	return TRUE;
+}
+
+/* (the host, each tick) the player's (an absolute index) facing as the
+tick just run ran it (the wire's packing, distributed_angle_pack), kept
+for the eyes view while the host watches: only a change, as a replay has a
+far player's (a tick a client's input came to the host late runs the last
+again, and the next has two of its ticks' turn) */
+void network_replay_live_facing(
+	short player_index,
+	short yaw,
+	short pitch)
+{
+	struct replay_facing *facings;
+	long *count;
+	long tick = game_time_get() - 1;
+
+	if (!playback.live || !playback.live_facings || player_index < 0 ||
+		player_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
+	{
+		return;
+	}
+	facings = playback.live_facings + player_index * EYES_LIVE_FACINGS;
+	count = &playback.live_facing_count[player_index];
+	/* (a game's time gone back: a new game's; the same tick again: its last
+	facing) */
+	if (*count && facings[*count - 1].tick > tick)
+		*count = 0;
+	if (*count && facings[*count - 1].tick == tick)
+		(*count)--;
+	if (*count && facings[*count - 1].yaw == yaw && facings[*count - 1].pitch == pitch)
+		return;
+	if (*count == EYES_LIVE_FACINGS)
+	{
+		memmove(facings, facings + 1, (EYES_LIVE_FACINGS - 1) * sizeof(*facings));
+		(*count)--;
+	}
+	facings[*count].tick = tick;
+	facings[*count].yaw = yaw;
+	facings[*count].pitch = pitch;
+	(*count)++;
 }
 
 boolean network_replay_live(
@@ -3815,8 +3931,13 @@ void network_replay_live_end(
 		return;
 	playback.live = FALSE;
 	playback.camera_valid = FALSE;
+	playback.cutscene = FALSE;
 	playback.first_person = FALSE;
 	playback.scores = FALSE;
+	/* (the game's free takes no NULL: debug_memory.c) */
+	if (playback.live_facings)
+		free(playback.live_facings);
+	playback.live_facings = NULL;
 	error(_error_log, "host: watching ended");
 }
 
@@ -3834,7 +3955,8 @@ boolean network_replay_live_update(
 		playback.watched = playback_next_player(playback.watched, FALSE);
 	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_x))
 		playback.watched = playback_next_player(playback.watched, TRUE);
-	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y))
+	/* (heard but let be during a campaign cutscene, which has the view) */
+	if (playback_pressed(FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_y) && !playback.cutscene)
 	{
 		playback.view = (short)((playback.view + 1) % NUMBER_OF_REPLAY_VIEWS);
 		if (playback.view == _replay_view_free || playback.view == _replay_view_cinematic)
@@ -4491,7 +4613,7 @@ void network_replay_playback_draw(
 
 		usnprintf(text, NUMBEROF(text) - 1, L"LIVE   %.12s   %s",
 			(playback.view == _replay_view_free && !tracking) || !player ? L"" : player->name,
-			tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view]);
+			playback.cutscene ? L"CUTSCENE" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view]);
 	}
 	else
 	{
@@ -4506,7 +4628,8 @@ void network_replay_playback_draw(
 
 		usnprintf(text, NUMBEROF(text) - 1, L"%.12s   %s   %s",
 			(playback.view == _replay_view_free && !tracking) || !player ? L"REPLAY" : player->name,
-			smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view], speed);
+			playback.cutscene ? L"CUTSCENE" : smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" :
+			view_names[playback.view], speed);
 	}
 	text[NUMBEROF(text) - 1] = 0;
 	font = font_definition_get(font_index);

@@ -19,6 +19,9 @@ const char *platform_data_root(void);
 
 /* the host's (port/android/guest/runtime/guest_host.h) */
 int host_mcc_import_start(unsigned int root, unsigned int custom_maps);
+/* the folder holding mcc_maps (xbox_files.c), told to the host first */
+const char *platform_mcc_root(void);
+void host_mcc_root(unsigned int path);
 int host_mcc_import_state(void);
 void host_mcc_import_progress(unsigned int text, unsigned int size);
 int host_mcc_import_question(unsigned int title, unsigned int title_size, unsigned int destination,
@@ -79,6 +82,7 @@ int mcc_import_start(char const *custom_maps)
 	/* (held until the host's thread has copied them) */
 	snprintf(root, sizeof(root), "%s", platform_data_root());
 	snprintf(folder, sizeof(folder), "%s", custom_maps);
+	host_mcc_root(HOST_ADDRESS(platform_mcc_root()));
 	return host_mcc_import_start(HOST_ADDRESS(root), HOST_ADDRESS(folder));
 }
 

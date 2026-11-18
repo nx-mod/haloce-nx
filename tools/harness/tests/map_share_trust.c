@@ -126,6 +126,11 @@ static char const *tag_name_strip_path(char const *name)
 #define custom_edition_map_file_path(level_name, path) (strcpy(path, "d:\\custom_maps\\hugeass.map"), 1)
 #define custom_edition_resource_map_file_path(kind, path) 0
 #define custom_edition_map_resource_maps_needed(level_name) 0UL
+/* custom_maps' Xbox multiplayer maps, and the capability their games need
+(network_extensions.h): none here */
+#define custom_xbox_map_level(level_name) 0
+#define network_extension_agreed(machine_index, key, version) 1
+#define NETWORK_CAPABILITY_CUSTOM_XBOX_MULTIPLAYER_MAPS "custom_xbox_multiplayer_maps"
 /* (map_share_files.c's: the hash's first 32 bits) */
 #define map_share_hash_version(hash) \
 	((unsigned long)(hash)[0] << 24 | (unsigned long)(hash)[1] << 16 | (unsigned long)(hash)[2] << 8 | (hash)[3])
@@ -156,6 +161,22 @@ static void connection_close(struct connection *connection, char const *reason)
 {
 	(void)reason;
 	connection->used = FALSE;
+}
+
+/* (the host's file connection, map_share.c's: none here) */
+static void fs_source_end(short state)
+{
+	map_share_globals.fs.state = state;
+}
+
+static void host_file_connection_publish(long machine_index)
+{
+	(void)machine_index;
+}
+
+static void host_file_connection_end(struct host_machine *machine)
+{
+	(void)machine;
 }
 
 #include "under_test.inc"

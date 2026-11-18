@@ -15,8 +15,8 @@ as good as the account to whoever has it, until it is revoked):
   this console's alone (the Switch's serial number and device id, the PS5's
   OpenPsId): a copied SD card or folder opens on no other console. This is
   binding, not secrecy: someone with this console can still read it;
-- when there is no key to be had, the token is kept as it is, and the log
-  says so.
+- when there is no key to be had, the token is not written at all: the
+  sign-in lasts until the game closes, and the log says so.
 
 The file is written whole to a .part, readable by its owner alone where the
 file system has such a thing, then renamed over the old one.

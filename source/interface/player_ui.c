@@ -1347,15 +1347,19 @@ static void set_local_player_controls_from_player_profile(
 	short local_player_index)
 {
 	struct game_input_preferences preferences = { 0 };
-	real pitch_rate_table[NUMBER_OF_LOOK_SENSITIVITY_SETTINGS] =
+	/* port: Look Sensitivity goes on to 15 (port/linux/game/menu_functions.c's
+	Gamepads screen), in the same steps: 1 to 10 the Xbox's, 11 to 15 past them */
+	real pitch_rate_table[PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS] =
 	{
 		40.0f, 50.0f, 60.0f, 70.0f, 80.0f,
-		90.0f, 100.0f, 110.0f, 120.0f, 130.0f
+		90.0f, 100.0f, 110.0f, 120.0f, 130.0f,
+		140.0f, 150.0f, 160.0f, 170.0f, 180.0f
 	};
-	real yaw_rate_table[NUMBER_OF_LOOK_SENSITIVITY_SETTINGS] =
+	real yaw_rate_table[PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS] =
 	{
 		80.0f, 100.0f, 120.0f, 140.0f, 160.0f,
-		180.0f, 200.0f, 220.0f, 240.0f, 260.0f
+		180.0f, 200.0f, 220.0f, 240.0f, 260.0f,
+		280.0f, 300.0f, 320.0f, 340.0f, 360.0f
 	};
 	struct player_profile_controller_settings *controls;
 	long look_sensitivity;
@@ -1377,8 +1381,8 @@ static void set_local_player_controls_from_player_profile(
 	}
 	else
 	{
-		if (yaw_index > NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1)
-			pitch_index = NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1;
+		if (yaw_index > PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1)
+			pitch_index = PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1;
 		else
 			pitch_index = (short)yaw_index;
 	}
@@ -1389,8 +1393,8 @@ static void set_local_player_controls_from_player_profile(
 	}
 	else
 	{
-		if (yaw_index > NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1)
-			yaw_index = NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1;
+		if (yaw_index > PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1)
+			yaw_index = PORT_NUMBER_OF_LOOK_SENSITIVITY_SETTINGS - 1;
 	}
 
 	preferences.pitch_rate = pitch_rate_table[pitch_index];

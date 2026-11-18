@@ -497,8 +497,9 @@ static const struct config_setting config_settings[] =
 	{ "input.stick_vertical_sensitivity", _config_real, "0", "HALO_STICK_VERTICAL_SENSITIVITY", _environment_value,
 		_platform_all,
 		"How fast the controller's right stick turns the view up and down, 1 to\n"
-		"10: 40 to 260 degrees a second, as Look Sensitivity's left and right.\n"
-		"0 for the game's own, half of Look Sensitivity's turn." },
+		"15: 40 degrees a second and about 24.4 more a step (10 is 260, the top of\n"
+		"the Xbox's Look Sensitivity left and right; 15 about 382). 0 for the\n"
+		"game's own, half of Look Sensitivity's turn." },
 	{ "input.left_stick_dead_zone", _config_integer, "-1", "HALO_LEFT_STICK_DEAD_ZONE", _environment_value, _platform_all,
 		"How far the controller's left stick moves before it moves the player,\n"
 		"in percent of its travel (0 to 50): lower for finer control, higher for\n"
@@ -794,6 +795,11 @@ static const struct config_setting config_settings[] =
 		"The folder the mods are read from (and Android's IMPORT puts them in);\n"
 		"empty for the mods folder in the data folder. A relative path is under\n"
 		"the data folder." },
+	{ "game.mcc.path", _config_string, "\"\"", "HALO_MCC_PATH", _environment_value, _platform_all,
+		"The folder holding mcc_maps (the MCC maps, and Steam's downloads of them);\n"
+		"empty for the data folder. A relative path is under the data folder. Read\n"
+		"once, at the start. mcc_staging stays in the data folder. Android's\n"
+		"Settings > Gameplay > GAME FILES sets it with the maps folders." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
@@ -954,7 +960,7 @@ static const struct config_setting config_settings[] =
 	{ "network.map_share_upload", _config_integer, "1024", "HALO_NET_MAP_SHARE_UPLOAD", _environment_value,
 		_platform_all,
 		"Hosting: the most kilobytes a second the host sends of maps (16 to\n"
-		"20480: 20 MB/s), so that the game's own traffic keeps the rest of the\n"
+		"256000: 250 MB/s), so that the game's own traffic keeps the rest of the\n"
 		"upload." },
 	{ "network.map_seed", _config_boolean, "true", "HALO_NET_MAP_SEED", _environment_value, _platform_all,
 		"Playing in another's game: help send its map to players who join\n"
@@ -963,7 +969,7 @@ static const struct config_setting config_settings[] =
 	{ "network.map_seed_upload", _config_integer, "256", "HALO_NET_MAP_SEED_UPLOAD", _environment_value,
 		_platform_all,
 		"Playing in another's game: the most kilobytes a second this machine\n"
-		"sends of maps to other players (16 to 10240: 10 MB/s)." },
+		"sends of maps to other players (16 to 256000: 250 MB/s)." },
 	{ "network.map_upload_in_game", _config_integer, "25", "HALO_NET_MAP_UPLOAD_IN_GAME", _environment_value,
 		_platform_all,
 		"While a game is being played on this machine, the part of\n"
@@ -1599,6 +1605,15 @@ static const struct config_setting config_settings[] =
 	{ "debug.menu_open", _config_string, "\"\"", "HALO_MENU_OPEN", _environment_value, _platform_all,
 		"Start on this screen of the menus (port/assets/menus) instead of the main\n"
 		"menu, a player profile being edited; empty for the main menu." },
+	{ "debug.network_extensions_require", _config_string, "\"\"", "HALO_NETWORK_EXTENSIONS_REQUIRE", _environment_value,
+		_platform_all,
+		"Capabilities (docs/network_extensions.md) this machine's games require when it\n"
+		"hosts, separated by commas, whatever the game is: a machine without them is\n"
+		"told and removed (for testing the handshake); empty for none." },
+	{ "debug.custom_campaign", _config_string, "\"\"", "HALO_CUSTOM_CAMPAIGN", _environment_value, _platform_all,
+		"Mount this folder of custom_campaigns as the game starts, its own menus\n"
+		"and maps played instead of the stock ones (docs/custom_campaigns.md);\n"
+		"empty for none." },
 	{ "debug.gpu_flush_draws", _config_integer, "-1", "HALO_GPU_FLUSH_DRAWS", _environment_value, _platform_desktop,
 		"Flush the GPU's pipeline every this many draws: -1 for every 3 on Intel\n"
 		"graphics with Mesa's driver (which can hang without), 0 never." },
@@ -2985,6 +3000,7 @@ static void config_apply_server_mode(void)
 		{ "debug.network_test", "" },
 		{ "debug.test_input", "" },
 		{ "debug.menu_open", "" },
+		{ "debug.custom_campaign", "" },
 	};
 	const char *tunnel_port = getenv("HALO_NET_TUNNEL_PORT");
 	size_t index;

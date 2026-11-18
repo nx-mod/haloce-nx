@@ -452,6 +452,25 @@ static void sha_end(struct sha const *source, unsigned char digest[32])
 	}
 }
 
+/* the host's piecewise SHA-256 (host_mcc_hash.h) */
+typedef char host_sha256_layout[sizeof(struct host_sha256) == sizeof(struct sha) ? 1 : -1];
+
+void host_sha256_begin(struct host_sha256 *sha)
+{
+	pthread_once(&hash_once, hash_setup);
+	sha_begin((struct sha *)sha);
+}
+
+void host_sha256_add(struct host_sha256 *sha, void const *data, size_t size)
+{
+	sha_add((struct sha *)sha, data, size);
+}
+
+void host_sha256_end(struct host_sha256 const *sha, unsigned char digest[32])
+{
+	sha_end((struct sha const *)sha, digest);
+}
+
 /* the fingerprint's header of a file: its type and its size */
 static void sha_file_header(struct sha *sha, unsigned type, uint64_t size)
 {
@@ -648,7 +667,7 @@ static long long hash_file(char const *path, unsigned type, struct sha **shas, i
 /* ---------- what is known, kept on the card */
 
 #define CACHE_FILE "mcc_fingerprints.txt"
-#define CACHE_HEADER "mcc fingerprints 1\n"
+#define CACHE_HEADER "mcc fingerprints 2\n"
 #define CACHE_LIMIT 2048
 #define KEY_SIZE 1100
 
@@ -668,20 +687,22 @@ static char known_path[1024];
 
 /* a part of a key: the file's path (lower case), size and time; 0 if it
 cannot be looked at */
+/* (a file's part of a key: its path as it is spelled, its size, its device
+and inode, and its modification and change times to the nanosecond; the
+change time is the system's, set by every write or change of the times, and
+no copy that keeps a file's times can set it back) */
 static int key_append(char *key, size_t size, char const *path)
 {
 	struct stat information;
 	size_t used = strlen(key);
-	char lowered[1024];
-	size_t i;
 
-	if (stat(path, &information) || strlen(path) >= sizeof(lowered))
+	if (stat(path, &information))
 		return 0;
-	for (i = 0; path[i]; i++)
-		lowered[i] = (char)(path[i] >= 'A' && path[i] <= 'Z' ? path[i] + 32 : path[i]);
-	lowered[i] = 0;
-	return snprintf(key + used, size - used, "%s%s,%llu,%lld", used ? "|" : "", lowered,
-		(unsigned long long)information.st_size, (long long)information.st_mtime) < (int)(size - used);
+	return snprintf(key + used, size - used, "%s%s,%llu,%llu:%llu,%lld.%09ld,%lld.%09ld", used ? "|" : "", path,
+		(unsigned long long)information.st_size, (unsigned long long)information.st_dev,
+		(unsigned long long)information.st_ino, (long long)information.st_mtim.tv_sec,
+		(long)information.st_mtim.tv_nsec, (long long)information.st_ctim.tv_sec,
+		(long)information.st_ctim.tv_nsec) < (int)(size - used);
 }
 
 /* (known_lock held) */
@@ -1022,19 +1043,6 @@ static int sha256_file_sized(char const *path, unsigned char digest[32], unsigne
 	return ok;
 }
 
-/* a file's plain SHA-256, read a megabyte at a time (host_mcc_hash.h) */
-int host_sha256_file(char const *path, unsigned char digest[32], volatile int const *cancel)
-{
-	static unsigned char buffer[1 << 20];
-	static pthread_mutex_t buffer_lock = PTHREAD_MUTEX_INITIALIZER;
-	int ok;
-
-	pthread_mutex_lock(&buffer_lock);
-	ok = sha256_file_sized(path, digest, NULL, cancel, buffer, sizeof(buffer));
-	pthread_mutex_unlock(&buffer_lock);
-	return ok;
-}
-
 struct job {
 	int state;
 	volatile int cancel;
@@ -1211,6 +1219,21 @@ static void *sha_job_main(void *parameter)
 	pthread_cond_broadcast(&jobs_changed);
 	pthread_mutex_unlock(&jobs_lock);
 	return NULL;
+}
+
+static char mcc_root_folder[1024];
+
+void host_mcc_root(unsigned int path_address)
+{
+	char const *path = (char const *)(uintptr_t)path_address;
+
+	if (path && strlen(path) < sizeof(mcc_root_folder))
+		snprintf(mcc_root_folder, sizeof(mcc_root_folder), "%s", path);
+}
+
+char const *host_mcc_maps_parent(char const *data_root)
+{
+	return mcc_root_folder[0] ? mcc_root_folder : data_root;
 }
 
 int host_sha256_start(unsigned int path_address)

@@ -162,6 +162,16 @@ static void stage_remove_parents(struct mcc_share_stage *stage, char const *leaf
     }
 }
 
+/* the .part files another writer may have made, from the current file on */
+static void stage_external_parts_delete(struct mcc_share_stage *stage)
+{
+    char path[512];
+    int i;
+    for (i=stage->current;i<stage->count;i++)
+        if (stage_path(path,sizeof(path),stage->stage_dir,stage->files[i].leaf,".part") && stage->io.path_safe(path))
+            stage->io.delete_file(path);
+}
+
 static void stage_forget(struct mcc_share_stage *stage)
 {
     char path[512];
@@ -173,6 +183,7 @@ static void stage_forget(struct mcc_share_stage *stage)
     }
     if (stage->stream) { fclose(stage->stream); stage->stream=NULL; }
     if (!stage->owns_directory || !stage->stage_dir[0] || !stage->io.path_safe(stage->stage_dir)) goto finish;
+    if (stage->external) stage_external_parts_delete(stage);
     for (i=0;i<stage->count;i++) {
         if (i==stage->current && stage->owns_partial &&
             stage_path(path,sizeof(path),stage->stage_dir,stage->files[i].leaf,stage->io.direct ? "" : ".part") && stage->io.path_safe(path))
@@ -323,6 +334,42 @@ enum mcc_share_stage_result mcc_share_stage_write(struct mcc_share_stage *stage,
     if (++stage->current<stage->count) return MCC_SHARE_STAGE_FILE_DONE;
     stage->state=MCC_SHARE_STAGE_STAGED;
     return MCC_SHARE_STAGE_ALL_DONE;
+}
+
+int mcc_share_stage_external_path(struct mcc_share_stage *stage, int index, char *path, unsigned size)
+{
+    if (stage->state!=MCC_SHARE_STAGE_WRITING || stage->io.direct || stage->stream || index<stage->current ||
+        index>=stage->count || !stage_parents(stage,stage->files[index].leaf) ||
+        !stage_path(path,size,stage->stage_dir,stage->files[index].leaf,".part") || !stage->io.path_safe(path))
+        return 0;
+    stage->external=1;
+    return 1;
+}
+
+enum mcc_share_stage_result mcc_share_stage_external_done(struct mcc_share_stage *stage)
+{
+    struct mcc_share_file *file;
+    char part[512],final[512];
+    if (stage->state!=MCC_SHARE_STAGE_WRITING || !stage->external || stage->stream || stage->written)
+        return MCC_SHARE_STAGE_BAD_STATE;
+    file=&stage->files[stage->current];
+    if (!stage_path(part,sizeof(part),stage->stage_dir,file->leaf,".part") ||
+        !stage_path(final,sizeof(final),stage->stage_dir,file->leaf,"") ||
+        !stage->io.path_safe(part) || !stage->io.path_safe(final) || !stage->io.move_file(part,final))
+        return stage_fail(stage,MCC_SHARE_STAGE_WRITE_FAILED);
+    stage->owned[stage->current]=1;
+    stage->done+=file->size;
+    if (++stage->current<stage->count) return MCC_SHARE_STAGE_FILE_DONE;
+    stage->state=MCC_SHARE_STAGE_STAGED;
+    return MCC_SHARE_STAGE_ALL_DONE;
+}
+
+void mcc_share_stage_external_abort(struct mcc_share_stage *stage)
+{
+    if (!stage->external) return;
+    if (stage->owns_directory && stage->stage_dir[0] && stage->io.path_safe(stage->stage_dir))
+        stage_external_parts_delete(stage);
+    stage->external=0;
 }
 
 enum mcc_share_stage_result mcc_share_stage_verify(struct mcc_share_stage *stage,

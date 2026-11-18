@@ -32,6 +32,8 @@ final class MapsFolder {
     static final String MAPS_KEY = "maps.path";
     static final String CUSTOM_MAPS_KEY = "custom_maps.path";
     static final String MODS_KEY = "mods.path";
+    /** the folder holding mcc_maps and mcc_staging (GameFiles: they move with the others) */
+    static final String MCC_KEY = "mcc.path";
     /** the folders made in the one chosen, and the settings that name them */
     private static final String[][] FOLDERS = {
         { "maps", MAPS_KEY }, { "custom_maps", CUSTOM_MAPS_KEY }, { "mods", MODS_KEY } };
@@ -122,10 +124,14 @@ final class MapsFolder {
             if (!Updater.writeSetting(config, SECTION, entry[1], quote(new File(folder, entry[0]).getAbsolutePath())))
                 return "Could not write " + config.getPath() + ".";
         }
+        // (and the MCC maps beside them: game.mcc.path names their parent, GameFiles)
+        new File(folder, "mcc_maps").mkdirs();
+        if (!Updater.writeSetting(config, SECTION, MCC_KEY, quote(folder.getAbsolutePath())))
+            return "Could not write " + config.getPath() + ".";
         return null;
     }
 
-    /** the three settings emptied: the maps and mods in the app's storage again; false if not written */
+    /** the settings emptied: the maps, mods and MCC maps in the app's storage again; false if not written */
     static boolean forget(File dataRoot) {
         File config = new File(dataRoot, "config.toml");
 
@@ -133,7 +139,7 @@ final class MapsFolder {
             if (!Updater.writeSetting(config, SECTION, entry[1], "\"\""))
                 return false;
         }
-        return true;
+        return Updater.writeSetting(config, SECTION, MCC_KEY, "\"\"");
     }
 
     /**

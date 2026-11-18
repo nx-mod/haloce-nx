@@ -157,6 +157,10 @@ boolean cache_files_precache_is_copying_map(
 	char const *map_name);
 boolean cache_files_precache_map_loaded(
 	char const *map_name);
+/* port: every map the cache files hold forgotten, to be copied again from
+its file (the maps changed under their names: cache_files_windows.c) */
+void cache_files_forget_cached_maps(
+	void);
 
 short cache_files_precache_map_status(
 	real *progress);

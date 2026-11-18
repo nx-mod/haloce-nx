@@ -55,7 +55,9 @@ public class HaloActivity extends SDLActivity {
     /** the on-screen touch controls, over SDL's surface */
     private TouchControls touchControls;
     private static final int EXPORT_LAYOUT = 401, IMPORT_LAYOUT = 402, EXPORT_REPLAYS = 403, IMPORT_REPLAYS = 404,
-        IMPORT_MODS = 405, IMPORT_VK_DRIVERS = 406, IMPORT_MAPS = 407;
+        IMPORT_MODS = 405, IMPORT_VK_DRIVERS = 406, IMPORT_MAPS = 407, MOVE_GAME_FILES = 408;
+    /** All files access asked for in the system's settings for GAME FILES' OTHER FOLDER: the picker follows */
+    private boolean awaitingGameFilesAccess;
     private String pendingLayoutExport;
     /** the folder of the replays the Theater's EXPORT REPLAYS copies, while the folder picker is open */
     private String pendingReplaysFolder;
@@ -710,6 +712,140 @@ public class HaloActivity extends SDLActivity {
     }
 
     /**
+     * Settings > Gameplay > GAME FILES (port/linux/game/menu_functions.c, through host_android_move_game_files):
+     * "app" moves the maps, custom_maps, mods and mcc_maps folders into the app's storage, "other" into a folder the
+     * player picks (All files access asked for first, as the launcher's "Use another folder" does). Once the player
+     * says yes, the move is asked for (GameFiles.request) and the game starts again: the launcher moves them before
+     * the game opens them (GameFiles.run). Called on the game's thread.
+     */
+    public void moveGameFiles(String where) {
+        runOnUiThread(() -> {
+            File dataRoot = getExternalFilesDir(null);
+            if (dataRoot == null)
+                return;
+            if (!"other".equals(where)) {
+                if (GameFiles.inAppData(dataRoot)) {
+                    Toast.makeText(this, "The game's files are in the app's storage already.", Toast.LENGTH_LONG)
+                        .show();
+                    return;
+                }
+                confirmGameFilesMove(dataRoot, null);
+                return;
+            }
+            if (MapsFolder.hasStorageAccess(this)) {
+                openGameFilesPicker();
+                return;
+            }
+            boolean settings = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+            new AlertDialog.Builder(this)
+                .setTitle("Allow access to your folder")
+                .setMessage("The game reads its maps and mods with ordinary file access, which Android allows outside "
+                    + "the app's storage only with " + (settings ? "All files access. Android's settings open next: "
+                    + "turn on \"Allow access to manage all files\" for SlipstreamCE, then come back." : "storage access.")
+                    + " Only the folder you choose is used.")
+                .setPositiveButton("Continue", (dialog, which) -> askGameFilesAccess())
+                .setNegativeButton("Cancel", null)
+                .show();
+        });
+    }
+
+    private void askGameFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            requestPermissions(new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, MOVE_GAME_FILES);
+            return;
+        }
+        awaitingGameFilesAccess = true;
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
+        } catch (android.content.ActivityNotFoundException e) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (android.content.ActivityNotFoundException again) {
+                awaitingGameFilesAccess = false;
+                Toast.makeText(this, "This device has no All files access setting.", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request == MOVE_GAME_FILES && MapsFolder.hasStorageAccess(this))
+            openGameFilesPicker();
+    }
+
+    private void openGameFilesPicker() {
+        try {
+            startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), MOVE_GAME_FILES);
+        } catch (android.content.ActivityNotFoundException e) {
+            Toast.makeText(this, "This device has no folder picker.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** the folder picked: checked, then the player asked */
+    private void gameFilesFolderPicked(Uri tree) {
+        File dataRoot = getExternalFilesDir(null);
+        File chosen = MapsFolder.fromTree(this, tree);
+        if (dataRoot == null)
+            return;
+        if (chosen == null) {
+            Toast.makeText(this, "Choose a folder on this device's storage or memory card.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String problem = GameFiles.refused(dataRoot, chosen);
+        if (problem != null) {
+            Toast.makeText(this, problem, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (GameFiles.moves(dataRoot, chosen).isEmpty()) {
+            Toast.makeText(this, "The game's files are in that folder already.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        confirmGameFilesMove(dataRoot, chosen);
+    }
+
+    /** the player asked (the size counted away from the UI thread), then the move asked for and the game restarted */
+    private void confirmGameFilesMove(File dataRoot, File chosen) {
+        new Thread(() -> {
+            long size = GameFiles.totalSize(dataRoot);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed())
+                    return;
+                String where = chosen != null ? chosen.getAbsolutePath()
+                    : "the app's storage (Android empties it when the app is removed)";
+                new AlertDialog.Builder(this)
+                    .setTitle("Move the game's files?")
+                    .setMessage("The maps, custom maps, mods and MCC maps (" + GameFiles.size(size) + ") go to "
+                        + where + ".\n\nThe game closes and starts again to move them, and shows how far it has "
+                        + "got. Don't close the app until it's done.")
+                    .setPositiveButton("Move", (dialog, which) -> {
+                        String problem = GameFiles.request(dataRoot, chosen);
+                        if (problem != null) {
+                            Toast.makeText(this, problem, Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        restartForGameFiles();
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            });
+        }, "halo-game-files-size").start();
+    }
+
+    /**
+     * the launcher started again (in the app's main process: this one is the game's, HaloActivity's :game), which
+     * moves the files before the game runs, then this process ended
+     */
+    private void restartForGameFiles() {
+        Intent launcher = new Intent(this, LauncherActivity.class);
+        launcher.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(launcher);
+        finishAffinity();
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    /**
      * The map lists' IMPORT (New Game's and the Map screen's: port/linux/game/menu_functions.c, through
      * host_android_import_maps): the system's file picker, several files at once, each copied as it is into folder,
      * the import inbox, which the game takes in from (port/android/host/host_mcc_import.c: Custom Edition maps, .zip files of
@@ -807,6 +943,11 @@ public class HaloActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == MOVE_GAME_FILES) {
+            if (result == RESULT_OK && data != null && data.getData() != null)
+                gameFilesFolderPicked(data.getData());
+            return;
+        }
         if (request == IMPORT_REPLAYS) {
             String folder = pendingImportFolder;
             pendingImportFolder = null;
@@ -930,6 +1071,14 @@ public class HaloActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // (back from the system's All files access setting, for GAME FILES' OTHER FOLDER)
+        if (awaitingGameFilesAccess) {
+            awaitingGameFilesAccess = false;
+            if (MapsFolder.hasStorageAccess(this))
+                openGameFilesPicker();
+            else
+                Toast.makeText(this, "All files access was not allowed.", Toast.LENGTH_LONG).show();
+        }
         if (touchControls != null && getWindow().getDecorView().hasWindowFocus())
             touchControls.startDeviceInput();
     }

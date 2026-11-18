@@ -1,5 +1,53 @@
 # Changelog
 
+## Build 143: Faster map sharing, custom Xbox maps and moving game files!
+
+### Map sharing
+
+- New: between two SlipstreamCE machines, maps go over a fast encrypted connection of their own instead of the game's tunnel, for both MCC packages and Custom Edition maps. A joiner opens up to 16 connections to the host (4 on the Switch), all through one port, which the host forwards with UPnP; a host serves 32 in all. Over the internet a joiner connects straight to the host's address when it can. A Custom Edition map still comes from the other players too, with the host as one more source. OpenCE hosts and joiners work as before. (thelinkin3000)
+- Uploads use the whole line outside a game. During a game they leave room for the game's own traffic and slow down only when the players' pings show the line filling up. (thelinkin3000)
+- The upload limits in Network Setup and Server Setup go up to 250 MB/s. (thelinkin3000)
+- A download's speed is shown correctly past 2 MB/s. (thelinkin3000)
+- Fixed: a download stuck at 0 KB/s when the host offered the map as the player joined. (thelinkin3000)
+- Fixed: the Switch froze for 20 to 30 seconds while downloading a map and was dropped from the game. Downloaded pieces are now written to the SD card on a thread of their own. (thelinkin3000)
+
+### Custom Xbox multiplayer maps
+
+- New: Xbox multiplayer maps (from mods such as Halo CE+ X) can go in custom_maps. They're listed, described as "Custom Xbox multiplayer map", shared, and played like the game's own maps, even when they have the same names as the stock ones. (thelinkin3000)
+- A dedicated server's rotation takes them. An Xbox campaign map is still refused, with a message saying why. (thelinkin3000)
+- A game on one of these maps needs a client that supports them. A player whose client doesn't is told "You need a client with support for custom OG Xbox multiplayer maps." and removed. (thelinkin3000)
+
+### Game files (Android)
+
+- New: Settings > Gameplay > GAME FILES moves your maps, custom maps, mods and MCC maps to another place: APP DATA (the app's storage) or OTHER FOLDER (any folder you choose, such as one on a memory card). The game restarts to move them and shows its progress, then says where they are. A move that stops loses nothing: try again, or move them back. (thelinkin3000)
+
+### Hosted servers
+
+- Watching a player through their eyes from the host's screen now turns smoothly, as a replay does, instead of jumping each time their input arrives. (thelinkin3000)
+
+### Custom campaigns (experimental)
+
+- New: play an Xbox or Custom Edition campaign from its own folder in custom_campaigns, alone or in split screen. Its maps are found by the names inside them, so nothing needs renaming, and a campaign never mixes with the stock maps or with another campaign. A campaign with its own ui.map uses it as the main menu, with a BACK TO HALO button added. Each campaign has its own saved game. For now a campaign is chosen in config.toml (`[debug] custom_campaign = "<folder>"`); a menu for it comes later. (thelinkin3000)
+- The unpacked map cache is now kept in memory on Android and the PS5, as it already was on the Switch, and it's emptied whenever the maps change under the same names. The old cache files on disk (about 730 MB) are deleted once. (thelinkin3000)
+
+### Steam Workshop and MCC
+
+- A joiner's Workshop download shows its progress and speed, says it's from the Workshop, and moves to another content server sooner when one refuses. (thelinkin3000)
+- Fixed: a joiner was asked to download from the host a package Steam had already installed. (thelinkin3000)
+- The Workshop screen's NEXT and PREVIOUS PAGE select the new page's first item, an installed item asks DOWNLOAD AGAIN? before downloading it again, and the rows' names are wider with shorter messages. (thelinkin3000)
+- A hosted server identifies an MCC package's Workshop item from its ModInfo.json when it has no download record. (thelinkin3000)
+- Security fixes from a review of the Steam client: a malformed answer from a content server can no longer cause a huge memory copy, the Steam sign-in token is only ever stored encrypted, file moves no longer follow links outside the maps folder, and download manifests come only over HTTPS and are checked strictly. (thelinkin3000)
+
+### Controls
+
+- Look Sensitivity and Vertical Sensitivity go up to 15. Values 1 to 10 feel the same as before. (thelinkin3000)
+
+### From OpenCE
+
+- Co-op cutscenes play on dedicated servers, and a co-op player on an older server watches the cutscene's actors instead of the middle of the map.
+- A campaign's scripts may name its next level.
+- Map downloads ask the host for 8 pieces at a time, and hosts read the files they share faster.
+
 ## Build 142: MCC and Hosted Servers!
 
 Thanks to:

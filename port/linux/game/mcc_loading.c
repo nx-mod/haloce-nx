@@ -1,8 +1,14 @@
 /* MCC conversion runs synchronously on the render thread. Present only the
- * standalone loading effect: normal frames can dereference unfinished tags. */
+ * standalone loading effect: normal frames can dereference unfinished tags.
+ * A Custom Edition map's load uses it too (custom_edition_cache.c,
+ * custom_edition_sounds.c): it is read in place, never copied into the
+ * cache under the stock loading screen, and its load (its sounds decoded,
+ * a custom campaign's levels a minute and more on the Switch) would
+ * otherwise show the last frame frozen. */
 #include "cseries.h"
 #include "errors.h"
 #include "mcc_cache.h"
+#include "custom_edition_cache.h"
 #include "mcc_loading.h"
 #include "mcc_load_network.h"
 #include "interface/progress_bar.h"
@@ -74,7 +80,7 @@ int mcc_loading_begin(char const *name)
 {
     if (mcc_loading.active) return 0;
     mcc_load_network_begin(name);
-    if (!mcc_level_name(name) || !global_d3d_device ||
+    if ((!mcc_level_name(name) && !custom_edition_level_name(name)) || !global_d3d_device ||
         config_boolean("debug.null_renderer") || progress_bar_is_active()) return 0;
     /* Hosting from the menus, the host's screen stays up: a Xbox or CE map's
      * loading screen is drawn in the frame under it (render.c, interface.c),
@@ -101,7 +107,7 @@ void mcc_loading_stage(enum mcc_loading_stage stage)
         (int)stage <= mcc_loading.stage) return;
     mcc_loading.stage = stage;
     mcc_loading.progress = mcc_loading_limits[stage];
-    error(_error_silent, "mcc loading: %s", names[stage]);
+    error(_error_silent, "map loading: %s", names[stage]);
     mcc_loading_pulse();
 }
 

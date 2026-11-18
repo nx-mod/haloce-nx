@@ -124,6 +124,7 @@ their handlers open opens.
 #include "text_filter.h"
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 #include "../src/posix.h"
+#include "custom_campaigns.h"
 #endif
 
 #include <pthread.h>
@@ -2977,6 +2978,56 @@ static boolean vk_driver_import(void)
 
 	snprintf(folder, sizeof(folder), "%s/" VK_DRIVER_FOLDER, platform_data_root());
 	host_android_import_vk_drivers(folder);
+	return TRUE;
+}
+
+/* ---------- Settings > Gameplay > GAME FILES (Android's: tools/port_settings.py's
+_game_files): where maps, custom_maps, mods and mcc_maps are, and APP DATA
+or OTHER FOLDER, which the app asks about, then starts the game again to
+move them before it runs (HaloActivity.moveGameFiles, GameFiles.java: the
+game has them open, and reads where they are once, as it starts) */
+
+/* (port/android/host/host_main.c) */
+void host_android_move_game_files(const char *where);
+
+static void game_files_text(struct widget_instance *text_box)
+{
+	char maps[512];
+	char line[1024];
+	wchar_t text[1024];
+	char const *slash;
+	int length;
+	int index;
+
+	if (!config_string("game.maps.path")[0])
+	{
+		length = snprintf(line, sizeof(line), "Your maps, custom maps, mods and MCC maps are in the app's storage "
+			"(APP DATA).");
+	}
+	else
+	{
+		/* (the folder holding maps: where OTHER FOLDER put them) */
+		platform_translate_path("d:\\maps", maps, sizeof(maps));
+		slash = strrchr(maps, '/');
+		if (slash && slash != maps)
+			maps[slash - maps] = 0;
+		length = snprintf(line, sizeof(line), "Your maps, custom maps, mods and MCC maps are in %s (OTHER FOLDER).",
+			maps);
+	}
+	if (length < 0 || length >= (int)sizeof(line))
+		length = (int)strlen(line);
+	snprintf(line + length, sizeof(line) - length, "\n\nAPP DATA moves them into the app's storage, which Android "
+		"empties when the app is removed. OTHER FOLDER moves them into a folder you choose, such as one on a memory "
+		"card.\n\nThe game starts again to move them, and shows how far it has got.");
+	for (index = 0; line[index] && index < (int)NUMBEROF(text) - 1; index++)
+		text[index] = (wchar_t)(unsigned char)line[index];
+	text[index] = 0;
+	text_set_length(text_box, text, (short)NUMBEROF(text));
+}
+
+static boolean game_files_move(char const *where)
+{
+	host_android_move_game_files(where);
 	return TRUE;
 }
 #endif
@@ -9908,7 +9959,9 @@ chosen Workshop item's preview, over steam_picture (a text box: drawn by
 steam_picture_draw, from menu_functions_text_box_drawn) */
 
 #define STEAM_ROWS 11
-#define STEAM_DETAILS_LINES 8
+/* (as many as steam_details_text holds above the picture: more, and the last
+is cut short with "..." rather than lost under the box's edge) */
+#define STEAM_DETAILS_LINES 6
 #define STEAM_TEXTURE 256
 
 /* the text boxes measured, in the Mods screen's places (one screen is shown
@@ -9931,6 +9984,9 @@ static struct
 	what is typed in it */
 	int typing;
 	wchar_t typed[64];
+	/* the row chosen as last passed to the host: one the host chose since
+	(a page's first item, as the page comes) is focused */
+	short chosen_set;
 } steam_screen;
 
 static struct widget_instance *steam_row(struct widget_instance *widget)
@@ -10026,8 +10082,8 @@ static void steam_update(struct widget_instance *list)
 	first = (short)steam_screen_first();
 	chosen = (short)steam_screen_chosen();
 	count = (short)steam_screen_count();
-	/* (a list opened: its row chosen focused) */
-	if (steam_screen.list_shown != steam_screen_view())
+	/* (a list opened, or a row the host chose: that row focused) */
+	if (steam_screen.list_shown != steam_screen_view() || chosen != steam_screen.chosen_set)
 	{
 		steam_screen.list_shown = (short)steam_screen_view();
 		if (chosen < first || chosen >= first + STEAM_ROWS)
@@ -10053,6 +10109,7 @@ static void steam_update(struct widget_instance *list)
 		chosen = (short)(first + focused_index);
 	steam_screen_set_first(first);
 	steam_screen_set_chosen(chosen);
+	steam_screen.chosen_set = chosen;
 	for (row = list->child; row; row = row->next)
 	{
 		short place;
@@ -10127,6 +10184,7 @@ static boolean steam_choose(struct widget_instance *widget)
 	if (place == NONE)
 		place = (short)steam_screen_chosen();
 	steam_screen_set_chosen(place);
+	steam_screen.chosen_set = place;
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 	steam_screen_choose(place);
 	return TRUE;
@@ -11428,8 +11486,8 @@ static struct gametype_option const gametype_options[] =
 	/* map sharing's (Server Setup's MAP SHARING: tools/port_settings.py's
 	MAP_SHARE_SETUP; map_share.c) */
 	{ "map_share_spinner", _option_setting, 0, 0, 2, { 0 }, "network.map_share", { "true", "false" } },
-	{ "map_share_upload_spinner", _option_setting, 0, 0, 8, { 0 }, "network.map_share_upload",
-		{ "256", "512", "1024", "2048", "4096", "8192", "16384", "20480" } },
+	{ "map_share_upload_spinner", _option_setting, 0, 0, 12, { 0 }, "network.map_share_upload",
+		{ "256", "512", "1024", "2048", "4096", "8192", "16384", "20480", "32768", "65536", "131072", "256000" } },
 	/* the vehicle options' VEHICLE RIDING, the gametype's (vehicle_riding.c) */
 	{ "vehicle_riding_spinner", _option_flag, 0, FLAG(_game_variant_vehicle_riding_bit), 2, { 1, 0 } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
@@ -13880,6 +13938,12 @@ boolean pc_menu_event_function_invoke(
 		{
 			platform_request_quit();
 		}
+		/* (a custom campaign's main menu's BACK TO HALO: menu_tags.c's
+		custom_campaign_patch) */
+		else if (!strcmp(name, "port custom campaign back"))
+		{
+			custom_campaign_back_to_halo();
+		}
 		else if (!strcmp(name, "profile set edit begin"))
 		{
 			return profile_edit_begin(widget, event, widget_deleted);
@@ -14255,6 +14319,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			return vk_driver_import();
 		}
+		else if (!strcmp(name, "port game files app") || !strcmp(name, "port game files other"))
+		{
+			return game_files_move(!strcmp(name, "port game files app") ? "app" : "other");
+		}
 #endif
 		else if (!strcmp(name, "controls screen init") || !strcmp(name, "controls screen defaults"))
 		{
@@ -14558,6 +14626,10 @@ void pc_menu_game_data_function_invoke(
     }
     else if (!strcmp(name,"port map import page text"))
         map_import_page_text(widget);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+    else if (!strcmp(name,"port game files text"))
+        game_files_text(widget);
+#endif
     else if (!strcmp(name,"port mcc downloads text")) {
         wchar_t text[512];
         mcc_share_menu_text(text);

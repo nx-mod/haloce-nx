@@ -144,6 +144,7 @@ symbols in this file:
 #include "cache_file_formats.h" /* port: CUSTOM_EDITION_TAG_CACHE_BYTES */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "mcc_share.h" /* port: port/linux/game/mcc_share.c */
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 #ifdef HALO_ANDROID
 /* port: geometry the map holds and does not write, drawn on Android from
 GL buffers of its own (port/linux/src/d3d8_gl.c) */
@@ -1178,7 +1179,9 @@ boolean cache_files_map_plays_multiplayer(
 			return map_plays_kept[index].result;
 		}
 	}
-	snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
+	/* port: (a mounted custom campaign's map of the name: custom_campaigns.c) */
+	if (!custom_campaign_map_path(map_name, FALSE, path))
+		snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 	if (file != INVALID_HANDLE_VALUE)
 	{
@@ -1304,7 +1307,9 @@ boolean cache_files_map_present(
 
 		if (cache_files_precache_map_loaded(map_name))
 			return TRUE;
-		snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
+		/* port: (a mounted custom campaign's map of the name: custom_campaigns.c) */
+		if (!custom_campaign_map_path(map_name, FALSE, path))
+			snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
 		file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 		if (file != INVALID_HANDLE_VALUE)
 		{
@@ -1440,7 +1445,7 @@ long scenario_tags_load(
 	own maps are (port/linux/game/custom_edition_cache.c). It has no Xbox
 	vertex or index buffers. It is never the game's own map of that file
 	name: a Custom Edition map that cannot load is not played at all. */
-	if (custom_edition_level_name(scenario_name))
+	if (custom_edition_level_name(scenario_name) && !custom_xbox_map_level(scenario_name))
 	{
 		/* port: a protected map's structure bsp names the groups of tags
 		whose own are scrambled (port/linux/game/tag_validate.c) */
@@ -1484,7 +1489,11 @@ long scenario_tags_load(
 
 		return result;
 	}
-	if (cache_file_open(stripped_scenario_name, &cache_file_globals.header))
+	/* port: an Xbox map of custom_maps (custom_maps\<name>) is in the cache
+	file its level name was copied into, never that of the game's map its
+	header names (cache_files_windows.c) */
+	if (cache_file_open(custom_xbox_map_level(scenario_name) ? scenario_name : stripped_scenario_name,
+		&cache_file_globals.header))
 	{
 		tag_cache_base_address = physical_memory_get_tag_cache_base_address();
 		if (cache_file_header_verify(&cache_file_globals.header, scenario_name, TRUE))

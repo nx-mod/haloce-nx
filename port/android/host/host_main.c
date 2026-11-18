@@ -527,6 +527,15 @@ void host_android_import_maps(const char *folder)
 	host_android_folder_call("importMaps", folder);
 }
 
+/* asks the activity to move the game's files (maps, custom_maps, mods,
+mcc_maps): where "app" (the app's storage) or "other" (a folder the player
+picks); it asks, and starts the game again to move them before it runs
+(HaloActivity.moveGameFiles, GameFiles.java) */
+void host_android_move_game_files(const char *where)
+{
+	host_android_folder_call("moveGameFiles", where);
+}
+
 /* the settings of [debug] that this file reads, from config.toml */
 struct host_settings
 {

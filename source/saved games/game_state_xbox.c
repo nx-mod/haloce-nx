@@ -103,6 +103,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "bungie_net/common/thread.h" /* port: the check ahead */
 #include "sound/sound_manager.h"
+#include "custom_campaigns.h" /* port: port/linux/game/custom_campaigns.c */
 #include <xtl.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -514,6 +515,10 @@ static __inline boolean game_state_get_persistent_storage_path(
 	boolean result;
 
 	result = player_ui_get_path_to_local_player_profile_directory(0, path) != FALSE;
+	/* port: a mounted custom campaign's own saved game, in the profile's
+	campaigns\<folder>\ (port/linux/game/custom_campaigns.c) */
+	if (result)
+		result = custom_campaign_save_directory(path);
 
 	return result;
 }
@@ -886,7 +891,8 @@ void game_state_persistent_storage_check_ahead(
 	}
 	persistent_header_ahead_profile = profile_index;
 	persistent_header_ahead_started_generation = persistent_header_generation;
-	if (!player_profile_get_enclosing_directory_path(profile_index, persistent_header_ahead.directory))
+	if (!player_profile_get_enclosing_directory_path(profile_index, persistent_header_ahead.directory) ||
+		!custom_campaign_save_directory(persistent_header_ahead.directory)) /* port: (as above) */
 		return;
 	snprintf(persistent_header_ahead.path, sizeof(persistent_header_ahead.path), "%ssavegame.bin",
 		persistent_header_ahead.directory);
