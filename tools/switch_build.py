@@ -47,7 +47,7 @@ BUILD = Path("build/switch")
 # nx-mod fork identity: the nacp version and the main menu's news label
 # (source/interface/ui_widget_game_data_input_functions.c). One source of truth.
 NX_REPOSITORY = "nx-mod/haloce-nx"
-NX_VERSION = "1.7.0-nx"
+NX_VERSION = "1.8.0-nx"
 THIRD_PARTY = Path("build/android/third_party")
 TOML_DIR = Path("port/third_party/tomlc17")
 KCP_DIR = Path("port/third_party/kcp")

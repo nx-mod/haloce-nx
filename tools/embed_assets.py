@@ -166,8 +166,8 @@ def hud_configure_inputs() -> List[Path]:
     return inputs
 
 
-# the release notes are a Build N commit's message (its subject "Build N")
-NEWS_SUBJECT = re.compile(r"^Build \d+$")
+# the release notes are a Build N commit's message (its subject "Build N" or "Build N: ...")
+NEWS_SUBJECT = re.compile(r"^Build \d+(?::|$)")
 # what is typed in commit messages that the game's fonts have not, and what
 # is drawn instead
 NEWS_ASCII = {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-",
