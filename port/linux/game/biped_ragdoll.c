@@ -1627,6 +1627,8 @@ static void ragdoll_step(
 	real_point3d previous[MAXIMUM_RAGDOLL_PARTICLES];
 	real fastest = 0.f;
 	short index;
+	real min_x, max_x, min_y, max_y, min_z, max_z;
+	boolean lying_down;
 
 	match_assert(__FILE__, __LINE__, global_current_collision_user_depth < MAXIMUM_COLLISION_USER_STACK_DEPTH);
 	global_current_collision_users[global_current_collision_user_depth++] = _collision_user_limp_body_physics;
@@ -1641,16 +1643,30 @@ static void ragdoll_step(
 
 	ragdoll_pose(ragdoll, previous, ragdoll->pose);
 
+	min_x = max_x = ragdoll->positions[0].x;
+	min_y = max_y = ragdoll->positions[0].y;
+	min_z = max_z = ragdoll->positions[0].z;
 	for (index = 0; index < ragdoll->particle_count; index++)
 	{
 		real speed = magnitude3d(&ragdoll->velocities[index]);
+		real_point3d *p = &ragdoll->positions[index];
 
 		if (speed > fastest)
 			fastest = speed;
+		if (p->x < min_x) min_x = p->x; else if (p->x > max_x) max_x = p->x;
+		if (p->y < min_y) min_y = p->y; else if (p->y > max_y) max_y = p->y;
+		if (p->z < min_z) min_z = p->z; else if (p->z > max_z) max_z = p->z;
 	}
+	/* port: the body is down when it lies flatter than it stands -- its
+	vertical (z) spread no greater than its widest horizontal spread. Only a
+	body that is down may be put to sleep by the half-second stillness timer;
+	otherwise one that stalls while still upright (a gentle death, or caught on
+	geometry) would sleep standing. The 10-second RAGDOLL_MAXIMUM_TICKS safety
+	sleep stays unconditional, so nothing can twitch forever. */
+	lying_down = (max_z - min_z) <= MAX(max_x - min_x, max_y - min_y);
 	ragdoll->still_ticks = fastest < RAGDOLL_SLEEP_SPEED ? ragdoll->still_ticks + 1 : 0;
 	ragdoll->ticks++;
-	if (ragdoll->still_ticks >= RAGDOLL_SLEEP_TICKS || ragdoll->ticks >= RAGDOLL_MAXIMUM_TICKS)
+	if ((ragdoll->still_ticks >= RAGDOLL_SLEEP_TICKS && lying_down) || ragdoll->ticks >= RAGDOLL_MAXIMUM_TICKS)
 		ragdoll_sleep(ragdoll);
 }
 
